@@ -35,7 +35,7 @@ console.log('JSON манифесты:');
 for (const rel of [
   'adapters/claude-code/.claude-plugin/plugin.json',
   'adapters/claude-code/hooks/hooks.json',
-  'adapters/gigacode/qwen-extension.json',
+  'adapters/gigacode/gigacode-extension.json',
   'core/templates/settings.example.json',
   'package.json',
 ]) {

@@ -1,0 +1,7 @@
+{
+  "name": "conveyor",
+  "version": "1.0.0",
+  "description": "Мультирепозиторный конвейер командной разработки: анализ → фича → спецификация → план → реализация → требования к автотестам → автотесты. Скиллы, ролевые агенты и guard-хуки.",
+  "author": { "name": "Maksim Tryputsko" },
+  "keywords": ["workflow", "multi-repo", "requirements", "pipeline", "agents"]
+}

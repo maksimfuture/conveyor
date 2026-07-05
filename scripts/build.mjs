@@ -95,5 +95,5 @@ if (!built) {
 }
 console.log('\nУстановка Claude Code: скопируйте dist/claude-code как плагин');
 console.log('(.claude-plugin/plugin.json, skills/, agents/, hooks/, core/).');
-console.log('Установка GigaCode: dist/gigacode → ~/.gigacode/extensions/conveyor');
-console.log('(qwen-extension.json, QWEN.md, commands/conveyor/*, core/).');
+console.log('Установка GigaCode: gigacode extensions install dist/gigacode');
+console.log('(манифест gigacode-extension.json; ручной cp не регистрирует расширение).');

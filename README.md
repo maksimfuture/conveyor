@@ -26,7 +26,7 @@ conveyor/
 │   └── scripts/          #   resolve-config, validate-config, guard-*, git-ops
 ├── adapters/
 │   ├── claude-code/      #   плагин Claude Code (skills, agents, hooks)
-│   └── gigacode/         #   расширение GigaCode CLI (Qwen-совместимое)
+│   └── gigacode/         #   расширение GigaCode CLI (gigacode-extension.json)
 └── scripts/build.mjs     # сборка dist/claude-code и dist/gigacode
 ```
 
@@ -35,6 +35,9 @@ conveyor/
 
 ## Установка
 
+Пошаговая инструкция (обе среды + устранение проблем) — в [INSTALL.md](INSTALL.md).
+Кратко:
+
 ```
 node scripts/build.mjs      # собирает dist/claude-code и dist/gigacode
 node scripts/check.mjs       # самопроверка (JSON, соответствия, guard-скрипты)
@@ -42,10 +45,12 @@ node scripts/check.mjs       # самопроверка (JSON, соответс�
 
 - **Claude Code:** используйте `dist/claude-code/` как плагин (внутри —
   `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/`, `core/`).
-- **GigaCode CLI:** скопируйте `dist/gigacode/` в
-  `~/.gigacode/extensions/conveyor/`, запустите `gigacode` — команды
-  `/conveyor:*` регистрируются автоматически. Подробности и отличия защиты —
-  `adapters/gigacode/README.md`.
+- **GigaCode CLI:** установите штатной командой
+  `gigacode extensions install dist/gigacode` (подтвердите
+  security-предупреждение), затем `gigacode` — команды `/conveyor:*`
+  появятся (`gigacode extensions list`). Ручное `cp -r` НЕ регистрирует
+  расширение. Манифест — `gigacode-extension.json` (иное имя GigaCode молча
+  пропускает). Подробности — `adapters/gigacode/README.md`.
 
 Требуется Node.js ≥ 14 и git в PATH.
 

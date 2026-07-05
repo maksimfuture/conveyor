@@ -1,0 +1,15 @@
+{
+  "name": "conveyor",
+  "version": "1.0.0",
+  "description": "Мультирепозиторный конвейер командной разработки для Claude Code: скиллы, ролевые агенты и guard-хуки.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT"
+}

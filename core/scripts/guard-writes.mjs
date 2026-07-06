@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfig, isPathAllowed } from './lib/config.mjs';
+import { readConfigForHook, checkWrite } from './lib/config.mjs';
 
 function readStdin() {
   try {
@@ -57,8 +57,10 @@ function main() {
   }
 
   const cwd = payload.cwd || process.cwd();
-  const cfg = readConfig(cwd);
-  if (!cfg.found) return; // allow silently — not a conveyor workspace
+  // Не доверяем одному cwd: агент мог `cd` наружу — тогда workspace ищется
+  // через $CLAUDE_PROJECT_DIR / $CONVEYOR_WORKSPACE (см. lib/config.mjs).
+  const cfg = readConfigForHook(cwd);
+  if (!cfg.found) return; // allow silently — нигде нет conveyor workspace
 
   const input = payload.tool_input || {};
   // Write/Edit use file_path; NotebookEdit uses notebook_path.
@@ -70,11 +72,13 @@ function main() {
 
   const target = path.isAbsolute(rawTarget) ? rawTarget : path.resolve(cwd, rawTarget);
 
-  if (!isPathAllowed(target, cfg)) {
+  const verdict = checkWrite(target, cfg);
+  if (!verdict.allowed) {
     return decide(
       'deny',
-      `conveyor: запись вне разрешённых корней запрещена — ${target}. ` +
-        'Разрешены: рабочий репозиторий, .cache/, локальные пути репозиториев, системный temp.',
+      `conveyor: запись запрещена — ${target}: ${verdict.reason}. ` +
+        'Разрешены: рабочий репозиторий (артефакты задачи), репозитории рабочей ' +
+        'области текущего этапа, системный temp.',
     );
   }
 

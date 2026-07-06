@@ -11,12 +11,15 @@ description: Реализует автотесты в репозитории а�
 `${CONVEYOR_ROOT}/core/stages/implement-auto-test.md`.
 
 Кратко:
-1. resolve-config; задача из meta.json. Проверь чистоту working tree
-   репозитория автотестов.
+1. resolve-config; задача из meta.json. Установи рабочую область:
+   `scope.mjs set --stage implement-auto-test --type <FE|BE> --task
+   <TASK-ID>` (запись — только репо автотестов; `clear` при завершении).
+   Проверь чистоту working tree репозитория автотестов.
 2. Обнови копию автотестов (`update --mode write`); создай ветку
    `<TASK-ID>-autotests` (`git-ops branch`), запиши autotestBranch.
 3. Подготовь diff реализации (baseSha/headSha из stage
-   requirements-auto-test) и путь к кодовой базе.
+   requirements-auto-test) — кодовую базу открывает СКИЛЛ; агенту передаётся
+   ТОЛЬКО текст диффа (путь к кодовой базе НЕ передаётся).
 4. Запусти qa-autotest-engineer: реализация кейсов по соглашениям репозитория
    автотестов; запуск тестов; report-auto-test.md
    (core/templates/report-auto-test.md).

@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { scopeFilePath } from '../core/scripts/lib/config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -23,10 +24,11 @@ function exists(rel) {
   return fs.existsSync(path.join(root, rel));
 }
 
-function runScript(rel, args, input) {
+function runScript(rel, args, input, cwd) {
   return execFileSync('node', [path.join(root, rel), ...args], {
     input: input || '',
     encoding: 'utf8',
+    cwd: cwd || undefined,
   });
 }
 
@@ -94,9 +96,14 @@ try {
     path.join(tmp, 'settings.json'),
     fs.readFileSync(path.join(root, 'core/templates/settings.example.json')),
   );
+  // Two «репозитория» для проверки рабочей области: SA и backend.
+  const repoSA = path.join(tmp, 'repo-sa');
+  const repoBE = path.join(tmp, 'repo-be');
+  fs.mkdirSync(repoSA, { recursive: true });
+  fs.mkdirSync(repoBE, { recursive: true });
   fs.writeFileSync(
     path.join(tmp, '.env'),
-    'SYSTEMS_ANALYSIS_REPO=' + tmp + '\nFRONTEND_REPO=\nBACKEND_REPO=\nAUTOTEST_REPO=\nCONVEYOR_REPO_CACHE=\n',
+    'SYSTEMS_ANALYSIS_REPO=' + repoSA + '\nFRONTEND_REPO=\nBACKEND_REPO=' + repoBE + '\nAUTOTEST_REPO=\nCONVEYOR_REPO_CACHE=\n',
   );
 
   // resolve-config: found true, FRONTEND_REPO missing, CONVEYOR_REPO_CACHE not missing
@@ -147,6 +154,172 @@ try {
   );
   if (gb3.hookSpecificOutput.permissionDecision === 'ask') ok('guard-bash: ask на reset --hard');
   else bad('guard-bash: reset --hard не перевёл в ask');
+
+  // ---- рабочая область этапа (scope) ----
+  const writeTo = (p) =>
+    runScript('core/scripts/guard-writes.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { file_path: p } })).trim();
+
+  // Без scope: запись в оба репозитория разрешена
+  if (writeTo(path.join(repoSA, 'doc.md')) === '' && writeTo(path.join(repoBE, 'src.js')) === '')
+    ok('scope: без scope запись в оба репо разрешена');
+  else bad('scope: без scope запись в репо ошибочно заблокирована');
+
+  // scope: create-feature → писать можно только в SA
+  const setOut = JSON.parse(runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'BE', '--task', 'TASK-1'], '', tmp));
+  if (setOut.ok && setOut.scope.writeRepos.join(',') === 'systemsAnalysis') ok('scope: set create-feature → writeRepos=[systemsAnalysis]');
+  else bad('scope: set вернул неожиданное: ' + JSON.stringify(setOut));
+
+  if (writeTo(path.join(repoSA, 'doc.md')) === '') ok('scope: запись в SA (в области) разрешена');
+  else bad('scope: запись в SA ошибочно заблокирована');
+  const denyBE = writeTo(path.join(repoBE, 'src.js'));
+  if (denyBE && JSON.parse(denyBE).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: запись в backend (вне области) ЗАБЛОКИРОВАНА');
+  else bad('scope: запись в backend вне области не заблокирована');
+  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/feature.md')) === '') ok('scope: артефакты задачи всегда разрешены');
+  else bad('scope: артефакты задачи заблокированы при активном scope');
+  if (!fs.existsSync(path.join(tmp, '.cache'))) ok('scope: .cache в workspace НЕ создаётся (файл области в temp)');
+  else bad('scope: .cache появился в workspace при локальных ссылках');
+  // пробный файл в корне workspace при активном этапе — deny
+  const probeDeny = writeTo(path.join(tmp, 'test-write.txt'));
+  if (probeDeny && JSON.parse(probeDeny).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: пробный файл в корне workspace заблокирован');
+  else bad('scope: test-write.txt в корне workspace прошёл');
+
+  // scope: implement-plan BE → наоборот
+  runScript('core/scripts/scope.mjs', ['set', '--stage', 'implement-plan', '--type', 'BE'], '', tmp);
+  const denySA = writeTo(path.join(repoSA, 'doc.md'));
+  if (denySA && JSON.parse(denySA).hookSpecificOutput.permissionDecision === 'deny' && writeTo(path.join(repoBE, 'src.js')) === '')
+    ok('scope: implement-plan(BE) — backend разрешён, SA заблокирован');
+  else bad('scope: implement-plan(BE) скоупинг не сработал');
+
+  // read-only этап: create-plan → никакие репо не пишутся
+  runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-plan', '--type', 'BE'], '', tmp);
+  const denyBoth = writeTo(path.join(repoBE, 'src.js'));
+  if (denyBoth && JSON.parse(denyBoth).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: create-plan — запись в репо запрещена (только артефакты)');
+  else bad('scope: create-plan не заблокировал запись в репо');
+
+  // clear → снова всё разрешено
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+  if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: clear снимает ограничения');
+  else bad('scope: clear не снял ограничения');
+  if (!fs.existsSync(scopeFilePath(tmp))) ok('scope: clear удаляет файл области из temp');
+  else bad('scope: clear не удалил файл области');
+
+  // ---- защита от обходов (findings верификации) ----
+  const runBash = (cmd) =>
+    runScript('core/scripts/guard-bash.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { command: cmd } })).trim();
+  const decisionOf = (out) => (out ? JSON.parse(out).hookSpecificOutput.permissionDecision : 'allow');
+
+  runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'FE'], '', tmp);
+
+  // cd-трекинг: относительный редирект после cd в чужой репозиторий
+  if (decisionOf(runBash('cd repo-be && echo hack > src.js')) === 'deny') ok('guard-bash: cd-трекинг ловит редирект в чужой репо');
+  else bad('guard-bash: cd + редирект в чужой репо не заблокирован');
+
+  // tee в чужой репозиторий
+  if (decisionOf(runBash(`tee ${repoBE.replace(/\\/g, '/')}/x.txt`)) === 'deny') ok('guard-bash: tee вне области заблокирован');
+  else bad('guard-bash: tee вне области прошёл');
+
+  // подстановка в цели — ask
+  if (decisionOf(runBash('echo x > $HOME/evil.txt')) === 'ask') ok('guard-bash: цель с подстановкой → ask');
+  else bad('guard-bash: цель с подстановкой не ask');
+
+  // git-мутация в чужом репозитории — ask
+  if (decisionOf(runBash(`git -C ${repoBE.replace(/\\/g, '/')} checkout main`)) === 'ask') ok('guard-bash: git checkout вне области → ask');
+  else bad('guard-bash: git-мутация вне области не ask');
+
+  // rm в чужом репозитории — deny
+  if (decisionOf(runBash(`rm -rf ${repoBE.replace(/\\/g, '/')}/src`)) === 'deny') ok('guard-bash: rm вне области заблокирован');
+  else bad('guard-bash: rm вне области прошёл');
+
+  // прямое редактирование scope-файла — deny
+  const scopeDeny = writeTo(scopeFilePath(tmp));
+  if (scopeDeny && JSON.parse(scopeDeny).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: прямое редактирование файла области запрещено');
+  else bad('scope: файл области можно перезаписать напрямую');
+
+  // повреждённый scope → fail-closed для репозиториев
+  fs.writeFileSync(scopeFilePath(tmp), '{broken');
+  const corruptDeny = writeTo(path.join(repoBE, 'src.js'));
+  if (corruptDeny && JSON.parse(corruptDeny).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: повреждённый файл области — fail-closed для репо');
+  else bad('scope: повреждённый файл области открыл запись');
+
+  // устаревший scope (старше TTL) игнорируется
+  fs.writeFileSync(
+    scopeFilePath(tmp),
+    JSON.stringify({ stage: 'create-plan', writeRepos: [], setAt: new Date(Date.now() - 9 * 3600 * 1000).toISOString() }),
+  );
+  if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: устаревшая область (TTL) игнорируется');
+  else bad('scope: устаревшая область всё ещё блокирует');
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+
+  // scope.mjs валидация аргументов
+  let badStage = '';
+  try {
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'implment'], '', tmp);
+  } catch (e) {
+    badStage = String(e.stdout || '');
+  }
+  if (badStage.includes('неизвестный этап')) ok('scope: неизвестный этап отклоняется');
+  else bad('scope: опечатка в этапе не отлавливается');
+
+  // фолбэк workspace через CLAUDE_PROJECT_DIR (cd наружу не отключает guard)
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-outside-'));
+  try {
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'FE'], '', tmp);
+    const denyOut = execFileSync(
+      'node',
+      [path.join(root, 'core/scripts/guard-writes.mjs')],
+      {
+        input: JSON.stringify({ cwd: outsideDir, tool_input: { file_path: path.join(repoBE, 'x.js') } }),
+        encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PROJECT_DIR: tmp },
+      },
+    ).trim();
+    if (denyOut && JSON.parse(denyOut).hookSpecificOutput.permissionDecision === 'deny')
+      ok('guard-writes: CLAUDE_PROJECT_DIR-фолбэк — cd наружу не отключает защиту');
+    else bad('guard-writes: фолбэк workspace не сработал (cd наружу отключает защиту)');
+    runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+  } finally {
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+
+  // ---- быстрый режим (CONVEYOR_FAST) ----
+  const rcFast = JSON.parse(
+    execFileSync('node', [path.join(root, 'core/scripts/resolve-config.mjs'), tmp], {
+      encoding: 'utf8',
+      env: { ...process.env, CONVEYOR_FAST: 'true' },
+    }),
+  );
+  if (rcFast.fastMode === true && rcFast.config.reviewRounds === 0)
+    ok('fast: CONVEYOR_FAST=true → fastMode + reviewRounds=0');
+  else bad('fast: флаг не включает быстрый режим: ' + JSON.stringify({ f: rcFast.fastMode, r: rcFast.config.reviewRounds }));
+  const rcSlow = JSON.parse(runScript('core/scripts/resolve-config.mjs', [tmp]));
+  if (rcSlow.fastMode === false && rcSlow.config.reviewRounds === 2)
+    ok('fast: по умолчанию выключен (reviewRounds=2)');
+  else bad('fast: дефолт не false');
+  if (!rcSlow.missingVars.includes('CONVEYOR_FAST')) ok('fast: пустой CONVEYOR_FAST не в missing');
+  else bad('fast: CONVEYOR_FAST ошибочно в missing');
+
+  // validate-artifact: неполный артефакт (нет разделов) → ok:false
+  const artPath = path.join(tmp, 'plan-test.md');
+  fs.writeFileSync(artPath, '# План\n## Краткое резюме подхода\nчто-то\n');
+  let va = '';
+  try {
+    va = runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']);
+  } catch (e) {
+    va = String(e.stdout || '');
+  }
+  const vaObj = JSON.parse(va);
+  if (vaObj.ok === false && vaObj.missingSections.length) ok('validate-artifact: неполный план не проходит');
+  else bad('validate-artifact: неполный план прошёл валидацию');
+  // полный по разделам (шаблон содержит пример чекбокса и REQ-ID) → ok:true
+  fs.copyFileSync(path.join(root, 'core/templates/plan.md'), artPath);
+  const va2 = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']));
+  if (va2.ok === true && va2.placeholders.length) ok('validate-artifact: все разделы на месте + плейсхолдеры как предупреждение');
+  else bad('validate-artifact: полный по разделам план не прошёл: ' + JSON.stringify(va2));
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

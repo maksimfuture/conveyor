@@ -1,22 +1,42 @@
 #!/usr/bin/env node
-// guard-bash.mjs — PreToolUse hook for Bash (spec 8.1).
+// guard-bash.mjs — PreToolUse hook for Bash (spec 8.1 + stage scope).
 //
-// Rules depend ONLY on the command text (never on repo state — running git
-// status from a hook would be slow and flaky):
-//   deny  — git push --force / --force-with-lease
-//   deny  — push to a main branch (any repos.*.mainBranch)
-//   deny  — deleting a main branch (branch -d/-D or push --delete)
-//   deny  — file writes outside allowed roots (>, >>, sed -i, cp/mv, git apply)
-//   ask   — git reset --hard, git clean -f, any other git push
+// Rules are computed from the command TEXT (plus the declared cwd); repo
+// state is never queried (slow/flaky from a hook):
+//   deny — git push --force / --force-with-lease
+//   deny — push to a main branch (any repos.*.mainBranch)
+//   deny — deleting a main branch (branch -d/-D or push --delete)
+//   deny — file writes outside allowed roots / outside the stage scope
+//          (redirects, tee, dd of=, sed -i, cp/mv/rsync/install, rm/rmdir,
+//           touch/mkdir, ln, git apply -C)
+//   ask  — git reset --hard, git clean -f, any other git push
+//   ask  — working-tree-mutating git (checkout/restore/stash/…) in a repo
+//          OUTSIDE the active stage scope
+//   ask  — write targets / cd that contain $VAR, backticks or ~ (нельзя
+//          вычислить реальный путь)
 //   allow — everything else
 //
-// Fail policy: no settings.json in cwd -> allow silently. Once config is
-// loaded, unparyseable-but-risky commands fall through to allow only when no
-// rule matched; internal errors deny (fail-closed).
+// `cd`/`pushd` inside compound commands IS tracked: relative targets resolve
+// against the effective cwd, not the session cwd.
+//
+// Workspace resolution does NOT trust payload.cwd alone (an agent can `cd`
+// out of the workspace): readConfigForHook falls back to
+// $CLAUDE_PROJECT_DIR / $CONVEYOR_WORKSPACE.
+//
+// Fail policy: no conveyor workspace found anywhere -> allow silently.
+// Internal errors -> deny (fail-closed).
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfig, REPO_KEYS, isPathAllowed } from './lib/config.mjs';
+import {
+  readConfigForHook,
+  checkWrite,
+  readScope,
+  repoRootFor,
+  realResolve,
+  isInside,
+  REPO_KEYS,
+} from './lib/config.mjs';
 
 function readStdin() {
   try {
@@ -55,6 +75,83 @@ function tokenize(cmd) {
   return out;
 }
 
+// $VAR / `...` / ~ — путь не вычислить лексически.
+function hasSubstitution(s) {
+  return /[$`]/.test(s) || s === '~' || s.startsWith('~/');
+}
+
+function nonFlags(args) {
+  return args.filter((t) => !t.startsWith('-'));
+}
+
+// Collect write-target paths of one simple command (best-effort deny-list).
+function collectWriteTargets(sub, tok) {
+  const targets = [];
+
+  // > file / >> file (включая 2>file); дескрипторные формы (>&2) отбрасываем.
+  const redir = /(?:^|\s)\d?>>?\s*("[^"]+"|'[^']+'|[^\s|;&]+)/g;
+  let m;
+  while ((m = redir.exec(sub))) {
+    const t = m[1].replace(/^['"]|['"]$/g, '');
+    if (!t.startsWith('&')) targets.push(t);
+  }
+
+  const cmd = tok[0];
+  const args = tok.slice(1);
+  switch (cmd) {
+    case 'tee':
+      targets.push(...nonFlags(args));
+      break;
+    case 'dd':
+      for (const a of args) {
+        const mm = a.match(/^of=(.+)$/);
+        if (mm) targets.push(mm[1]);
+      }
+      break;
+    case 'sed': {
+      // -i и -i.bak (суффиксная форма); первый non-flag — скрипт, остальные — файлы.
+      if (args.some((a) => a.startsWith('-i'))) {
+        targets.push(...nonFlags(args).slice(1));
+      }
+      break;
+    }
+    case 'cp':
+    case 'mv':
+    case 'rsync':
+    case 'install': {
+      const ti = args.indexOf('-t');
+      if (ti !== -1 && args[ti + 1]) targets.push(args[ti + 1]);
+      else {
+        const nf = nonFlags(args);
+        if (nf.length >= 2) targets.push(nf[nf.length - 1]);
+      }
+      break;
+    }
+    case 'rm':
+    case 'rmdir':
+    case 'touch':
+    case 'mkdir':
+      // Удаление/создание — тоже мутация рабочей копии.
+      targets.push(...nonFlags(args));
+      break;
+    case 'ln': {
+      const nf = nonFlags(args);
+      if (nf.length) targets.push(nf[nf.length - 1]);
+      break;
+    }
+    case 'git': {
+      if (args.includes('apply')) {
+        const ci = args.indexOf('-C');
+        if (ci !== -1 && args[ci + 1]) targets.push(args[ci + 1]);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return targets;
+}
+
 function mainBranches(cfg) {
   const set = new Set();
   for (const key of REPO_KEYS) {
@@ -64,50 +161,36 @@ function mainBranches(cfg) {
   return set;
 }
 
-// Redirection / write targets that point outside allowed roots.
-function badWriteTarget(cmd, cfg, cwd) {
-  const targets = [];
+// git-подкоманды, мутирующие рабочее дерево/историю рабочей копии.
+const MUTATING_GIT = new Set([
+  'checkout', 'switch', 'restore', 'stash', 'merge', 'rebase', 'cherry-pick',
+  'reset', 'clean', 'commit', 'am', 'apply', 'revert', 'rm', 'mv', 'worktree',
+]);
 
-  // > file  and  >> file
-  const redir = /(?:^|\s)>>?\s*("[^"]+"|'[^']+'|[^\s|;&]+)/g;
-  let m;
-  while ((m = redir.exec(cmd))) targets.push(m[1].replace(/^['"]|['"]$/g, ''));
-
-  const tok = tokenize(cmd);
-  // sed -i <file...>
-  if (tok[0] === 'sed' && tok.includes('-i')) {
-    for (const t of tok.slice(1)) if (!t.startsWith('-') && !t.includes('/dev/')) targets.push(t);
-  }
-  // cp / mv destination (last non-flag arg)
-  if (tok[0] === 'cp' || tok[0] === 'mv') {
-    const args = tok.slice(1).filter((t) => !t.startsWith('-'));
-    if (args.length >= 2) targets.push(args[args.length - 1]);
-  }
-  // git apply writes into the working tree of whatever -C points to; flag it
-  // only when an explicit outside path is given.
-  if (tok[0] === 'git' && tok.includes('apply')) {
-    const ci = tok.indexOf('-C');
-    if (ci !== -1 && tok[ci + 1]) targets.push(tok[ci + 1]);
-  }
-
-  for (const t of targets) {
-    if (t.startsWith('/dev/') || t === '/dev/null') continue;
-    const abs = path.isAbsolute(t) ? t : path.resolve(cwd, t);
-    if (!isPathAllowed(abs, cfg)) return abs;
+// Определяем подкоманду git, пропуская глобальные флаги и -C <path>.
+function gitSubcommand(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i];
+    if (t === '-C' || t === '-c') {
+      i++;
+      continue;
+    }
+    if (t.startsWith('-')) continue;
+    return t;
   }
   return null;
 }
 
-function classifyGit(tok, mains) {
+function classifyGit(tok, mains, cfg, effCwd) {
   if (tok[0] !== 'git') return null;
   const rest = tok.slice(1);
   const has = (f) => rest.includes(f);
+  const sub = gitSubcommand(rest);
 
-  if (rest[0] === 'push') {
+  if (sub === 'push') {
     if (has('--force') || has('-f') || has('--force-with-lease')) {
       return { decision: 'deny', reason: 'push --force запрещён политикой conveyor.' };
     }
-    // push --delete <branch> / push origin :branch
     const delIdx = rest.indexOf('--delete');
     if (delIdx !== -1) {
       const br = rest[delIdx + 1];
@@ -115,7 +198,6 @@ function classifyGit(tok, mains) {
         return { decision: 'deny', reason: `удаление основной ветки ${br} запрещено.` };
       }
     }
-    // push into a main branch
     for (const t of rest) {
       if (mains.has(t)) {
         return { decision: 'deny', reason: `push в основную ветку ${t} запрещён; работайте в ветке задачи.` };
@@ -130,17 +212,51 @@ function classifyGit(tok, mains) {
     return { decision: 'ask', reason: 'git push — подтвердите отправку в удалённый репозиторий.' };
   }
 
-  if (rest[0] === 'branch' && (has('-d') || has('-D'))) {
+  if (sub === 'branch' && (has('-d') || has('-D'))) {
     for (const t of rest.slice(1)) {
       if (mains.has(t)) return { decision: 'deny', reason: `удаление основной ветки ${t} запрещено.` };
     }
   }
 
-  if (rest[0] === 'reset' && has('--hard')) {
+  if (sub === 'reset' && has('--hard')) {
     return { decision: 'ask', reason: 'git reset --hard может потерять изменения — подтвердите.' };
   }
-  if (rest[0] === 'clean' && (has('-f') || has('-fd') || has('-df') || has('-xf'))) {
+  if (sub === 'clean' && (has('-f') || has('-fd') || has('-df') || has('-xf'))) {
     return { decision: 'ask', reason: 'git clean -f удаляет неотслеживаемые файлы — подтвердите.' };
+  }
+
+  // Scope: мутации рабочего дерева в репозитории вне рабочей области → ask.
+  const scope = readScope(cfg.workspaceRoot);
+  if (scope && sub && MUTATING_GIT.has(sub)) {
+    const ci = rest.indexOf('-C');
+    let repoDir = null;
+    if (ci !== -1 && rest[ci + 1]) {
+      const v = rest[ci + 1];
+      if (hasSubstitution(v)) {
+        return { decision: 'ask', reason: `git ${sub}: путь -C содержит подстановку — подтвердите.` };
+      }
+      repoDir = effCwd ? path.resolve(effCwd, v) : path.isAbsolute(v) ? v : null;
+    } else {
+      repoDir = effCwd;
+    }
+    if (repoDir === null) {
+      return { decision: 'ask', reason: `git ${sub}: не удалось вычислить целевой репозиторий (cd с подстановкой) — подтвердите.` };
+    }
+    const real = realResolve(repoDir);
+    for (const key of REPO_KEYS) {
+      const root = repoRootFor(cfg, key);
+      if (root && isInside(real, realResolve(root))) {
+        if (!scope.writeRepos.includes(key)) {
+          return {
+            decision: 'ask',
+            reason:
+              `git ${sub} в репозитории «${key}» вне рабочей области этапа ` +
+              `${scope.stage || '?'} — подтвердите (или scope.mjs clear, если этап не идёт).`,
+          };
+        }
+        break;
+      }
+    }
   }
   return null;
 }
@@ -153,23 +269,49 @@ function main() {
   } catch {
     payload = {};
   }
-  const cwd = payload.cwd || process.cwd();
-  const cfg = readConfig(cwd);
-  if (!cfg.found) return; // allow silently
+  const payloadCwd = payload.cwd || process.cwd();
+  const cfg = readConfigForHook(payloadCwd);
+  if (!cfg.found) return; // нигде нет conveyor-workspace — allow silently
 
   const command = (payload.tool_input && payload.tool_input.command) || '';
-  if (!command) return; // nothing to inspect
+  if (!command) return;
 
   const mains = mainBranches(cfg);
+  let effCwd = payloadCwd; // null = неизвестен (cd с подстановкой)
 
   for (const sub of subCommands(command)) {
-    const bad = badWriteTarget(sub, cfg, cwd);
-    if (bad) {
-      return decide('deny', `conveyor: запись вне разрешённых корней — ${bad}.`);
+    const tok = tokenize(sub);
+    if (!tok.length) continue;
+
+    // Трекинг cd/pushd: относительные цели резолвятся от эффективного cwd.
+    if (tok[0] === 'cd' || tok[0] === 'pushd') {
+      const arg = tok[1];
+      if (!arg || arg === '-') effCwd = null; // home / prev — не вычисляем
+      else if (hasSubstitution(arg)) effCwd = null;
+      else if (path.isAbsolute(arg)) effCwd = arg;
+      else effCwd = effCwd ? path.resolve(effCwd, arg) : null;
+      continue;
     }
-    const g = classifyGit(tokenize(sub), mains);
-    if (g && g.decision === 'deny') return decide('deny', `conveyor: ${g.reason}`);
-    if (g && g.decision === 'ask') return decide('ask', `conveyor: ${g.reason}`);
+
+    for (const t of collectWriteTargets(sub, tok)) {
+      if (t.startsWith('/dev/')) continue;
+      if (hasSubstitution(t)) {
+        return decide('ask', `conveyor: цель записи «${t}» содержит подстановку — проверить рабочую область невозможно, подтвердите.`);
+      }
+      let abs;
+      if (path.isAbsolute(t)) abs = t;
+      else if (effCwd) abs = path.resolve(effCwd, t);
+      else {
+        return decide('ask', 'conveyor: не удалось вычислить рабочий каталог (cd с подстановкой) — подтвердите команду.');
+      }
+      const v = checkWrite(abs, cfg);
+      if (!v.allowed) {
+        return decide('deny', `conveyor: запись запрещена — ${abs}: ${v.reason}`);
+      }
+    }
+
+    const g = classifyGit(tok, mains, cfg, effCwd);
+    if (g) return decide(g.decision, `conveyor: ${g.reason}`);
   }
   // No rule matched -> allow (stay silent).
 }

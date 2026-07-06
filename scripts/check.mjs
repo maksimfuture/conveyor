@@ -225,6 +225,10 @@ try {
   if (decisionOf(runBash('echo x > $HOME/evil.txt')) === 'ask') ok('guard-bash: цель с подстановкой → ask');
   else bad('guard-bash: цель с подстановкой не ask');
 
+  // cmd-идиома Windows: `> nul` создаёт файл — deny
+  if (decisionOf(runBash('dir /b .env > nul')) === 'deny') ok('guard-bash: редирект в nul (cmd-идиома) заблокирован');
+  else bad('guard-bash: > nul прошёл — создастся файл nul');
+
   // git-мутация в чужом репозитории — ask
   if (decisionOf(runBash(`git -C ${repoBE.replace(/\\/g, '/')} checkout main`)) === 'ask') ok('guard-bash: git checkout вне области → ask');
   else bad('guard-bash: git-мутация вне области не ask');

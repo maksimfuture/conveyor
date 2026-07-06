@@ -80,6 +80,10 @@ function hasSubstitution(s) {
   return /[$`]/.test(s) || s === '~' || s.startsWith('~/');
 }
 
+// Имена устройств cmd.exe: в POSIX-оболочке `> nul` СОЗДАЁТ файл nul —
+// частая ошибка Windows-привычки. Отбрасывать вывод надо в /dev/null.
+const WIN_DEVICE = /^(nul|con|prn|aux|com[1-9]|lpt[1-9])$/i;
+
 function nonFlags(args) {
   return args.filter((t) => !t.startsWith('-'));
 }
@@ -295,6 +299,14 @@ function main() {
 
     for (const t of collectWriteTargets(sub, tok)) {
       if (t.startsWith('/dev/')) continue;
+      if (WIN_DEVICE.test(path.basename(t))) {
+        return decide(
+          'deny',
+          `conveyor: «${t}» — устройство cmd.exe; в этой оболочке такой редирект СОЗДАЁТ файл. ` +
+            'Отбрасывайте вывод в /dev/null; существование файла проверяйте инструментами ' +
+            'платформы или node -e "process.exit(require(\'fs\').existsSync(\'<путь>\')?0:1)".',
+        );
+      }
       if (hasSubstitution(t)) {
         return decide('ask', `conveyor: цель записи «${t}» содержит подстановку — проверить рабочую область невозможно, подтвердите.`);
       }

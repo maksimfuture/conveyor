@@ -15,9 +15,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { isGitUrl } from './lib/config.mjs';
+import { isGitUrl, cacheCloneDir } from './lib/config.mjs';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -107,9 +106,9 @@ function cmdLocate(a) {
   if (!workspace) return fail('locate: --workspace required for cache clone');
   const cacheDir = path.join(workspace, '.cache', 'repos');
   fs.mkdirSync(cacheDir, { recursive: true });
-  const base = (link.split('/').pop() || name).replace(/\.git$/, '');
-  const hash = crypto.createHash('sha1').update(link).digest('hex').slice(0, 8);
-  const dest = path.join(cacheDir, `${base}-${hash}`);
+  // Единая логика имени клона — cacheCloneDir из lib/config.mjs (её же
+  // используют guard-скрипты при проверке рабочей области).
+  const dest = cacheCloneDir(workspace, link, name);
 
   if (!fs.existsSync(path.join(dest, '.git'))) {
     const r = tryGit(cacheDir, ['clone', link, dest]);

@@ -12,7 +12,9 @@ description: Составляет план реализации (plan.md) по �
 `${CONVEYOR_ROOT}/core/stages/create-plan.md`.
 
 Кратко:
-1. resolve-config; тип задачи из meta.json → агент + кодовая база.
+1. resolve-config; тип задачи из meta.json → агент + кодовая база. Установи
+   рабочую область: `scope.mjs set --stage create-plan --type <FE|BE> --task
+   <TASK-ID>` (запись в репо запрещена); `clear` при завершении.
 2. Найди и обнови рабочую копию кода (`git-ops locate` + `update --mode read`).
 3. Запусти агента-разработчика → plan.md (core/templates/plan.md); каждый шаг
    привязан к файлам и REQ-ID.

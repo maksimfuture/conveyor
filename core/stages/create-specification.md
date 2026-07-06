@@ -18,20 +18,29 @@
 3. первый запуск — `analysisShaAtFeature`;
 4. база не определилась — спроси диапазон.
 
+**Рабочая область:** чтение — ТОЛЬКО репозиторий системного анализа;
+запись — ТОЛЬКО артефакты задачи (specification.md, meta.json). Кодовые
+базы и репозиторий автотестов не открываются и агенту не сообщаются.
+
 ## Алгоритм
-1. Обнови рабочую копию анализа (`git-ops update --mode read`).
+1. Установи рабочую область: `scope.mjs set --stage create-specification
+   --type <FE|BE> --task <TASK-ID>` (запись в репозитории запрещена).
+   Обнови рабочую копию анализа (`git-ops update --mode read`).
 2. Вычисли diff (скилл):
    `git-ops diff --path <repo> --base <база> --head <головной ref>`.
    Приложи полные версии затронутых документов.
-3. Запусти system-analyst: вход — feature.md + diff + документы; выход —
-   `specification.md` по `core/templates/specification.md`.
+3. Запусти system-analyst: вход — feature.md + diff + приложенные документы
+   + путь к рабочей копии анализа (ТОЛЬКО для чтения — ссылки
+   «файл + раздел», соседний контекст); выход — `specification.md` по
+   `core/templates/specification.md`.
    Для задачи с `relatedTaskId`: требования скоупятся по «Границам фичи» из
    СВОЕГО feature.md; изменения связанной задачи — не в REQ-ID, а ссылкой на
    relatedTaskId.
 4. Валидация (скилл): все разделы шаблона на месте; у каждого требования
    есть REQ-ID и источник.
 5. Зафиксируй `baseSha`/`headSha` в
-   `meta.json → stages.specification`; `done = true`.
+   `meta.json → stages.specification`; `done = true`. Сними рабочую
+   область (`scope.mjs clear`).
 
 ## Ошибки
 Diff пуст → сообщи и предложи построить спецификацию по текущему состоянию

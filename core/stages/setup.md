@@ -11,10 +11,15 @@
 2. Спроси у пользователя `taskPrefix` (по умолчанию `TASK`).
 3. Создай структуру:
    - каталоги `tasks/FE/` и `tasks/BE/`;
-   - `settings.json` по образцу `${CONVEYOR_ROOT}/core/templates/settings.example.json`
-     (подставь taskPrefix);
-   - `.env.example` по образцу `${CONVEYOR_ROOT}/core/templates/env.example`;
+   - `settings.json` и `.env.example` — СКОПИРУЙ ФАЙЛЫ шаблонов МЕХАНИЧЕСКИ
+     (НЕ набирай содержимое по памяти — потеряешь новые ключи):
+     `node -e "const f=require('fs');f.copyFileSync('<CONVEYOR_ROOT>/core/templates/settings.example.json','settings.json');f.copyFileSync('<CONVEYOR_ROOT>/core/templates/env.example','.env.example')"`
+     Затем, если пользователь выбрал не-дефолтный taskPrefix, — точечная
+     правка ТОЛЬКО этого значения в скопированном settings.json;
    - пустой `.env`, если его нет.
+   Самопроверка: сверь ключи созданного settings.json с шаблоном —
+   `node -e "const a=Object.keys(require('<CONVEYOR_ROOT>/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}"`
+   — при missing дополни файл недостающими ключами из шаблона.
 4. Добавь `.env` и `.cache/` в `.gitignore` (создай файл, если его нет).
 5. Проверь доступность каждой заполненной ссылки. Для этого сначала
    получи конфигурацию (`resolve-config.mjs`), затем по каждой ссылке:

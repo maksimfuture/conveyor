@@ -49,6 +49,15 @@ for (const rel of [
   }
 }
 
+// 1b) settings-шаблон содержит все ожидаемые ключи (включая fast)
+{
+  const st = JSON.parse(fs.readFileSync(path.join(root, 'core/templates/settings.example.json'), 'utf8'));
+  const need = ['taskPrefix', 'repos', 'repoCache', 'reviewRounds', 'fast', 'language'];
+  const miss = need.filter((k) => !(k in st));
+  if (!miss.length) ok('settings.example.json: все ключи на месте (' + need.join(', ') + ')');
+  else bad('settings.example.json: нет ключей: ' + miss.join(', '));
+}
+
 // 2) Every skill has a matching stage; every agent has a matching prompt
 console.log('Соответствие скиллов/агентов ядру:');
 const skills = fs.readdirSync(path.join(root, 'adapters/claude-code/skills'));

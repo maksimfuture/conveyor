@@ -87,6 +87,7 @@ node scripts/check.mjs       # самопроверка (JSON, соответс�
   },
   "repoCache": "${CONVEYOR_REPO_CACHE}",
   "reviewRounds": "${CONVEYOR_REVIEW_ROUNDS}",
+  "fast": "${CONVEYOR_FAST}",
   "language": "ru"
 }
 ```

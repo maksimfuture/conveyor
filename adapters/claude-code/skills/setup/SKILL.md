@@ -12,9 +12,12 @@ description: Инициализирует рабочий репозиторий 
 Кратко:
 1. Если settings.json уже есть — не затирай, предложи дозаполнить.
 2. Спроси taskPrefix (по умолчанию TASK).
-3. Создай tasks/FE/, tasks/BE/, settings.json (шаблон
-   core/templates/settings.example.json), .env.example (core/templates/env.example),
-   пустой .env; добавь .env и .cache/ в .gitignore.
+3. Создай tasks/FE/, tasks/BE/; settings.json и .env.example — СКОПИРУЙ
+   файлы шаблонов механически (node -e fs.copyFileSync из
+   core/templates/settings.example.json и env.example; НЕ по памяти),
+   затем точечно поменяй taskPrefix при необходимости; пустой .env;
+   добавь .env и .cache/ в .gitignore. Сверь ключи settings.json с
+   шаблоном (см. core/stages/setup.md, шаг 3).
 4. Проверь каждую ссылку через `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate ...`;
    git-URL при выключенном repoCache — ошибка конфигурации.
 5. Выведи таблицу OK/ошибка/не заполнено и что осталось заполнить в .env.

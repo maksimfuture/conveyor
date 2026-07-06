@@ -1,5 +1,5 @@
 ---
-name: implement
+name: implement-plan
 description: Реализует задачу в кодовой базе по плану (plan.md) в отдельной ветке. Запускать после /create-plan, когда разработчик готов писать код. Создаёт ветку задачи, реализует шаги плана, прогоняет тесты и линтеры, коммитит. Аргумент TASK-ID.
 ---
 
@@ -12,7 +12,9 @@ description: Реализует задачу в кодовой базе по п�
 `${CONVEYOR_ROOT}/core/stages/implement-plan.md`.
 
 Кратко:
-1. resolve-config; тип из meta.json → агент + кодовая база. Проверь чистоту
+1. resolve-config; тип из meta.json → агент + кодовая база. Установи рабочую
+   область: `scope.mjs set --stage implement-plan --type <FE|BE> --task
+   <TASK-ID>` (`clear` при завершении/остановке). Проверь чистоту
    working tree (`git-ops clean-check`), грязная → стоп.
 2. Обнови (`update --mode write`); создай ветку `<TASK-ID>-<slug>`
    (`git-ops branch`), запиши implementBranch. Повторный запуск — продолжай

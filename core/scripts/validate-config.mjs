@@ -14,7 +14,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfig, requiredRepoKeys, REPO_KEYS } from './lib/config.mjs';
+import {
+  readConfig,
+  readScopeState,
+  requiredRepoKeys,
+  REPO_KEYS,
+  scopeFilePath,
+  LEGACY_SCOPE_FILE,
+} from './lib/config.mjs';
 
 const STAGES_NEEDING_REPO = [
   'create-feature',
@@ -118,6 +125,54 @@ function main() {
 
   const active = listActiveTasks(cfg.workspaceRoot);
   if (active.length) lines.push(`Активные задачи: ${active.join('; ')}.`);
+
+  if (cfg.fastMode) {
+    lines.push('conveyor: быстрый режим (CONVEYOR_FAST) включён — цикл ревью отключён.');
+  }
+
+  // Рабочая область (scope): устаревшую снимаем, про активную предупреждаем,
+  // повреждённую просим снять — иначе guard'ы будут блокировать запись в репо.
+  const scopeState = readScopeState(cfg.workspaceRoot);
+  if (scopeState.state === 'stale') {
+    try {
+      fs.unlinkSync(scopeFilePath(cfg.workspaceRoot));
+      lines.push('conveyor: снята устаревшая рабочая область этапа (старше TTL).');
+    } catch {
+      /* не критично */
+    }
+  } else if (scopeState.state === 'active') {
+    const s = scopeState.scope;
+    lines.push(
+      `⚠ conveyor: активна рабочая область этапа «${s.stage}»` +
+        (s.taskId ? ` (${s.taskId})` : '') +
+        ` с ${s.setAt || '?'} — запись разрешена только в: ${s.writeRepos.length ? s.writeRepos.join(', ') : 'артефакты задачи'}. ` +
+        'Если этап не выполняется — снимите: node <plugin>/core/scripts/scope.mjs clear.',
+    );
+  } else if (scopeState.state === 'corrupt') {
+    lines.push(
+      '⚠ conveyor: файл рабочей области повреждён — запись в репозитории заблокирована. ' +
+        'Снимите: node <plugin>/core/scripts/scope.mjs clear.',
+    );
+  }
+
+  // Легаси-уборка: scope раньше жил в .cache/active-scope.json — убрать
+  // старый файл и пустые каталоги .cache/repos и .cache (rmdir не трогает
+  // непустые: клоны при repoCache остаются).
+  try {
+    fs.unlinkSync(path.join(cfg.workspaceRoot, LEGACY_SCOPE_FILE));
+  } catch {
+    /* отсутствует */
+  }
+  for (const d of [
+    path.join(cfg.workspaceRoot, '.cache', 'repos'),
+    path.join(cfg.workspaceRoot, '.cache'),
+  ]) {
+    try {
+      fs.rmdirSync(d);
+    } catch {
+      /* не пустой или отсутствует */
+    }
+  }
 
   if (lines.length) emitContext(lines.join('\n'));
 }

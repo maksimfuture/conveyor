@@ -11,7 +11,9 @@ description: Формирует спецификацию (specification.md) по
 `${CONVEYOR_ROOT}/core/stages/create-specification.md`.
 
 Кратко:
-1. resolve-config; определи задачу по TASK-ID.
+1. resolve-config; определи задачу по TASK-ID. Установи рабочую область:
+   `scope.mjs set --stage create-specification --type <FE|BE> --task
+   <TASK-ID>` (запись в репозитории запрещена); `clear` при завершении.
 2. Головной ref анализа — `git-ops analysis-head ...`; база — по приоритету:
    --since → headSha прошлого запуска (режим «дополнить») /
    analysisShaAtFeature (режим «перезаписать») → analysisShaAtFeature.

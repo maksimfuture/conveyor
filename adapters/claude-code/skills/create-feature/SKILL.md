@@ -11,7 +11,10 @@ description: Заводит новую задачу конвейера и вно
 `${CONVEYOR_ROOT}/core/stages/create-feature.md`.
 
 Кратко:
-1. Первый шаг — resolve-config (см. _common.md).
+1. Первый шаг — resolve-config (см. _common.md). Определив тип/TASK-ID —
+   установи рабочую область: `scope.mjs set --stage create-feature --type
+   <FE|BE|FE-BE> --task <TASK-ID>`; при завершении/остановке — `scope.mjs
+   clear`.
 2. Аргументы `[FE|BE|FE-BE] [номер|TASK-ID] [требования]`; тип и номер, если
    не переданы, — уточни у пользователя (номер: предложи автоинкремент).
    FE-BE → две связанные задачи (relatedTaskId), общая ветка анализа.

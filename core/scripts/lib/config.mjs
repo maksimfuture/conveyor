@@ -370,6 +370,14 @@ export function allowedRoots(cfg) {
 const CLEAR_HINT =
   'если этап уже не выполняется — снимите область: node <plugin>/core/scripts/scope.mjs clear';
 
+// В папке задачи живут ТОЛЬКО артефакты конвейера. Исходники (tsx/js/less/…)
+// туда класть нельзя — код пишется в рабочую копию кодовой базы. Слабые
+// модели путают эти два пути, поэтому правило закреплено проверкой.
+export function isTaskArtifactFile(relPathInTasks) {
+  const base = path.basename(relPathInTasks);
+  return base.toLowerCase().endsWith('.md') || base === 'meta.json';
+}
+
 // Scope-aware write check (spec 8.1 + stage scope).
 //   - repo working copies (local paths or cache clones): with an active scope
 //     only the scoped repos are writable; without a scope — all of them;
@@ -452,6 +460,16 @@ export function checkWrite(targetPath, cfg) {
           reason:
             `при активном этапе в рабочем репозитории запись разрешена только в tasks/ и .cache/ ` +
             `(запрошено: ${rel}); временные файлы — в системный temp`,
+        };
+      }
+      // В tasks/ — только артефакты (*.md, meta.json). Исходники кладутся в
+      // рабочую копию кодовой базы, а не в папку задачи фасадного репо.
+      if (top === 'tasks' && rel !== 'tasks' && !isTaskArtifactFile(rel)) {
+        return {
+          allowed: false,
+          reason:
+            `в папке задачи разрешены только артефакты (*.md, meta.json); ` +
+            `исходники пиши в рабочую копию кодовой базы (запрошено: ${rel})`,
         };
       }
     }

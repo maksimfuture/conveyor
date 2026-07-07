@@ -186,6 +186,17 @@ try {
   else bad('scope: запись в backend вне области не заблокирована');
   if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/feature.md')) === '') ok('scope: артефакты задачи всегда разрешены');
   else bad('scope: артефакты задачи заблокированы при активном scope');
+  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/meta.json')) === '') ok('scope: meta.json в папке задачи разрешён');
+  else bad('scope: meta.json в папке задачи заблокирован');
+  // исходник в папке задачи — deny (код пишется в рабочую копию кодовой базы)
+  const denyTsx = writeTo(path.join(tmp, 'tasks/FE/TASK-1/GreetingModal.tsx'));
+  if (denyTsx && JSON.parse(denyTsx).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник (.tsx) в папке задачи ЗАБЛОКИРОВАН');
+  else bad('scope: исходник в папке задачи прошёл');
+  const denyNested = writeTo(path.join(tmp, 'tasks/FE/TASK-1/src/util.js'));
+  if (denyNested && JSON.parse(denyNested).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник во вложенной папке задачи заблокирован');
+  else bad('scope: вложенный исходник в папке задачи прошёл');
   if (!fs.existsSync(path.join(tmp, '.cache'))) ok('scope: .cache в workspace НЕ создаётся (файл области в temp)');
   else bad('scope: .cache появился в workspace при локальных ссылках');
   // пробный файл в корне workspace при активном этапе — deny
@@ -212,6 +223,9 @@ try {
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
   if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: clear снимает ограничения');
   else bad('scope: clear не снял ограничения');
+  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.tsx')) === '')
+    ok('scope: без scope whitelist папки задачи не применяется');
+  else bad('scope: whitelist папки задачи ошибочно активен без scope');
   if (!fs.existsSync(scopeFilePath(tmp))) ok('scope: clear удаляет файл области из temp');
   else bad('scope: clear не удалил файл области');
 
@@ -333,6 +347,33 @@ try {
   const va2 = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']));
   if (va2.ok === true && va2.placeholders.length) ok('validate-artifact: все разделы на месте + плейсхолдеры как предупреждение');
   else bad('validate-artifact: полный по разделам план не прошёл: ' + JSON.stringify(va2));
+
+  // validate-task-folder: исходник в папке задачи → ok:false + имя файла
+  const vtDir = path.join(tmp, 'tasks/FE/TASK-7');
+  fs.mkdirSync(path.join(vtDir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(vtDir, 'feature.md'), '# f\n');
+  fs.writeFileSync(path.join(vtDir, 'meta.json'), '{}');
+  fs.writeFileSync(path.join(vtDir, 'GreetingModal.tsx'), 'export {}\n');
+  fs.writeFileSync(path.join(vtDir, 'src/util.js'), 'export {}\n');
+  let vt = '';
+  try {
+    vt = runScript('core/scripts/validate-task-folder.mjs', ['--task', vtDir]);
+  } catch (e) {
+    vt = String(e.stdout || '');
+  }
+  const vtObj = JSON.parse(vt);
+  if (
+    vtObj.ok === false &&
+    vtObj.unexpectedFiles.includes('GreetingModal.tsx') &&
+    vtObj.unexpectedFiles.includes('src/util.js')
+  )
+    ok('validate-task-folder: исходники в папке задачи найдены');
+  else bad('validate-task-folder: исходники не найдены: ' + JSON.stringify(vtObj));
+  fs.unlinkSync(path.join(vtDir, 'GreetingModal.tsx'));
+  fs.rmSync(path.join(vtDir, 'src'), { recursive: true, force: true });
+  const vt2 = JSON.parse(runScript('core/scripts/validate-task-folder.mjs', ['--task', vtDir]));
+  if (vt2.ok === true && vt2.checkedFiles === 2) ok('validate-task-folder: чистая папка задачи проходит');
+  else bad('validate-task-folder: чистая папка не прошла: ' + JSON.stringify(vt2));
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

@@ -155,6 +155,20 @@ function main() {
     );
   }
 
+  // Мусорный файл `nul` в корне workspace — след cmd-идиомы `> nul`
+  // (в bash-подобной оболочке она СОЗДАЁТ файл). На Windows нужен префикс
+  // \\?\: без него имя `nul` парсится как NUL-девайс, а не файл на диске.
+  const nulPath = path.join(cfg.workspaceRoot, 'nul');
+  const nulReal = process.platform === 'win32' ? '\\\\?\\' + nulPath : nulPath;
+  try {
+    if (fs.existsSync(nulReal)) {
+      fs.unlinkSync(nulReal);
+      lines.push('conveyor: удалён мусорный файл `nul` (след cmd-идиомы `> nul`).');
+    }
+  } catch {
+    lines.push('⚠ conveyor: в корне workspace лежит файл `nul` (след `> nul`) — удалите вручную.');
+  }
+
   // Легаси-уборка: scope раньше жил в .cache/active-scope.json — убрать
   // старый файл и пустые каталоги .cache/repos и .cache (rmdir не трогает
   // непустые: клоны при repoCache остаются).

@@ -228,7 +228,7 @@ export function requiredRepoKeys(stage, taskType) {
     case 'create-requirements-auto-test':
       return [code];
     case 'implement-auto-test':
-      return ['autoTest', code];
+      return ['autoTest'];
     default:
       return [];
   }

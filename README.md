@@ -120,7 +120,7 @@ node scripts/check.mjs       # самопроверка (JSON, соответс�
 | setup, task-status | — |
 | create-feature, create-specification | systemsAnalysis |
 | create-plan, implement-plan, create-requirements-auto-test | frontend/backend (по типу) |
-| implement-auto-test | autoTest + frontend/backend (по типу) |
+| implement-auto-test | autoTest |
 
 ## Защита (guard-хуки)
 

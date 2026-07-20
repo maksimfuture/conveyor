@@ -46,8 +46,8 @@
 | implement-auto-test | автотесты (autoTest) | автотесты |
 
 (Колонки — про АГЕНТА: сама команда может читать кодовую базу для
-подготовки диффов через git-ops — например, на create-requirements-auto-test
-и implement-auto-test.)
+подготовки диффов через git-ops — например, на create-requirements-auto-test.
+На implement-auto-test кодовая база не открывается вовсе.)
 
 Правила:
 - агенту передаются ТОЛЬКО пути его области (см. таблицу) + папка задачи;

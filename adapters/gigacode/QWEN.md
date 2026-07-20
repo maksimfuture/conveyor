@@ -49,7 +49,7 @@
 | create-plan | код FE/BE (по типу) + specification.md | только артефакты (plan.md) |
 | implement-plan | код FE/BE + plan.md | код FE/BE + артефакты |
 | create-requirements-auto-test | ТОЛЬКО артефакты + готовый diff | только артефакты |
-| implement-auto-test | репо автотестов + requirements + готовый diff | репо автотестов + артефакты |
+| implement-auto-test | репо автотестов + requirements + specification | репо автотестов + артефакты |
 
 Guard-скрипты (см. ниже) при активной рабочей области БЛОКИРУЮТ запись в
 рабочие копии всех остальных репозиториев.

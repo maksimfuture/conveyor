@@ -17,15 +17,14 @@ description: Реализует автотесты в репозитории а�
    Проверь чистоту working tree репозитория автотестов.
 2. Обнови копию автотестов (`update --mode write`); создай ветку
    `<TASK-ID>-autotests` (`git-ops branch`), запиши autotestBranch.
-3. Подготовь diff реализации (baseSha/headSha из stage
-   requirements-auto-test) — кодовую базу открывает СКИЛЛ; агенту передаётся
-   ТОЛЬКО текст диффа (путь к кодовой базе НЕ передаётся).
-4. Запусти qa-autotest-engineer: реализация кейсов по соглашениям репозитория
-   автотестов; запуск тестов; report-auto-test.md
+3. Запусти qa-autotest-engineer: вход — ТОЛЬКО requirements-auto-test.md,
+   specification.md и путь к рабочей копии автотестов (кодовая база FE/BE
+   не открывается, дифф реализации не готовится); реализация кейсов по
+   соглашениям репозитория автотестов; запуск тестов; report-auto-test.md
    (core/templates/report-auto-test.md).
-5. Цикл ревью (core/stages/_review-loop.md, домен autotests): агент reviewer
+4. Цикл ревью (core/stages/_review-loop.md, домен autotests): агент reviewer
    находит замечания, qa-autotest-engineer спорит и исправляет (2 раунда по
    умолчанию; нерешённые blocker/major → эскалация).
-6. Скилл коммитит финальные изменения в ветку (push/MR — по подтверждению).
+5. Скилл коммитит финальные изменения в ветку (push/MR — по подтверждению).
    Обнови meta.json (stages.implement-auto-test.done + review). Конвейер
    задачи завершён.

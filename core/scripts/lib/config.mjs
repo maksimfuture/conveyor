@@ -16,14 +16,24 @@ const VAR_RE = /\$\{([A-Za-z0-9_]+)\}/g;
 // The four repositories, in the order they appear in settings.json.
 export const REPO_KEYS = ['systemsAnalysis', 'frontend', 'backend', 'autoTest'];
 
+// Рабочие копии живут ВНУТРИ рабочего репозитория: <workspace>/repos/<dir>.
+// Это дефолты для settings.json (repos.<key>.link) и для /setup; команда
+// может указать другой путь — он всё равно резолвится от workspaceRoot.
+export const REPO_DIRS = {
+  systemsAnalysis: 'repos/system-analysis',
+  frontend: 'repos/frontend',
+  backend: 'repos/backend',
+  autoTest: 'repos/autotests',
+};
+
 // All pipeline stages (used by scope.mjs validation).
 export const STAGE_NAMES = [
   'setup',
-  'create-feature',
+  'intent',
   'create-specification',
   'create-plan',
   'implement-plan',
-  'create-requirements-auto-test',
+  'create-autotest-plan',
   'implement-auto-test',
   'task-status',
 ];

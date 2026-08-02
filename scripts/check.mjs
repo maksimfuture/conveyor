@@ -472,6 +472,22 @@ try {
   else
     bad('scope: легальный вызов сломан: ' + JSON.stringify([legalSet, legalNone, legalShow, legalClear]));
 
+  // Токен без двух дефисов парсер складывал в args._, который никто не читает,
+  // — потерянный дефис отказывал так же тихо, как неизвестный флаг: фаза B
+  // спецификации сохраняла запись в анализ, хотя вызывающий её снимал.
+  const lostDash = runScope(['set', '--stage', 'create-specification', '--type', 'BE', '-write', 'none']);
+  if (lostDash.code !== 0 && lostDash.out.ok === false && lostDash.out.error.includes('-write'))
+    ok('scope: потерянный дефис (-write) отклоняется с названием аргумента');
+  else bad('scope: потерянный дефис принят: ' + JSON.stringify(lostDash));
+
+  // Пробел в списке --write отрезал хвост так же молча: запись разрешалась
+  // только frontend, а backend выбрасывался.
+  const spacedList = runScope(['set', '--stage', 'implement-plan', '--type', 'BE', '--write', 'frontend,', 'backend']);
+  if (spacedList.code !== 0 && spacedList.out.ok === false && spacedList.out.error.includes('backend'))
+    ok('scope: хвост списка --write через пробел отклоняется');
+  else bad('scope: хвост списка --write молча выброшен: ' + JSON.stringify(spacedList));
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+
   // фолбэк workspace через CLAUDE_PROJECT_DIR (cd наружу не отключает guard)
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-outside-'));
   try {

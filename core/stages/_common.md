@@ -15,13 +15,18 @@
 ## Первый шаг любого этапа (кроме /setup и /task-status)
 1. Получи конфигурацию:
    `node "${CONVEYOR_ROOT}/core/scripts/resolve-config.mjs"`
-   Разбери JSON: `found`, `workspaceRoot`, `config`, `repoCacheEnabled`,
-   `links`, `missingVars`.
+   Разбери JSON: `found`, `workspaceRoot`, `config`, `links`, `missingLinks`,
+   `urlLinks`, `fastMode`.
 2. Если `found:false` — останови этап: «Здесь не инициализирован рабочий
    репозиторий conveyor. Запустите /setup».
-3. Если в `missingVars` есть переменные, нужные этому этапу (таблица 4.4 в
-   README) — останови этап и перечисли их: «заполните .env по образцу
-   .env.example: не хватает …».
+3. Останови этап, если репозиторий, нужный ЭТОМУ этапу (таблица 4.4 в README),
+   непригоден по любой из трёх причин: он в `missingLinks` (ссылка не задана),
+   в `urlLinks` (вместо пути задан git-URL) или у него
+   `links.<ключ>.inside == false` (путь ведёт за пределы рабочего
+   репозитория). Объясни пользователю: в settings.json `repos.<ключ>.link` —
+   это путь ВНУТРИ рабочего репозитория, вида `repos/frontend`, а сам
+   репозиторий разработчик клонирует туда сам: плагин не клонирует. Затем
+   предложи `/setup`.
 
 ## Определение задачи
 - TASK-ID берётся из аргумента. Если не передан (кроме /create-feature) —

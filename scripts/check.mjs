@@ -570,6 +570,15 @@ try {
   else bad('scope: запись в backend вне области не заблокирована');
   if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/feature.md')) === '') ok('scope: артефакты задачи всегда разрешены');
   else bad('scope: артефакты задачи заблокированы при активном scope');
+  // intents/ — артефакты БА, писать можно при активном этапе
+  if (writeTo(path.join(tmp, 'intents/INTENT-1/intent.md')) === '')
+    ok('scope: intents/ разрешён при активном этапе');
+  else bad('scope: intents/ заблокирован');
+  // repos/<незаконфигуренный> при активном этапе — deny (это чужая рабочая копия)
+  const denyUnknownRepo = writeTo(path.join(tmp, 'repos/unknown/x.js'));
+  if (denyUnknownRepo && JSON.parse(denyUnknownRepo).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: запись в незаконфигуренный repos/* заблокирована');
+  else bad('scope: незаконфигуренный repos/* прошёл');
   if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/meta.json')) === '') ok('scope: meta.json в папке задачи разрешён');
   else bad('scope: meta.json в папке задачи заблокирован');
   // исходник в папке задачи — deny (код пишется в рабочую копию кодовой базы)

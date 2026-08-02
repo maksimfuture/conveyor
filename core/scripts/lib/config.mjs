@@ -369,11 +369,10 @@ export function isTaskArtifactFile(relPathInTasks) {
 }
 
 // Scope-aware write check (spec 8.1 + stage scope).
-//   - repo working copies (local paths or cache clones): with an active scope
+//   - repo working copies (repos/* inside the workspace): with an active scope
 //     only the scoped repos are writable; without a scope — all of them;
-//   - workspace (tasks/, settings, .cache): allowed — EXCEPT .cache/repos/*
-//     (repo clones obey the scope) and the scope file itself (only scope.mjs
-//     may change it);
+//   - workspace (tasks/, intents/, settings): allowed — EXCEPT the scope file
+//     itself (only scope.mjs may change it);
 //   - system temp: allowed (checked last — explicit roots take priority);
 //   - deepest matching root wins (nested repo/workspace configurations).
 // Returns { allowed, reason } so guards can explain denials.
@@ -429,27 +428,22 @@ export function checkWrite(targetPath, cfg) {
       };
     }
 
-    // Неизвестные каталоги в .cache/repos — тоже клоны: под scope/corrupt deny.
-    const cacheRepos = path.join(wsRoot, '.cache', 'repos');
-    if (isInside(target, cacheRepos) && (scopedKeys || corrupt)) {
-      return {
-        allowed: false,
-        reason: `клон в .cache/repos вне рабочей области текущего этапа (${CLEAR_HINT})`,
-      };
-    }
-    // При активном этапе workspace — только артефакты: tasks/, .cache/ и
+    // При активном этапе workspace — только артефакты: tasks/, intents/ и
     // файлы конфигурации. Пробные/временные файлы в корне (test-write.txt
-    // и т.п.) запрещены — временное пишите в системный temp.
+    // и т.п.) запрещены — временное пишите в системный temp. `repos` в списке
+    // намеренно нет: настроенная рабочая копия сюда не доходит (она матчится
+    // выше как kind:'repo'), а всё прочее в repos/ — чужой клон.
     if (scopedKeys || corrupt) {
       const rel = path.relative(wsRoot, target);
       const top = rel.split(path.sep)[0];
-      const allowedTop = ['tasks', '.cache', 'settings.json', '.env', '.env.example', '.gitignore'];
+      const allowedTop = ['tasks', 'intents', 'settings.json', '.env', '.env.example', '.gitignore'];
       if (rel !== '' && !allowedTop.includes(top)) {
         return {
           allowed: false,
           reason:
-            `при активном этапе в рабочем репозитории запись разрешена только в tasks/ и .cache/ ` +
-            `(запрошено: ${rel}); временные файлы — в системный temp`,
+            `при активном этапе в рабочем репозитории запись разрешена только в tasks/ и intents/ ` +
+            `(запрошено: ${rel}); рабочие копии — только те, что в области этапа; ` +
+            `временные файлы — в системный temp`,
         };
       }
       // В tasks/ — только артефакты (*.md, meta.json). Исходники кладутся в

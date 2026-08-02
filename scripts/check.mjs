@@ -279,6 +279,18 @@ try {
   if (rc.config && rc.config.reviewRounds === 2) ok('resolve-config: reviewRounds по умолчанию = 2');
   else bad('resolve-config: reviewRounds не 2: ' + (rc.config && rc.config.reviewRounds));
 
+  // validate-config — SessionStart-хук с fail-open: любая его ошибка глотается,
+  // и вместо подсказок пользователь получает тишину при коде 0. Поэтому
+  // проверяем именно ВЫВОД, а не факт запуска.
+  const vcCtxOf = (input) => {
+    const out = runScript('core/scripts/validate-config.mjs', [], input).trim();
+    try {
+      return JSON.parse(out).hookSpecificOutput.additionalContext || '';
+    } catch {
+      return '';
+    }
+  };
+
   // Ссылки-исключения — на отдельном мини-workspace: основная фикстура держит
   // проверки scope/guard, а четырёх ключей на все случаи не хватает. git-URL
   // плагин не принимает (он не клонирует): если такая ссылка станет resolved,
@@ -335,6 +347,17 @@ try {
     if (outsideWrite && JSON.parse(outsideWrite).hookSpecificOutput.permissionDecision === 'deny')
       ok('guard-writes: ссылка наружу не даёт права записи вне workspace');
     else bad('guard-writes: запись по ссылке наружу разрешена: ' + JSON.stringify(outsideWrite));
+
+    // Хук обязан назвать ОБА вида непригодной ссылки: молчаливая ссылка наружу
+    // доводит пользователя до deny guard-writes («путь вне разрешённых
+    // корней») — сообщения не про конфигурацию и не про тот скрипт.
+    const vcLinksBad = vcCtxOf(JSON.stringify({ cwd: tmpLinks }));
+    if (vcLinksBad.includes('frontend') && /вне рабочего репозитория/.test(vcLinksBad))
+      ok('validate-config: ссылка наружу названа ключом (третья категория)');
+    else bad('validate-config: ссылка наружу не названа: ' + JSON.stringify(vcLinksBad));
+    if (vcLinksBad.includes('systemsAnalysis') && vcLinksBad.includes('git-URL'))
+      ok('validate-config: ссылка-git-URL названа ключом и по сути');
+    else bad('validate-config: git-URL не назван: ' + JSON.stringify(vcLinksBad));
   } finally {
     fs.rmSync(tmpLinks, { recursive: true, force: true });
   }
@@ -370,17 +393,38 @@ try {
     ok('git-ops locate: в ошибке об отсутствующей копии назван абсолютный путь');
   else bad('git-ops locate: путь резолва не назван: ' + JSON.stringify(locMissing));
 
-  // validate-config — SessionStart-хук с fail-open: любая его ошибка глотается,
-  // и вместо подсказок пользователь получает тишину при коде 0. Поэтому
-  // проверяем именно ВЫВОД, а не факт запуска.
-  const vcCtxOf = (input) => {
-    const out = runScript('core/scripts/validate-config.mjs', [], input).trim();
-    try {
-      return JSON.parse(out).hookSpecificOutput.additionalContext || '';
-    } catch {
-      return '';
-    }
-  };
+  // Граница проекта — тот же критерий, что у ядра. Фикстура живая: рабочая
+  // копия СУЩЕСТВУЕТ и является git-репозиторием, только лежит вне рабочего
+  // репозитория. Без общего критерия locate рапортует ok:true, /setup считает
+  // репозиторий найденным, а конфигурация разваливается много позже — на
+  // guard-writes, чужим текстом про «путь вне разрешённых корней».
+  const outsideCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-loc-out-'));
+  try {
+    fs.mkdirSync(path.join(outsideCopy, '.git'), { recursive: true });
+    const outsideCopyValue = path.relative(tmp, outsideCopy).split(path.sep).join('/');
+    const locOutside = runScriptFull(
+      'core/scripts/git-ops.mjs',
+      ['locate', '--link', outsideCopyValue, '--workspace', tmp, '--name', 'backend'],
+      '',
+      tmp,
+    );
+    const locOutsideObj = JSON.parse(locOutside.stdout || '{}');
+    if (
+      locOutside.status !== 0 &&
+      locOutsideObj.ok === false &&
+      String(locOutsideObj.error).includes(outsideCopy) &&
+      /внутри рабочего репозитория/.test(String(locOutsideObj.error))
+    )
+      ok('git-ops locate: копия вне рабочего репозитория отклонена (код ≠ 0, путь назван)');
+    else
+      bad(
+        'git-ops locate: копия вне рабочего репозитория принята: ' +
+          JSON.stringify({ status: locOutside.status, out: locOutsideObj }),
+      );
+  } finally {
+    fs.rmSync(outsideCopy, { recursive: true, force: true });
+  }
+
   const vcLinks = vcCtxOf(JSON.stringify({ cwd: tmp }));
   if (vcLinks.includes('frontend') && vcLinks.includes('autoTest'))
     ok('validate-config: предупреждает о незаданных ссылках репозиториев');

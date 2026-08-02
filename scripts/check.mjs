@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { scopeFilePath } from '../core/scripts/lib/config.mjs';
+import { scopeFilePath, REPO_DIRS, STAGE_NAMES } from '../core/scripts/lib/config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -56,6 +56,33 @@ for (const rel of [
   const miss = need.filter((k) => !(k in st));
   if (!miss.length) ok('settings.example.json: все ключи на месте (' + need.join(', ') + ')');
   else bad('settings.example.json: нет ключей: ' + miss.join(', '));
+}
+
+// 1c) Константы ядра: каталоги репозиториев и имена этапов
+{
+  const wantDirs = {
+    systemsAnalysis: 'repos/system-analysis',
+    frontend: 'repos/frontend',
+    backend: 'repos/backend',
+    autoTest: 'repos/autotests',
+  };
+  const dirsOk = Object.entries(wantDirs).every(([k, v]) => REPO_DIRS[k] === v);
+  if (dirsOk) ok('config: REPO_DIRS — дефолтные каталоги repos/*');
+  else bad('config: REPO_DIRS не совпадает с ожидаемым: ' + JSON.stringify(REPO_DIRS));
+
+  const wantStages = [
+    'setup',
+    'intent',
+    'create-specification',
+    'create-plan',
+    'implement-plan',
+    'create-autotest-plan',
+    'implement-auto-test',
+    'task-status',
+  ];
+  if (wantStages.every((s) => STAGE_NAMES.includes(s)) && STAGE_NAMES.length === wantStages.length)
+    ok('config: STAGE_NAMES — новый список этапов');
+  else bad('config: STAGE_NAMES: ' + STAGE_NAMES.join(', '));
 }
 
 // 2) Every skill has a matching stage; every agent has a matching prompt

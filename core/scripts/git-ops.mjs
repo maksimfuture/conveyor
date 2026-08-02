@@ -5,7 +5,7 @@
 // `git` on PATH, no bash-isms.
 //
 // Subcommands:
-//   locate       --link <val> [--name <key>]
+//   locate       --link <path> --workspace <root> [--name <key>]
 //   clean-check  --path <p>
 //   update       --path <p> --main <branch> --kind local|cache --mode read|write
 //   log          --path <p> [--main <branch>] [-n <count>]
@@ -85,8 +85,13 @@ function revParse(repoPath, ref) {
 
 function cmdLocate(a) {
   const link = a.link;
+  const workspace = a.workspace;
   const name = a.name || 'repo';
   if (!link) return fail('locate: --link required');
+  // Ссылка — путь ОТ корня рабочего репозитория (settings.json: repos.<key>.link),
+  // а не от каталога, из которого запущен скрипт: этапы вызывают git-ops из
+  // произвольного cwd, и резолв от него дал бы «не найдено» на верном пути.
+  if (!workspace) return fail('locate: --workspace required');
 
   // Плагин НЕ клонирует: ссылка — путь к уже существующей рабочей копии.
   if (isGitUrl(link)) {
@@ -95,9 +100,12 @@ function cmdLocate(a) {
         'Склонируйте репозиторий сами и укажите путь в settings.json (repos.<key>.link).',
     );
   }
-  if (!fs.existsSync(link)) return fail(`локальный путь не найден: ${link}`);
-  if (!fs.existsSync(path.join(link, '.git'))) return fail(`не git-репозиторий: ${link}`);
-  return done({ ok: true, path: path.resolve(link), kind: 'local' });
+  const dest = path.resolve(workspace, link);
+  if (!fs.existsSync(dest)) {
+    return fail(`рабочая копия ${name} не найдена: ${dest}. Склонируйте репозиторий в этот каталог.`);
+  }
+  if (!fs.existsSync(path.join(dest, '.git'))) return fail(`не git-репозиторий: ${dest}`);
+  return done({ ok: true, path: dest, kind: 'local' });
 }
 
 function cmdCleanCheck(a) {

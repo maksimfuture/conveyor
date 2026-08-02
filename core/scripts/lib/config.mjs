@@ -101,15 +101,28 @@ export function isGitUrl(value) {
   );
 }
 
+// Единственный критерий пригодности ссылки на репозиторий: git-URL плагин не
+// принимает (он не клонирует), а путь резолвится ОТ workspaceRoot и обязан
+// остаться ВНУТРИ него. «../repo» и «..» выводят из проекта ровно так же, как
+// абсолютный путь чужого каталога, — все они непригодны. Этот же критерий
+// применяет guard-writes к ещё НЕ записанному settings.json.
+export function linkInsideWorkspace(value, workspaceRoot) {
+  const val = ((value === undefined || value === null ? '' : value) + '').trim();
+  if (!val || isGitUrl(val)) return false;
+  return isInside(path.resolve(workspaceRoot, val), workspaceRoot);
+}
+
 // Read + resolve. Returns a rich object; never throws for the common cases.
 //   { found:false }                              — no settings.json
 //   { found:true, error:'...' }                  — settings.json unparseable
 //   { found:true, workspaceRoot, config,         — success
 //     fastMode, links, missingLinks, urlLinks }
 //
-// links[key] = { value, isGitUrl, resolved, path, inside, mainBranch }
-// missingLinks = repo keys with an empty link; urlLinks = keys where the link
-// is a git URL (a configuration error: the plugin never clones).
+// links[key] = { value, isGitUrl, path, inside, mainBranch }
+// inside — пригодна ли ссылка (см. linkInsideWorkspace); только такая даёт
+// рабочую копию (repoRootFor). missingLinks = repo keys with an empty link;
+// urlLinks = keys where the link is a git URL (a configuration error: the
+// plugin never clones).
 export function readConfig(startDir = process.cwd()) {
   const workspaceRoot = findWorkspaceRoot(startDir);
   if (!workspaceRoot) return { found: false };
@@ -149,8 +162,9 @@ export function readConfig(startDir = process.cwd()) {
   config.reviewRounds = fastMode ? 0 : normalizeReviewRounds(config.reviewRounds);
 
   // Ссылка на репозиторий — путь к рабочей копии ОТНОСИТЕЛЬНО workspaceRoot
-  // (по умолчанию repos/<dir>). Абсолютный путь тоже допустим, но выводит за
-  // пределы проекта: помечаем inside=false — GigaCode такое не разрешит.
+  // (по умолчанию repos/<dir>). Ссылку, выводящую за пределы проекта, помечаем
+  // inside=false — GigaCode такое не разрешит; path при этом сохраняем, чтобы
+  // /setup и repos-status могли показать, куда она указывает.
   const links = {};
   const missingLinks = [];
   const urlLinks = [];
@@ -168,9 +182,8 @@ export function readConfig(startDir = process.cwd()) {
     links[key] = {
       value,
       isGitUrl: url,
-      resolved: value !== '' && !url,
       path: abs,
-      inside: abs ? isInside(abs, workspaceRoot) : false,
+      inside: linkInsideWorkspace(value, workspaceRoot),
       mainBranch,
     };
   }
@@ -269,10 +282,12 @@ export function stageWriteRepoKeys(stage, taskType) {
 }
 
 // Working-copy root for a repo key: absolute path resolved from the workspace
-// root. null when the link is empty or a (rejected) git URL.
+// root. null when the link is empty, is a (rejected) git URL or leads OUTSIDE
+// the workspace. ЕДИНСТВЕННОЕ место, где критерий inside превращается в право
+// записи: allowedRoots / checkWrite / guard-bash / scope ходят только сюда.
 export function repoRootFor(cfg, key) {
   const l = cfg.links && cfg.links[key];
-  if (!l || !l.resolved) return null;
+  if (!l || !l.inside) return null;
   return l.path;
 }
 

@@ -443,6 +443,15 @@ try {
     ok('scope: clear --force — неизвестный флаг, а не «требует значение»');
   else bad('scope: clear --force принят или ошибка не про флаг: ' + JSON.stringify(clearFlag));
 
+  // Пропуск --type даёт тот же отказ, что и опечатка в его имени: на
+  // implement-plan область считается по типу, и BE-задача без --type получила
+  // бы запись во frontend вместо backend. У set тип обязателен.
+  const noType = runScope(['set', '--stage', 'implement-plan', '--task', 'TASK-1']);
+  const scopeAfterNoType = JSON.parse(runScript('core/scripts/scope.mjs', ['show'], '', tmp));
+  if (noType.code !== 0 && noType.out.ok === false && noType.out.error.includes('--type') && scopeAfterNoType.state === 'none')
+    ok('scope: set без --type отклоняется, область не установлена');
+  else bad('scope: set без --type принят: ' + JSON.stringify(noType));
+
   // Легальные вызовы строгостью не задеты
   const legalSet = runScope(['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-3']);
   const legalNone = runScope(['set', '--stage', 'create-specification', '--type', 'BE', '--write', 'none']);

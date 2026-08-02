@@ -20,9 +20,9 @@
 2. Устанавливает рабочую область — момент и аргументы задаёт шаг 1 файла
    этапа (после определения типа/TASK-ID):
    `node "${CONVEYOR_ROOT}/core/scripts/scope.mjs" set --stage <этап>
-   [--type FE|BE|FE-BE] [--task TASK-ID]` (--type/--task опциональны;
-   повторный set перезаписывает область). При завершении И при досрочной
-   остановке этапа — `scope.mjs clear`.
+   --type FE|BE|FE-BE [--task TASK-ID]` (--type обязателен — от него зависит
+   область записи; --task опционален; повторный set перезаписывает область).
+   При завершении И при досрочной остановке этапа — `scope.mjs clear`.
 3. Читает и выполняет ТОЧНО `${CONVEYOR_ROOT}/core/stages/_common.md` и
    `${CONVEYOR_ROOT}/core/stages/<команда>.md`.
 4. Роли-агентов (system-analyst, frontend/backend-developer,

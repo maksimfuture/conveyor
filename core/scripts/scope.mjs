@@ -7,14 +7,16 @@
 // (артефакты в tasks/ и системный temp разрешены всегда).
 //
 // Usage:
-//   node scope.mjs set --stage <имя> [--type FE|BE|FE-BE] [--task TASK-ID]
+//   node scope.mjs set --stage <имя> --type FE|BE|FE-BE [--task TASK-ID]
 //                      [--write key1,key2|none]   # override; иначе по этапу
 //   node scope.mjs clear
 //   node scope.mjs show
 //
-// --type опционален (для create-specification FE-BE-пары передавайте FE-BE
-// или опускайте — на область записи это не влияет; --task для пары — TASK-ID
-// FE-задачи). Повторный set просто перезаписывает область.
+// --type обязателен у set: на implement-plan область записи считается по нему
+// (BE → backend, иначе frontend), и пропуск молча отдал бы BE-задаче frontend.
+// Правило одно для всех этапов — вызывающему не нужно помнить, где тип на
+// область влияет, а где нет. Для FE-BE-пары в create-specification передавайте
+// FE-BE, --task — TASK-ID FE-задачи. Повторный set перезаписывает область.
 //
 // Output: JSON { ok, scope? } on stdout. Exit 0/1.
 
@@ -98,14 +100,13 @@ if (sub === 'set') {
   if (!STAGE_NAMES.includes(args.stage)) {
     done({ ok: false, error: `неизвестный этап «${args.stage}». Допустимые: ${STAGE_NAMES.join(', ')}` });
   }
+  // Тип обязателен (см. шапку): без него область этапа implement-plan
+  // считалась бы по умолчанию и BE-задача получила бы запись во frontend.
+  if (typeof args.type !== 'string') done({ ok: false, error: 'set: требуется --type FE|BE|FE-BE' });
   // Нормализуем тип: FE | BE | FE-BE (регистронезависимо); иное — ошибка.
-  let taskType = null;
-  if (typeof args.type === 'string') {
-    const t = args.type.trim().toUpperCase();
-    if (!['FE', 'BE', 'FE-BE'].includes(t)) {
-      done({ ok: false, error: `неизвестный тип «${args.type}». Допустимые: FE, BE, FE-BE` });
-    }
-    taskType = t;
+  const taskType = args.type.trim().toUpperCase();
+  if (!['FE', 'BE', 'FE-BE'].includes(taskType)) {
+    done({ ok: false, error: `неизвестный тип «${args.type}». Допустимые: FE, BE, FE-BE` });
   }
   let writeRepos;
   if (args.write === 'none') {

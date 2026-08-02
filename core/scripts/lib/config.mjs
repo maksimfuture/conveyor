@@ -105,8 +105,8 @@ export function isGitUrl(value) {
 // принимает (он не клонирует), а путь резолвится ОТ workspaceRoot и обязан
 // остаться ВНУТРИ него. «../repo» и «..» выводят из проекта ровно так же, как
 // абсолютный путь чужого каталога, — все они непригодны. Этот же критерий
-// применяет guard-writes к ещё НЕ записанному settings.json.
-export function linkInsideWorkspace(value, workspaceRoot) {
+// применяют git-ops locate и guard-writes (к ещё НЕ записанному settings.json).
+export function isUsableLink(value, workspaceRoot) {
   const val = ((value === undefined || value === null ? '' : value) + '').trim();
   if (!val || isGitUrl(val)) return false;
   return isInside(path.resolve(workspaceRoot, val), workspaceRoot);
@@ -119,7 +119,7 @@ export function linkInsideWorkspace(value, workspaceRoot) {
 //     fastMode, links, missingLinks, urlLinks }
 //
 // links[key] = { value, isGitUrl, path, inside, mainBranch }
-// inside — пригодна ли ссылка (см. linkInsideWorkspace); только такая даёт
+// inside — пригодна ли ссылка (см. isUsableLink); только такая даёт
 // рабочую копию (repoRootFor). missingLinks = repo keys with an empty link;
 // urlLinks = keys where the link is a git URL (a configuration error: the
 // plugin never clones).
@@ -172,7 +172,13 @@ export function readConfig(startDir = process.cwd()) {
     const value = (((config.repos && config.repos[key] && config.repos[key].link) || '') + '').trim();
     const mainBranch =
       (((config.repos && config.repos[key] && config.repos[key].mainBranch) || '') + '').trim() || 'main';
-    if (config.repos && config.repos[key]) config.repos[key].mainBranch = mainBranch;
+    // Нормализованные значения пишем обратно в config: stage-файлы отсылают
+    // модель к config.repos.<ключ>.link, ядро считает по links[key].value —
+    // два написания одного значения расходились бы на пробелах.
+    if (config.repos && config.repos[key]) {
+      config.repos[key].link = value;
+      config.repos[key].mainBranch = mainBranch;
+    }
 
     const url = isGitUrl(value);
     const abs = value && !url ? path.resolve(workspaceRoot, value) : null;
@@ -183,7 +189,7 @@ export function readConfig(startDir = process.cwd()) {
       value,
       isGitUrl: url,
       path: abs,
-      inside: linkInsideWorkspace(value, workspaceRoot),
+      inside: isUsableLink(value, workspaceRoot),
       mainBranch,
     };
   }
@@ -284,7 +290,7 @@ export function stageWriteRepoKeys(stage, taskType) {
 // Working-copy root for a repo key: absolute path resolved from the workspace
 // root. null when the link is empty, is a (rejected) git URL or leads OUTSIDE
 // the workspace. ЕДИНСТВЕННОЕ место, где критерий inside превращается в право
-// записи: allowedRoots / checkWrite / guard-bash / scope ходят только сюда.
+// записи: checkWrite / guard-bash / scope ходят только сюда.
 export function repoRootFor(cfg, key) {
   const l = cfg.links && cfg.links[key];
   if (!l || !l.inside) return null;
@@ -349,17 +355,6 @@ export function isInside(childPath, parentDir) {
   if (child === parent) return true;
   const rel = path.relative(parent, child);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
-
-// Directories writes are allowed into (guard-writes / guard-bash), spec 8.1.
-// Kept for compatibility: the UNSCOPED root list.
-export function allowedRoots(cfg) {
-  const roots = [cfg.workspaceRoot, os.tmpdir()];
-  for (const key of REPO_KEYS) {
-    const root = repoRootFor(cfg, key);
-    if (root) roots.push(root);
-  }
-  return roots.map((r) => path.resolve(r));
 }
 
 const CLEAR_HINT =
@@ -476,8 +471,4 @@ export function checkWrite(targetPath, cfg) {
   if (isInside(target, os.tmpdir())) return { allowed: true };
 
   return { allowed: false, reason: 'путь вне разрешённых корней' };
-}
-
-export function isPathAllowed(targetPath, cfg) {
-  return checkWrite(targetPath, cfg).allowed;
 }

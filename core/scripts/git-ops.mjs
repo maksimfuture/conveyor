@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { isGitUrl, linkInsideWorkspace } from './lib/config.mjs';
+import { isGitUrl, isUsableLink } from './lib/config.mjs';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -101,11 +101,11 @@ function cmdLocate(a) {
     );
   }
   const dest = path.resolve(workspace, link);
-  // Критерий границы проекта — общий с ядром (linkInsideWorkspace): здесь он
+  // Критерий границы проекта — общий с ядром (isUsableLink): здесь он
   // применяется к тому же link, что и в readConfig. Без этого locate отвечал
   // ok:true на копию снаружи, этап рапортовал «найдена», а конфигурация
   // разваливалась много позже — на guard-writes, чужим текстом.
-  if (!linkInsideWorkspace(link, workspace)) {
+  if (!isUsableLink(link, workspace)) {
     return fail(
       `рабочая копия ${name} лежит вне рабочего репозитория: ${dest}. ` +
         `Путь в settings.json (repos.<key>.link) резолвится от корня рабочего репозитория (${workspace}) ` +

@@ -78,6 +78,11 @@ if (sub === 'set') {
     taskType = t;
   }
   let writeRepos;
+  // `--write` без значения парсер отдаёт как true. Молча взять права по этапу
+  // тут нельзя: фаза B спецификации так получила бы запись в анализ обратно.
+  if (args.write === true) {
+    done({ ok: false, error: '--write требует значение (список ключей или none)' });
+  }
   if (args.write === 'none') {
     writeRepos = []; // явный запрет записи в репозитории (фаза B спецификации)
   } else if (typeof args.write === 'string') {

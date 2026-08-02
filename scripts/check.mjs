@@ -8,9 +8,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { scopeFilePath, REPO_DIRS, STAGE_NAMES, requiredRepoKeys } from '../core/scripts/lib/config.mjs';
+import {
+  scopeFilePath,
+  REPO_KEYS,
+  REPO_DIRS,
+  STAGE_NAMES,
+  requiredRepoKeys,
+  stageWriteRepoKeys,
+} from '../core/scripts/lib/config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -36,6 +43,18 @@ function runScript(rel, args, input, cwd) {
   } catch (e) {
     return String(e.stdout || '');
   }
+}
+
+// То же, но с кодом возврата и stderr: ненулевой код — часть контракта скрипта,
+// и регрессия «печатает ok:false, но выходит с кодом 0» по одному stdout не
+// видна. Как и runScript, не бросает — прогон идёт дальше.
+function runScriptFull(rel, args, input, cwd) {
+  const r = spawnSync('node', [path.join(root, rel), ...args], {
+    input: input || '',
+    encoding: 'utf8',
+    cwd: cwd || undefined,
+  });
+  return { stdout: r.stdout || '', stderr: r.stderr || '', status: r.status };
 }
 
 // 1) JSON manifests parse
@@ -72,9 +91,18 @@ for (const rel of [
     backend: 'repos/backend',
     autoTest: 'repos/autotests',
   };
-  const dirsOk = Object.entries(wantDirs).every(([k, v]) => REPO_DIRS[k] === v);
-  if (dirsOk) ok('config: REPO_DIRS — дефолтные каталоги repos/*');
-  else bad('config: REPO_DIRS не совпадает с ожидаемым: ' + JSON.stringify(REPO_DIRS));
+  // Сверяем целиком, а не по ожидаемым ключам: лишний или переименованный
+  // пятый ключ иначе пройдёт молча. Состав и порядок обязаны совпадать с
+  // REPO_KEYS — по нему guard-* и resolve-config обходят репозитории.
+  if (JSON.stringify(REPO_DIRS) === JSON.stringify(wantDirs) && Object.keys(REPO_DIRS).join(',') === REPO_KEYS.join(','))
+    ok('config: REPO_DIRS — каталоги repos/*, состав и порядок как у REPO_KEYS');
+  else
+    bad(
+      'config: REPO_DIRS не совпадает с ожидаемым: ' +
+        JSON.stringify(REPO_DIRS) +
+        ' при REPO_KEYS: ' +
+        REPO_KEYS.join(', '),
+    );
 
   const wantStages = [
     'setup',
@@ -86,8 +114,11 @@ for (const rel of [
     'implement-auto-test',
     'task-status',
   ];
-  if (wantStages.every((s) => STAGE_NAMES.includes(s)) && STAGE_NAMES.length === wantStages.length)
-    ok('config: STAGE_NAMES — новый список этапов');
+  // Порядок смысловой — это порядок конвейера, и в таком виде список этапов
+  // печатается моделью в ошибке scope.mjs. Поэтому сверка целиком, а не по
+  // составу.
+  if (STAGE_NAMES.join(',') === wantStages.join(','))
+    ok('config: STAGE_NAMES — состав и порядок конвейера');
   else bad('config: STAGE_NAMES: ' + STAGE_NAMES.join(', '));
 
   // requiredRepoKeys проверяем на КАЖДОМ этапе из STAGE_NAMES: `default: []`
@@ -112,6 +143,30 @@ for (const rel of [
     );
   if (requiredRepoKeys('create-plan', 'FE').join(',') === 'frontend') ok('config: requiredRepoKeys — FE-задача берёт frontend');
   else bad('config: requiredRepoKeys(create-plan, FE): ' + requiredRepoKeys('create-plan', 'FE').join(','));
+
+  // stageWriteRepoKeys решает, КУДА МОЖНО ПИСАТЬ, поэтому её `default: []`
+  // опаснее: потерянная ветка не открывает лишнего, а молча отбирает у этапа
+  // право писать в свой репозиторий — и набор при этом зелёный. Таблица
+  // исчерпывающая и по этапам, и по типам задачи (тип решает на implement-plan).
+  const wantWrite = {
+    setup: { FE: '', BE: '' },
+    intent: { FE: '', BE: '' },
+    'create-specification': { FE: 'systemsAnalysis', BE: 'systemsAnalysis' },
+    'create-plan': { FE: '', BE: '' },
+    'implement-plan': { FE: 'frontend', BE: 'backend' },
+    'create-autotest-plan': { FE: '', BE: '' },
+    'implement-auto-test': { FE: 'autoTest', BE: 'autoTest' },
+    'task-status': { FE: '', BE: '' },
+  };
+  const writeDiff = [];
+  for (const s of STAGE_NAMES) {
+    for (const t of ['FE', 'BE']) {
+      const got = stageWriteRepoKeys(s, t).join(',');
+      if (got !== (wantWrite[s] || {})[t]) writeDiff.push(`${s}/${t}→[${got}]`);
+    }
+  }
+  if (!writeDiff.length) ok('config: stageWriteRepoKeys — права записи каждого этапа для FE и BE');
+  else bad('config: stageWriteRepoKeys расходится на этапах: ' + writeDiff.join(', '));
 }
 
 // 2) Every skill has a matching stage; every agent has a matching prompt
@@ -397,24 +452,25 @@ try {
   else bad('scope: устаревшая область всё ещё блокирует');
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
 
-  // scope.mjs валидация аргументов
-  const badStage = runScript('core/scripts/scope.mjs', ['set', '--stage', 'implment'], '', tmp);
-  if (badStage.includes('неизвестный этап')) ok('scope: неизвестный этап отклоняется');
-  else bad('scope: опечатка в этапе не отлавливается');
+  // scope.mjs валидация аргументов. Отказ должен быть заметен и вызывающему
+  // скрипту, и модели: ненулевой код возврата И причина в тексте.
+  const badStage = runScriptFull('core/scripts/scope.mjs', ['set', '--stage', 'implment'], '', tmp);
+  if (badStage.status === 1 && badStage.stdout.includes('неизвестный этап'))
+    ok('scope: неизвестный этап отклоняется с кодом 1');
+  else bad(`scope: опечатка в этапе не отлавливается: код ${badStage.status}, вывод: ${(badStage.stdout || badStage.stderr).trim()}`);
 
-  // Отказ от неизвестного флага должен быть заметен и вызывающему скрипту, и
-  // модели: ненулевой код возврата И названный флаг в тексте. runScript код
-  // глотает, поэтому здесь берём его отдельно.
+  // Парная проверка: без неё регрессия «всегда единица» выглядит как успех —
+  // код 1 у отказа перестал бы что-либо означать.
+  const okStage = runScriptFull('core/scripts/scope.mjs', ['set', '--stage', 'create-plan', '--type', 'BE'], '', tmp);
+  if (okStage.status === 0) ok('scope: корректный set возвращает код 0');
+  else bad(`scope: корректный set вернул код ${okStage.status}: ${(okStage.stdout || okStage.stderr).trim()}`);
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp); // проверки ниже ждут «области нет»
+
+  // Отказ от неизвестного флага проверяется так же по двум признакам: код
+  // возврата и названный флаг в тексте. Здесь ещё и разобранный JSON.
   const runScope = (argv) => {
-    try {
-      const stdout = execFileSync('node', [path.join(root, 'core/scripts/scope.mjs'), ...argv], {
-        encoding: 'utf8',
-        cwd: tmp,
-      });
-      return { code: 0, out: JSON.parse(stdout) };
-    } catch (e) {
-      return { code: e.status, out: JSON.parse(String(e.stdout || '{}')) };
-    }
+    const r = runScriptFull('core/scripts/scope.mjs', argv, '', tmp);
+    return { code: r.status, out: JSON.parse(r.stdout || '{}') };
   };
 
   // Опечатка в имени флага СО значением раньше проходила молча: `--tpye BE`

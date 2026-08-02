@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfigForHook, checkWrite, isGitUrl } from './lib/config.mjs';
+import { readConfigForHook, checkWrite, linkInsideWorkspace } from './lib/config.mjs';
 
 function readStdin() {
   try {
@@ -35,9 +35,10 @@ function decide(decision, reason) {
 }
 
 // Best-effort: repos.*.link — путь к рабочей копии ОТНОСИТЕЛЬНО корня проекта
-// (repos/<dir>). git-URL плагин не принимает (он не клонирует), абсолютный
-// путь выводит за пределы проекта. Возвращает непригодные значения.
-function badLinkValues(text) {
+// (repos/<dir>). Критерий пригодности — общий с ядром (linkInsideWorkspace):
+// git-URL плагин не принимает, а путь наружу («../repo», чужой каталог)
+// рабочей копии не даёт. Возвращает непригодные значения.
+function badLinkValues(text, workspaceRoot) {
   const out = [];
   if (!text) return out;
   // match "link": "value" pairs
@@ -47,9 +48,7 @@ function badLinkValues(text) {
     const val = m[1].trim();
     // пусто — ещё не заданная ссылка; ${VAR} — подстановка, её резолвит .env
     if (val === '' || /^\$\{[A-Za-z0-9_]+\}$/.test(val)) continue;
-    // Диск Windows проверяем явно: на POSIX path.isAbsolute('C:/x') = false,
-    // а settings.json может писаться из любой оболочки.
-    if (isGitUrl(val) || path.isAbsolute(val) || /^[A-Za-z]:[\\/]/.test(val)) out.push(val);
+    if (!linkInsideWorkspace(val, workspaceRoot)) out.push(val);
   }
   return out;
 }
@@ -92,13 +91,13 @@ function main() {
   // Guard settings.json against links the pipeline cannot use.
   const settingsPath = path.join(cfg.workspaceRoot, 'settings.json');
   if (path.resolve(target) === settingsPath) {
-    const bad = badLinkValues(input.content || input.new_string || '');
+    const bad = badLinkValues(input.content || input.new_string || '', cfg.workspaceRoot);
     if (bad.length) {
       return decide(
         'deny',
-        'conveyor: в settings.json поля repos.*.link — путь к рабочей копии относительно ' +
-          'корня проекта (например repos/backend), а не git-URL и не абсолютный путь. ' +
-          `Отвергнуто: ${bad.join(', ')}.`,
+        'conveyor: в settings.json поля repos.*.link — путь к рабочей копии ВНУТРИ ' +
+          'корня проекта (например repos/backend): не git-URL и не путь наружу ' +
+          `(«../», абсолютный). Отвергнуто: ${bad.join(', ')}.`,
       );
     }
   }

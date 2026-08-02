@@ -69,7 +69,8 @@
 
 ## Работа с внешними репозиториями (спец. 4.3)
 - Найти рабочую копию:
-  `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --repo-cache <bool> --name <key>`
+  `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <key>`
+  (`link` — путь ОТ корня рабочего репозитория, поэтому `--workspace` обязателен)
 - Обновить перед работой:
   `... git-ops.mjs update --path <repoPath> --main <mainBranch> --kind local|cache --mode read|write`
   Для этапов записи (`--mode write`) грязная локальная копия → остановка.

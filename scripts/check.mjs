@@ -332,7 +332,7 @@ try {
           systemsAnalysis: { link: 'git@git.example.com:group/system-analysis.git', mainBranch: 'main' },
           frontend: { link: outsideValue, mainBranch: 'main' },
           backend: { link: '', mainBranch: 'main' },
-          autoTest: { link: '', mainBranch: 'main' },
+          autoTest: { link: '  repos/autotests  ', mainBranch: '  develop  ' },
         },
       }),
     );
@@ -349,6 +349,21 @@ try {
     if (!(rcL.missingLinks || []).includes('systemsAnalysis'))
       ok('resolve-config: git-URL — не пропущенная ссылка (missingLinks про пустые)');
     else bad('resolve-config: git-URL попал в missingLinks: ' + JSON.stringify(rcL.missingLinks));
+    // У значения не должно быть двух написаний: stage-файлы отсылают модель к
+    // config.repos.<ключ>.link, ядро считает по links.<ключ>.value —
+    // нормализация обязана быть одна на оба поля (как у mainBranch).
+    const padded = (rcL.config && rcL.config.repos && rcL.config.repos.autoTest) || {};
+    if (
+      rcL.links.autoTest.value === 'repos/autotests' &&
+      padded.link === rcL.links.autoTest.value &&
+      padded.mainBranch === rcL.links.autoTest.mainBranch
+    )
+      ok('resolve-config: пробелы вокруг link/mainBranch срезаны в обоих полях (config.repos и links)');
+    else
+      bad(
+        'resolve-config: у ссылки два написания: ' +
+          JSON.stringify({ config: padded, link: rcL.links.autoTest }),
+      );
     // Ссылка «../…» выводит из проекта ровно так же, как чужой диск: путь
     // остаётся для диагностики, но пригодной ссылка не считается.
     const outsideLink = (rcL.links && rcL.links.frontend) || {};

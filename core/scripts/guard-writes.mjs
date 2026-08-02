@@ -3,7 +3,10 @@
 //
 // Allows writes only inside the allowed roots (workspace, repo working copies,
 // system temp). Blocks everything else, and blocks writing an unusable
-// repos.*.link into settings.json (git URL or absolute path).
+// repos.*.link into settings.json: the link must resolve INSIDE the workspace
+// root (repos/<dir>), so a git URL or a path leading outside («../repo», an
+// absolute path elsewhere) is rejected. The criterion is shared with the core
+// — isUsableLink in lib/config.mjs.
 //
 // Fail policy (spec 8.1): if there is no settings.json in cwd, allow silently
 // (the plugin is only active inside a conveyor workspace). Once config IS
@@ -11,7 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfigForHook, checkWrite, linkInsideWorkspace } from './lib/config.mjs';
+import { readConfigForHook, checkWrite, isUsableLink } from './lib/config.mjs';
 
 function readStdin() {
   try {
@@ -35,7 +38,7 @@ function decide(decision, reason) {
 }
 
 // Best-effort: repos.*.link — путь к рабочей копии ОТНОСИТЕЛЬНО корня проекта
-// (repos/<dir>). Критерий пригодности — общий с ядром (linkInsideWorkspace):
+// (repos/<dir>). Критерий пригодности — общий с ядром (isUsableLink):
 // git-URL плагин не принимает, а путь наружу («../repo», чужой каталог)
 // рабочей копии не даёт. Возвращает непригодные значения.
 function badLinkValues(text, workspaceRoot) {
@@ -48,7 +51,7 @@ function badLinkValues(text, workspaceRoot) {
     const val = m[1].trim();
     // пусто — ещё не заданная ссылка; ${VAR} — подстановка, её резолвит .env
     if (val === '' || /^\$\{[A-Za-z0-9_]+\}$/.test(val)) continue;
-    if (!linkInsideWorkspace(val, workspaceRoot)) out.push(val);
+    if (!isUsableLink(val, workspaceRoot)) out.push(val);
   }
   return out;
 }

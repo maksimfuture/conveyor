@@ -89,8 +89,9 @@ export function normalizeReviewRounds(value) {
   return n;
 }
 
-// A link is treated as a git URL (needs cache clone) when it looks like
-// ssh/https/git syntax rather than a filesystem path.
+// A link is treated as a git URL when it looks like ssh/https/git syntax
+// rather than a filesystem path. The plugin never clones, so such a link is a
+// configuration error — see urlLinks below.
 export function isGitUrl(value) {
   if (!value) return false;
   return (
@@ -104,12 +105,11 @@ export function isGitUrl(value) {
 //   { found:false }                              — no settings.json
 //   { found:true, error:'...' }                  — settings.json unparseable
 //   { found:true, workspaceRoot, config,         — success
-//     repoCacheEnabled, fastMode, links, missingVars }
+//     fastMode, links, missingLinks, urlLinks }
 //
-// links[key] = { varName|null, value, isGitUrl, resolved(bool), mainBranch }
-// missingVars = referenced env var names that resolved to empty AND are not
-//               optional flags with defaults (repoCache, reviewRounds, fast,
-//               repos.*.mainBranch).
+// links[key] = { value, isGitUrl, resolved, path, inside, mainBranch }
+// missingLinks = repo keys with an empty link; urlLinks = keys where the link
+// is a git URL (a configuration error: the plugin never clones).
 export function readConfig(startDir = process.cwd()) {
   const workspaceRoot = findWorkspaceRoot(startDir);
   if (!workspaceRoot) return { found: false };
@@ -127,14 +127,8 @@ export function readConfig(startDir = process.cwd()) {
     ...process.env, // process environment wins over .env
   };
 
-  const referenced = new Map(); // varName -> resolved value ('' if unresolved)
   const resolveStr = (str) =>
-    str.replace(VAR_RE, (_, name) => {
-      const v = env[name];
-      const value = v === undefined ? '' : v;
-      referenced.set(name, value);
-      return value;
-    });
+    str.replace(VAR_RE, (_, name) => (env[name] === undefined ? '' : env[name]));
 
   const deep = (v) => {
     if (typeof v === 'string') return resolveStr(v);
@@ -148,63 +142,47 @@ export function readConfig(startDir = process.cwd()) {
   };
 
   const config = deep(settings);
-  const repoCacheEnabled = normalizeBool(config.repoCache);
   // fast mode (CONVEYOR_FAST): default false; forces reviewRounds = 0.
   const fastMode = normalizeBool(config.fast);
   config.fast = fastMode;
   // reviewRounds comes from env (${VAR}); empty/invalid -> default 2.
   config.reviewRounds = fastMode ? 0 : normalizeReviewRounds(config.reviewRounds);
 
-  // Per-repo link details, tracing each link back to its ${VAR}.
+  // Ссылка на репозиторий — путь к рабочей копии ОТНОСИТЕЛЬНО workspaceRoot
+  // (по умолчанию repos/<dir>). Абсолютный путь тоже допустим, но выводит за
+  // пределы проекта: помечаем inside=false — GigaCode такое не разрешит.
   const links = {};
-  const rawRepos = settings.repos || {};
-  const mainBranchVars = []; // ${VAR} names behind repos.*.mainBranch
+  const missingLinks = [];
+  const urlLinks = [];
   for (const key of REPO_KEYS) {
-    const rawLink = rawRepos[key] && rawRepos[key].link;
-    const value = (config.repos && config.repos[key] && config.repos[key].link) || '';
-    const m = typeof rawLink === 'string' ? rawLink.match(/^\$\{([A-Za-z0-9_]+)\}$/) : null;
-
-    // mainBranch also comes from env (${VAR}); empty -> default 'main'.
-    const rawBranch = rawRepos[key] && rawRepos[key].mainBranch;
-    const bm = typeof rawBranch === 'string' ? rawBranch.match(/^\$\{([A-Za-z0-9_]+)\}$/) : null;
-    if (bm) mainBranchVars.push(bm[1]);
+    const value = (((config.repos && config.repos[key] && config.repos[key].link) || '') + '').trim();
     const mainBranch =
-      (((config.repos && config.repos[key] && config.repos[key].mainBranch) || '') + '').trim() ||
-      'main';
+      (((config.repos && config.repos[key] && config.repos[key].mainBranch) || '') + '').trim() || 'main';
     if (config.repos && config.repos[key]) config.repos[key].mainBranch = mainBranch;
 
+    const url = isGitUrl(value);
+    const abs = value && !url ? path.resolve(workspaceRoot, value) : null;
+    if (!value) missingLinks.push(key);
+    if (url) urlLinks.push(key);
+
     links[key] = {
-      varName: m ? m[1] : null,
       value,
-      isGitUrl: isGitUrl(value),
-      resolved: value !== '',
+      isGitUrl: url,
+      resolved: value !== '' && !url,
+      path: abs,
+      inside: abs ? isInside(abs, workspaceRoot) : false,
       mainBranch,
     };
-  }
-
-  // Optional vars whose empty value is intentional (a default applies) and
-  // therefore must never be reported as "missing": repoCache, reviewRounds,
-  // fast, and every repos.*.mainBranch (empty -> 'main').
-  const optionalVars = new Set(
-    [settings.repoCache, settings.reviewRounds, settings.fast]
-      .map((raw) => (typeof raw === 'string' ? (raw.match(/^\$\{([A-Za-z0-9_]+)\}$/) || [])[1] : null))
-      .filter(Boolean)
-      .concat(mainBranchVars),
-  );
-
-  const missingVars = [];
-  for (const [name, value] of referenced) {
-    if (value === '' && !optionalVars.has(name)) missingVars.push(name);
   }
 
   return {
     found: true,
     workspaceRoot,
     config,
-    repoCacheEnabled,
     fastMode,
     links,
-    missingVars,
+    missingLinks,
+    urlLinks,
   };
 }
 
@@ -251,10 +229,9 @@ export function requiredRepoKeys(stage, taskType) {
 // .cache/active-scope.json (via scope.mjs); guard-writes/guard-bash then deny
 // writes into any non-scoped repository working copy.
 
-// Scope-файл живёт в СИСТЕМНОМ temp, а не в workspace: при локальных
-// ссылках рабочий («фасадный») репозиторий вообще не трогается — .cache
-// создаётся только под клоны git-URL (repoCache=true). Ключ — хэш
-// реального пути workspace, чтобы guard-процессы находили тот же файл.
+// Scope-файл живёт в СИСТЕМНОМ temp, а не в workspace: рабочий репозиторий
+// не обрастает служебными каталогами — плагин ничего в нём не создаёт. Ключ —
+// хэш реального пути workspace, чтобы guard-процессы находили тот же файл.
 export function scopeFilePath(workspaceRoot) {
   const key = crypto
     .createHash('sha1')
@@ -291,21 +268,12 @@ export function stageWriteRepoKeys(stage, taskType) {
   }
 }
 
-// Expected cache-clone directory for a git-URL link. MUST stay in sync with
-// git-ops.mjs `locate` (which imports this function).
-export function cacheCloneDir(workspaceRoot, link, name) {
-  const base = (String(link).split('/').pop() || name || 'repo').replace(/\.git$/, '');
-  const hash = crypto.createHash('sha1').update(String(link)).digest('hex').slice(0, 8);
-  return path.join(workspaceRoot, '.cache', 'repos', `${base}-${hash}`);
-}
-
-// Working-copy root for a repo key: the local path, or the (expected) cache
-// clone dir for a git URL. null when the link is unresolved.
+// Working-copy root for a repo key: absolute path resolved from the workspace
+// root. null when the link is empty or a (rejected) git URL.
 export function repoRootFor(cfg, key) {
   const l = cfg.links && cfg.links[key];
   if (!l || !l.resolved) return null;
-  if (!l.isGitUrl) return path.resolve(l.value);
-  return cacheCloneDir(cfg.workspaceRoot, l.value, key);
+  return l.path;
 }
 
 // Resolve symlinks for the nearest EXISTING ancestor of p, then append the
@@ -371,10 +339,10 @@ export function isInside(childPath, parentDir) {
 // Directories writes are allowed into (guard-writes / guard-bash), spec 8.1.
 // Kept for compatibility: the UNSCOPED root list.
 export function allowedRoots(cfg) {
-  const roots = [cfg.workspaceRoot, path.join(cfg.workspaceRoot, '.cache'), os.tmpdir()];
+  const roots = [cfg.workspaceRoot, os.tmpdir()];
   for (const key of REPO_KEYS) {
     const root = repoRootFor(cfg, key);
-    if (root && !cfg.links[key].isGitUrl) roots.push(root);
+    if (root) roots.push(root);
   }
   return roots.map((r) => path.resolve(r));
 }

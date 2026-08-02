@@ -212,34 +212,51 @@ for (const st of ['create-feature', 'implement-plan', 'implement-auto-test']) {
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));
 try {
+  // Рабочие копии лежат внутри workspace: repos/<dir>
+  const repoSA = path.join(tmp, 'repos', 'system-analysis');
+  const repoBE = path.join(tmp, 'repos', 'backend');
+  fs.mkdirSync(path.join(repoSA, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(repoBE, '.git'), { recursive: true });
   fs.writeFileSync(
     path.join(tmp, 'settings.json'),
-    fs.readFileSync(path.join(root, 'core/templates/settings.example.json')),
+    JSON.stringify(
+      {
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+          frontend: { link: '', mainBranch: 'main' },
+          backend: { link: 'repos/backend', mainBranch: 'master' },
+          autoTest: { link: '', mainBranch: 'main' },
+        },
+        reviewRounds: '${CONVEYOR_REVIEW_ROUNDS}',
+        fast: '${CONVEYOR_FAST}',
+        language: 'ru',
+      },
+      null,
+      2,
+    ),
   );
-  // Two «репозитория» для проверки рабочей области: SA и backend.
-  const repoSA = path.join(tmp, 'repo-sa');
-  const repoBE = path.join(tmp, 'repo-be');
-  fs.mkdirSync(repoSA, { recursive: true });
-  fs.mkdirSync(repoBE, { recursive: true });
-  fs.writeFileSync(
-    path.join(tmp, '.env'),
-    'SYSTEMS_ANALYSIS_REPO=' + repoSA + '\nFRONTEND_REPO=\nBACKEND_REPO=' + repoBE + '\nAUTOTEST_REPO=\nCONVEYOR_REPO_CACHE=\n',
-  );
+  fs.writeFileSync(path.join(tmp, '.env'), 'CONVEYOR_REVIEW_ROUNDS=\nCONVEYOR_FAST=\n');
 
-  // resolve-config: found true, FRONTEND_REPO missing, CONVEYOR_REPO_CACHE not missing
   const rc = JSON.parse(runScript('core/scripts/resolve-config.mjs', [tmp]));
-  if (rc.found && rc.missingVars.includes('FRONTEND_REPO')) ok('resolve-config: found + missingVars');
-  else bad('resolve-config: неожиданный результат: ' + JSON.stringify(rc.missingVars));
-  if (!rc.missingVars.includes('CONVEYOR_REPO_CACHE')) ok('resolve-config: пустой repoCache не в missing');
-  else bad('resolve-config: repoCache ошибочно в missing');
-  if (!rc.missingVars.includes('CONVEYOR_REVIEW_ROUNDS')) ok('resolve-config: пустой reviewRounds не в missing');
-  else bad('resolve-config: CONVEYOR_REVIEW_ROUNDS ошибочно в missing');
+  if (rc.found && rc.links.systemsAnalysis.path === path.resolve(repoSA))
+    ok('resolve-config: link резолвится в абсолютный путь от workspaceRoot');
+  else bad('resolve-config: путь не разрезолвился: ' + JSON.stringify(rc.links && rc.links.systemsAnalysis));
+  if (rc.missingLinks && rc.missingLinks.includes('frontend') && rc.missingLinks.includes('autoTest'))
+    ok('resolve-config: пустые ссылки попадают в missingLinks');
+  else bad('resolve-config: missingLinks: ' + JSON.stringify(rc.missingLinks));
+  if (rc.missingLinks && !rc.missingLinks.includes('systemsAnalysis'))
+    ok('resolve-config: заполненная ссылка не в missingLinks');
+  else bad('resolve-config: заполненная ссылка ошибочно в missingLinks');
+  if (rc.links.backend.mainBranch === 'master' && rc.links.autoTest.mainBranch === 'main')
+    ok('resolve-config: mainBranch читается из settings.json');
+  else bad('resolve-config: mainBranch: ' + JSON.stringify([rc.links.backend.mainBranch, rc.links.autoTest.mainBranch]));
+  if (rc.links.systemsAnalysis.inside === true) ok('resolve-config: inside=true для пути внутри workspace');
+  else bad('resolve-config: inside не выставлен');
+  if (rc.repoCacheEnabled === undefined) ok('resolve-config: repoCacheEnabled удалён');
+  else bad('resolve-config: repoCacheEnabled ещё возвращается');
   if (rc.config && rc.config.reviewRounds === 2) ok('resolve-config: reviewRounds по умолчанию = 2');
-  else bad('resolve-config: reviewRounds не 2 по умолчанию: ' + (rc.config && rc.config.reviewRounds));
-  if (!rc.missingVars.includes('SYSTEMS_ANALYSIS_MAIN_BRANCH')) ok('resolve-config: пустой mainBranch не в missing');
-  else bad('resolve-config: *_MAIN_BRANCH ошибочно в missing');
-  if (rc.links && rc.links.systemsAnalysis && rc.links.systemsAnalysis.mainBranch === 'main') ok('resolve-config: mainBranch по умолчанию = main');
-  else bad('resolve-config: mainBranch не main по умолчанию: ' + (rc.links && rc.links.systemsAnalysis && rc.links.systemsAnalysis.mainBranch));
+  else bad('resolve-config: reviewRounds не 2: ' + (rc.config && rc.config.reviewRounds));
 
   // guard-writes: deny outside allowed roots
   const outside = process.platform === 'win32' ? 'C:/Windows/x.txt' : '/etc/x.txt';
@@ -407,7 +424,7 @@ try {
   runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'FE'], '', tmp);
 
   // cd-трекинг: относительный редирект после cd в чужой репозиторий
-  if (decisionOf(runBash('cd repo-be && echo hack > src.js')) === 'deny') ok('guard-bash: cd-трекинг ловит редирект в чужой репо');
+  if (decisionOf(runBash('cd repos/backend && echo hack > src.js')) === 'deny') ok('guard-bash: cd-трекинг ловит редирект в чужой репо');
   else bad('guard-bash: cd + редирект в чужой репо не заблокирован');
 
   // tee в чужой репозиторий
@@ -579,8 +596,6 @@ try {
   if (rcSlow.fastMode === false && rcSlow.config.reviewRounds === 2)
     ok('fast: по умолчанию выключен (reviewRounds=2)');
   else bad('fast: дефолт не false');
-  if (!rcSlow.missingVars.includes('CONVEYOR_FAST')) ok('fast: пустой CONVEYOR_FAST не в missing');
-  else bad('fast: CONVEYOR_FAST ошибочно в missing');
 
   // validate-artifact: неполный артефакт (нет разделов) → ok:false
   const artPath = path.join(tmp, 'plan-test.md');

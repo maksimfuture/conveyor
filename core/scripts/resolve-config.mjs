@@ -3,8 +3,8 @@
 //
 // Usage:  node resolve-config.mjs [workspaceRoot]
 // Prints a JSON object to stdout:
-//   { found, workspaceRoot, config, repoCacheEnabled, links, missingVars }
-// Exit code is always 0 — callers branch on `found` / `missingVars`, so this
+//   { found, workspaceRoot, config, fastMode, links, missingLinks, urlLinks }
+// Exit code is always 0 — callers branch on `found` / `missingLinks`, so this
 // script never itself breaks a skill. Secrets stay in .env; the printed
 // `config` contains resolved values but is meant for in-session use, not disk.
 

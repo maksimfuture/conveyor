@@ -265,6 +265,19 @@ try {
   if (denySAphaseB && JSON.parse(denySAphaseB).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: в фазе B запись в анализ заблокирована');
   else bad('scope: фаза B не заблокировала запись в анализ');
+  // --write без значения — ошибка, а не «права по умолчанию»: потерянное
+  // значение не должно тихо вернуть фазе B право писать в анализ.
+  const bareWrite = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--write'], '', tmp),
+  );
+  const denySAstill = writeTo(path.join(repoSA, 'doc2.adoc'));
+  if (
+    bareWrite.ok === false &&
+    denySAstill &&
+    JSON.parse(denySAstill).hookSpecificOutput.permissionDecision === 'deny'
+  )
+    ok('scope: --write без значения — ошибка, область не перезаписана');
+  else bad('scope: --write без значения не отклонён: ' + JSON.stringify(bareWrite));
   // план автотестов читает автотесты, но не пишет никуда
   const apOut = JSON.parse(
     runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-autotest-plan', '--type', 'FE'], '', tmp),

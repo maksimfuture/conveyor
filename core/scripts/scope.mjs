@@ -56,6 +56,25 @@ function done(obj) {
 const [, , sub, ...rest] = process.argv;
 const args = parseArgs(rest);
 
+// Все флаги scope.mjs принимают значение. Флаг без значения парсер отдаёт как
+// true, а незакавыченная пустая подстановка приходит как ''. Молча взять
+// дефолт нельзя ни у одного из них: `--write` вернул бы фазе B спецификации
+// запись в анализ, а `--type --task TASK-9` дал бы BE-задаче область frontend
+// вместо backend — ровно то, от чего область и защищает.
+const FLAG_VALUE_HINT = {
+  stage: 'имя этапа',
+  type: 'FE, BE или FE-BE',
+  task: 'TASK-ID',
+  write: 'список ключей или none',
+};
+for (const [key, value] of Object.entries(args)) {
+  if (key === '_') continue;
+  if (typeof value !== 'string' || value.trim() === '') {
+    const hint = FLAG_VALUE_HINT[key] ? ` (${FLAG_VALUE_HINT[key]})` : '';
+    done({ ok: false, error: `--${key} требует значение${hint}` });
+  }
+}
+
 const cfg = readConfig(process.cwd());
 if (!cfg.found) done({ ok: false, error: 'не найден рабочий репозиторий conveyor (settings.json)' });
 
@@ -78,15 +97,13 @@ if (sub === 'set') {
     taskType = t;
   }
   let writeRepos;
-  // `--write` без значения парсер отдаёт как true. Молча взять права по этапу
-  // тут нельзя: фаза B спецификации так получила бы запись в анализ обратно.
-  if (args.write === true) {
-    done({ ok: false, error: '--write требует значение (список ключей или none)' });
-  }
   if (args.write === 'none') {
     writeRepos = []; // явный запрет записи в репозитории (фаза B спецификации)
   } else if (typeof args.write === 'string') {
     writeRepos = args.write.split(',').map((s) => s.trim()).filter(Boolean);
+    // Список из одних разделителей — тоже потерянное значение: запрет записи
+    // объявляется только словом none.
+    if (!writeRepos.length) done({ ok: false, error: '--write: пустой список (для запрета записи используйте none)' });
     const bad = writeRepos.filter((k) => !REPO_KEYS.includes(k));
     if (bad.length) done({ ok: false, error: `неизвестные репозитории: ${bad.join(', ')}` });
   } else {

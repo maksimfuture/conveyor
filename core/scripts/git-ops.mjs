@@ -5,7 +5,7 @@
 // `git` on PATH, no bash-isms.
 //
 // Subcommands:
-//   locate       --link <val> --workspace <root> --repo-cache <bool> --name <key>
+//   locate       --link <val> [--name <key>]
 //   clean-check  --path <p>
 //   update       --path <p> --main <branch> --kind local|cache --mode read|write
 //   log          --path <p> [--main <branch>] [-n <count>]
@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { isGitUrl, cacheCloneDir } from './lib/config.mjs';
+import { isGitUrl } from './lib/config.mjs';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -85,36 +85,19 @@ function revParse(repoPath, ref) {
 
 function cmdLocate(a) {
   const link = a.link;
-  const workspace = a.workspace;
-  const repoCache = a['repo-cache'] === true || a['repo-cache'] === 'true';
   const name = a.name || 'repo';
   if (!link) return fail('locate: --link required');
 
-  if (!isGitUrl(link)) {
-    if (!fs.existsSync(link)) return fail(`локальный путь не найден: ${link}`);
-    if (!fs.existsSync(path.join(link, '.git'))) return fail(`не git-репозиторий: ${link}`);
-    return done({ ok: true, path: path.resolve(link), kind: 'local' });
-  }
-
-  // git-URL
-  if (!repoCache) {
+  // Плагин НЕ клонирует: ссылка — путь к уже существующей рабочей копии.
+  if (isGitUrl(link)) {
     return fail(
-      `ссылка ${name} задана git-URL, но repoCache выключен. ` +
-        'Укажите локальный путь или включите CONVEYOR_REPO_CACHE=true.',
+      `ссылка ${name} задана git-URL, а нужен путь к рабочей копии. ` +
+        'Склонируйте репозиторий сами и укажите путь в settings.json (repos.<key>.link).',
     );
   }
-  if (!workspace) return fail('locate: --workspace required for cache clone');
-  const cacheDir = path.join(workspace, '.cache', 'repos');
-  fs.mkdirSync(cacheDir, { recursive: true });
-  // Единая логика имени клона — cacheCloneDir из lib/config.mjs (её же
-  // используют guard-скрипты при проверке рабочей области).
-  const dest = cacheCloneDir(workspace, link, name);
-
-  if (!fs.existsSync(path.join(dest, '.git'))) {
-    const r = tryGit(cacheDir, ['clone', link, dest]);
-    if (!r.ok) return fail(`клонирование не удалось: ${r.out}`);
-  }
-  return done({ ok: true, path: dest, kind: 'cache' });
+  if (!fs.existsSync(link)) return fail(`локальный путь не найден: ${link}`);
+  if (!fs.existsSync(path.join(link, '.git'))) return fail(`не git-репозиторий: ${link}`);
+  return done({ ok: true, path: path.resolve(link), kind: 'local' });
 }
 
 function cmdCleanCheck(a) {

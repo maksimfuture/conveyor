@@ -57,6 +57,27 @@ function runScriptFull(rel, args, input, cwd) {
   return { stdout: r.stdout || '', stderr: r.stderr || '', status: r.status };
 }
 
+// 0) Каждый скрипт ядра обязан ЗАГРУЖАТЬСЯ. Висячий импорт (экспорт удалили,
+// а `import { x }` остался) в ESM — отказ линковки модуля, а не ленивая
+// ошибка: скрипт падает до первой строки main, и по stdout это не видно.
+// Запускаем каждый без аргументов во временном каталоге (штатный ответ вроде
+// «неизвестная подкоманда» нас не интересует) и смотрим stderr.
+console.log('Загрузка скриптов ядра:');
+{
+  const loadTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-load-'));
+  try {
+    for (const f of fs.readdirSync(path.join(root, 'core/scripts')).filter((n) => n.endsWith('.mjs'))) {
+      const r = runScriptFull(`core/scripts/${f}`, [], '', loadTmp);
+      const re = /^.*(SyntaxError|ERR_MODULE_NOT_FOUND|Cannot find (module|package)|does not provide an export).*$/m;
+      const broken = re.exec(r.stderr);
+      if (!broken) ok(`core/scripts/${f} загружается`);
+      else bad(`core/scripts/${f}: модуль не загружается — ${broken[0].trim()}`);
+    }
+  } finally {
+    fs.rmSync(loadTmp, { recursive: true, force: true });
+  }
+}
+
 // 1) JSON manifests parse
 console.log('JSON манифесты:');
 for (const rel of [
@@ -258,6 +279,68 @@ try {
   if (rc.config && rc.config.reviewRounds === 2) ok('resolve-config: reviewRounds по умолчанию = 2');
   else bad('resolve-config: reviewRounds не 2: ' + (rc.config && rc.config.reviewRounds));
 
+  // Ссылки-исключения — на отдельном мини-workspace: основная фикстура держит
+  // проверки scope/guard, а четырёх ключей на все случаи не хватает. git-URL
+  // плагин не принимает (он не клонирует): если такая ссылка станет resolved,
+  // repoRootFor выдаст путь ВНУТРИ workspace и тихо расширит права записи.
+  const tmpLinks = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-links-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmpLinks, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: { link: 'git@git.example.com:group/system-analysis.git', mainBranch: 'main' },
+          frontend: { link: '../outside-frontend', mainBranch: 'main' },
+          backend: { link: '', mainBranch: 'main' },
+          autoTest: { link: '', mainBranch: 'main' },
+        },
+      }),
+    );
+    const rcL = JSON.parse(runScript('core/scripts/resolve-config.mjs', [tmpLinks]));
+    const urlLink = (rcL.links && rcL.links.systemsAnalysis) || {};
+    if (
+      (rcL.urlLinks || []).join(',') === 'systemsAnalysis' &&
+      urlLink.isGitUrl === true &&
+      urlLink.resolved === false &&
+      urlLink.path === null
+    )
+      ok('resolve-config: git-URL → urlLinks, resolved=false, path=null (в путь не превращается)');
+    else bad('resolve-config: git-URL обработан как путь: ' + JSON.stringify({ urlLinks: rcL.urlLinks, urlLink }));
+    if (!(rcL.missingLinks || []).includes('systemsAnalysis'))
+      ok('resolve-config: git-URL — не пропущенная ссылка (missingLinks про пустые)');
+    else bad('resolve-config: git-URL попал в missingLinks: ' + JSON.stringify(rcL.missingLinks));
+    const outsideLink = (rcL.links && rcL.links.frontend) || {};
+    if (
+      outsideLink.resolved === true &&
+      outsideLink.path === path.resolve(tmpLinks, '../outside-frontend') &&
+      outsideLink.inside === false
+    )
+      ok('resolve-config: путь вне workspace резолвится, но inside=false');
+    else bad('resolve-config: путь вне workspace: ' + JSON.stringify(outsideLink));
+  } finally {
+    fs.rmSync(tmpLinks, { recursive: true, force: true });
+  }
+
+  // validate-config — SessionStart-хук с fail-open: любая его ошибка глотается,
+  // и вместо подсказок пользователь получает тишину при коде 0. Поэтому
+  // проверяем именно ВЫВОД, а не факт запуска.
+  const vcCtxOf = (input) => {
+    const out = runScript('core/scripts/validate-config.mjs', [], input).trim();
+    try {
+      return JSON.parse(out).hookSpecificOutput.additionalContext || '';
+    } catch {
+      return '';
+    }
+  };
+  const vcLinks = vcCtxOf(JSON.stringify({ cwd: tmp }));
+  if (vcLinks.includes('frontend') && vcLinks.includes('autoTest'))
+    ok('validate-config: предупреждает о незаданных ссылках репозиториев');
+  else bad('validate-config: нет предупреждения о незаданных ссылках: ' + JSON.stringify(vcLinks));
+  if (vcLinks.includes('implement-plan') && vcLinks.includes('implement-auto-test'))
+    ok('validate-config: называет заблокированные этапы');
+  else bad('validate-config: нет списка заблокированных этапов: ' + JSON.stringify(vcLinks));
+
   // guard-writes: deny outside allowed roots
   const outside = process.platform === 'win32' ? 'C:/Windows/x.txt' : '/etc/x.txt';
   const gwOut = JSON.parse(
@@ -270,6 +353,36 @@ try {
   const gwIn = runScript('core/scripts/guard-writes.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { file_path: path.join(tmp, 'tasks/FE/x.md') } })).trim();
   if (gwIn === '') ok('guard-writes: allow внутри workspace');
   else bad('guard-writes: неожиданный вывод для разрешённого пути: ' + gwIn);
+
+  // guard-writes: repos.*.link в settings.json — путь ОТНОСИТЕЛЬНО корня
+  // проекта. git-URL плагин не клонирует, абсолютный путь выводит наружу —
+  // и то и другое отвергается прямо при записи (иначе /setup напишет
+  // конфигурацию, с которой ни один этап не соберёт рабочую копию).
+  const writeLink = (val) =>
+    runScript(
+      'core/scripts/guard-writes.mjs',
+      [],
+      JSON.stringify({
+        cwd: tmp,
+        tool_input: {
+          file_path: path.join(tmp, 'settings.json'),
+          content: JSON.stringify({ repos: { backend: { link: val } } }),
+        },
+      }),
+    ).trim();
+  const relLink = writeLink('repos/backend');
+  if (relLink === '') ok('guard-writes: относительный link в settings.json разрешён');
+  else bad('guard-writes: канонический link отклонён: ' + relLink);
+  const urlLinkOut = writeLink('git@git.example.com:group/backend.git');
+  const absLinkOut = writeLink(process.platform === 'win32' ? 'C:/repos/backend' : '/repos/backend');
+  if (
+    urlLinkOut &&
+    JSON.parse(urlLinkOut).hookSpecificOutput.permissionDecision === 'deny' &&
+    absLinkOut &&
+    JSON.parse(absLinkOut).hookSpecificOutput.permissionDecision === 'deny'
+  )
+    ok('guard-writes: git-URL и абсолютный путь в link ЗАБЛОКИРОВАНЫ');
+  else bad('guard-writes: link с git-URL/абсолютным путём прошёл: ' + JSON.stringify([urlLinkOut, absLinkOut]));
 
   // guard-bash: deny push --force
   const gb = JSON.parse(
@@ -308,6 +421,13 @@ try {
   if (setOut.ok && setOut.scope.writeRepos.join(',') === 'systemsAnalysis')
     ok('scope: create-specification (фаза A) → writeRepos=[systemsAnalysis]');
   else bad('scope: set вернул неожиданное: ' + JSON.stringify(setOut));
+
+  // Хук досказывает сессию до конца: предупреждение об активной области идёт
+  // ПОСЛЕ блока ссылок, и сбой наверху main() уносит его вместе с собой.
+  const vcScope = vcCtxOf(JSON.stringify({ cwd: tmp }));
+  if (vcScope.includes('create-specification') && vcScope.includes('systemsAnalysis'))
+    ok('validate-config: сообщает об активной рабочей области этапа');
+  else bad('validate-config: активная область не названа: ' + JSON.stringify(vcScope));
 
   if (writeTo(path.join(repoSA, 'doc.md')) === '') ok('scope: запись в SA (в области) разрешена');
   else bad('scope: запись в SA ошибочно заблокирована');

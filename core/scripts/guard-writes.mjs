@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // guard-writes.mjs — PreToolUse hook for Write / Edit / NotebookEdit (spec 8.1).
 //
-// Allows writes only inside the allowed roots (workspace, .cache, local link
-// paths, system temp). Blocks everything else, and blocks writing plaintext
-// secrets into settings.json (a repos.*.link that is not a ${VAR}).
+// Allows writes only inside the allowed roots (workspace, repo working copies,
+// system temp). Blocks everything else, and blocks writing an unusable
+// repos.*.link into settings.json (git URL or absolute path).
 //
 // Fail policy (spec 8.1): if there is no settings.json in cwd, allow silently
 // (the plugin is only active inside a conveyor workspace). Once config IS
@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfigForHook, checkWrite } from './lib/config.mjs';
+import { readConfigForHook, checkWrite, isGitUrl } from './lib/config.mjs';
 
 function readStdin() {
   try {
@@ -34,17 +34,24 @@ function decide(decision, reason) {
   );
 }
 
-// Best-effort: does this text put a raw (non-${VAR}) value into a repos.*.link?
-function hasPlaintextLinkSecret(text) {
-  if (!text) return false;
+// Best-effort: repos.*.link — путь к рабочей копии ОТНОСИТЕЛЬНО корня проекта
+// (repos/<dir>). git-URL плагин не принимает (он не клонирует), абсолютный
+// путь выводит за пределы проекта. Возвращает непригодные значения.
+function badLinkValues(text) {
+  const out = [];
+  if (!text) return out;
   // match "link": "value" pairs
   const re = /"link"\s*:\s*"([^"]*)"/g;
   let m;
   while ((m = re.exec(text))) {
-    const val = m[1];
-    if (!/^\$\{[A-Za-z0-9_]+\}$/.test(val) && val.trim() !== '') return true;
+    const val = m[1].trim();
+    // пусто — ещё не заданная ссылка; ${VAR} — подстановка, её резолвит .env
+    if (val === '' || /^\$\{[A-Za-z0-9_]+\}$/.test(val)) continue;
+    // Диск Windows проверяем явно: на POSIX path.isAbsolute('C:/x') = false,
+    // а settings.json может писаться из любой оболочки.
+    if (isGitUrl(val) || path.isAbsolute(val) || /^[A-Za-z]:[\\/]/.test(val)) out.push(val);
   }
-  return false;
+  return out;
 }
 
 function main() {
@@ -82,15 +89,16 @@ function main() {
     );
   }
 
-  // Guard settings.json against plaintext secrets in link fields.
+  // Guard settings.json against links the pipeline cannot use.
   const settingsPath = path.join(cfg.workspaceRoot, 'settings.json');
   if (path.resolve(target) === settingsPath) {
-    const text = input.content || input.new_string || '';
-    if (hasPlaintextLinkSecret(text)) {
+    const bad = badLinkValues(input.content || input.new_string || '');
+    if (bad.length) {
       return decide(
         'deny',
-        'conveyor: в settings.json поля repos.*.link должны быть ссылками ${VAR}, ' +
-          'а не открытыми путями/URL. Задайте значения в .env.',
+        'conveyor: в settings.json поля repos.*.link — путь к рабочей копии относительно ' +
+          'корня проекта (например repos/backend), а не git-URL и не абсолютный путь. ' +
+          `Отвергнуто: ${bad.join(', ')}.`,
       );
     }
   }

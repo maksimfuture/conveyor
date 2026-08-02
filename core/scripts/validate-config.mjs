@@ -4,8 +4,8 @@
 //
 // Behaviour:
 //   - No settings.json in cwd            -> silent, exit 0 (fail-open).
-//   - settings.json present but ${VAR}s  -> emit additionalContext warning
-//     unresolved                            naming the vars + blocked stages.
+//   - settings.json present, но ссылка   -> emit additionalContext warning
+//     на репозиторий пустая / git-URL        naming the repos + blocked stages.
 //   - Also lists active tasks (some stage done, some not) as a nudge.
 //
 // Reads the hook JSON from stdin (SessionStart passes { cwd, ... }); falls
@@ -18,7 +18,6 @@ import {
   readConfig,
   readScopeState,
   requiredRepoKeys,
-  REPO_KEYS,
   STAGE_NAMES,
   scopeFilePath,
   LEGACY_SCOPE_FILE,
@@ -93,32 +92,33 @@ function main() {
 
   if (cfg.error) {
     lines.push(`⚠ conveyor: ${cfg.error}`);
-  } else if (cfg.missingVars.length) {
-    // Map each missing var to the stages it blocks.
-    const blocked = new Set();
-    for (const stage of STAGES_NEEDING_REPO) {
-      const keys = requiredRepoKeys(stage, 'FE').concat(requiredRepoKeys(stage, 'BE'));
-      for (const key of new Set(keys)) {
-        const link = cfg.links[key];
-        if (link && link.varName && cfg.missingVars.includes(link.varName)) blocked.add(stage);
+  } else {
+    // Ссылка непригодна, если она пустая ИЛИ задана git-URL: плагин не
+    // клонирует, ему нужен путь к рабочей копии внутри проекта.
+    const unusable = new Set([...cfg.missingLinks, ...cfg.urlLinks]);
+    if (unusable.size) {
+      // Map each unusable link to the stages it blocks.
+      const blocked = new Set();
+      for (const stage of STAGES_NEEDING_REPO) {
+        const keys = requiredRepoKeys(stage, 'FE').concat(requiredRepoKeys(stage, 'BE'));
+        for (const key of new Set(keys)) {
+          if (unusable.has(key)) blocked.add(stage);
+        }
       }
-    }
-    lines.push(
-      `⚠ conveyor: не заполнены переменные .env: ${cfg.missingVars.join(', ')}.`,
-      blocked.size
-        ? `Заблокированы этапы: ${[...blocked].join(', ')}. Заполните .env по образцу .env.example.`
-        : 'Заполните .env по образцу .env.example.',
-    );
-
-    // Also flag git-URL links while the cache is disabled.
-    if (!cfg.repoCacheEnabled) {
-      const gitUrls = REPO_KEYS.filter((k) => cfg.links[k].isGitUrl);
-      if (gitUrls.length) {
+      if (cfg.missingLinks.length) {
+        lines.push(`⚠ conveyor: не заданы пути к рабочим копиям (repos.*.link): ${cfg.missingLinks.join(', ')}.`);
+      }
+      if (cfg.urlLinks.length) {
         lines.push(
-          `⚠ repoCache выключен, но ссылки заданы git-URL: ${gitUrls.join(', ')}. ` +
-            'Укажите локальные пути или включите CONVEYOR_REPO_CACHE=true.',
+          `⚠ conveyor: ссылки заданы git-URL: ${cfg.urlLinks.join(', ')} — плагин не клонирует. ` +
+            'Склонируйте репозитории сами и укажите пути в settings.json.',
         );
       }
+      lines.push(
+        blocked.size
+          ? `Заблокированы этапы: ${[...blocked].join(', ')}. Запустите /conveyor:setup.`
+          : 'Запустите /conveyor:setup.',
+      );
     }
   }
 

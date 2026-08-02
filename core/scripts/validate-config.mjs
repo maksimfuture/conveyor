@@ -5,7 +5,8 @@
 // Behaviour:
 //   - No settings.json in cwd            -> silent, exit 0 (fail-open).
 //   - settings.json present, но ссылка   -> emit additionalContext warning
-//     на репозиторий пустая / git-URL        naming the repos + blocked stages.
+//     на репозиторий пустая / git-URL /      naming the repos + blocked stages.
+//     ведёт за пределы проекта
 //   - Also lists active tasks (some stage done, some not) as a nudge.
 //
 // Reads the hook JSON from stdin (SessionStart passes { cwd, ... }); falls
@@ -93,9 +94,14 @@ function main() {
   if (cfg.error) {
     lines.push(`⚠ conveyor: ${cfg.error}`);
   } else {
-    // Ссылка непригодна, если она пустая ИЛИ задана git-URL: плагин не
-    // клонирует, ему нужен путь к рабочей копии внутри проекта.
-    const unusable = new Set([...cfg.missingLinks, ...cfg.urlLinks]);
+    // Ссылка непригодна в трёх случаях: она пустая, задана git-URL (плагин не
+    // клонирует) ИЛИ ведёт за пределы рабочего репозитория. Третью категорию
+    // берём из уже посчитанного resolve-config поля inside — второго критерия
+    // границы проекта не заводим.
+    const outsideLinks = Object.entries(cfg.links)
+      .filter(([, l]) => l.value && !l.isGitUrl && !l.inside)
+      .map(([key]) => key);
+    const unusable = new Set([...cfg.missingLinks, ...cfg.urlLinks, ...outsideLinks]);
     if (unusable.size) {
       // Map each unusable link to the stages it blocks.
       const blocked = new Set();
@@ -112,6 +118,13 @@ function main() {
         lines.push(
           `⚠ conveyor: ссылки заданы git-URL: ${cfg.urlLinks.join(', ')} — плагин не клонирует. ` +
             'Склонируйте репозитории сами и укажите пути в settings.json.',
+        );
+      }
+      if (outsideLinks.length) {
+        lines.push(
+          `⚠ conveyor: рабочие копии вне рабочего репозитория: ${outsideLinks.join(', ')}. ` +
+            'Путь в repos.*.link резолвится от корня рабочего репозитория и обязан остаться ' +
+            'внутри него (например repos/backend).',
         );
       }
       lines.push(

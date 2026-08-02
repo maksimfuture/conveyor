@@ -19,18 +19,17 @@ import {
   readScopeState,
   requiredRepoKeys,
   REPO_KEYS,
+  STAGE_NAMES,
   scopeFilePath,
   LEGACY_SCOPE_FILE,
 } from './lib/config.mjs';
 
-const STAGES_NEEDING_REPO = [
-  'create-feature',
-  'create-specification',
-  'create-plan',
-  'implement-plan',
-  'create-requirements-auto-test',
-  'implement-auto-test',
-];
+// Этапы, которым нужна рабочая копия, выводим из ядра, а не дублируем списком:
+// иначе переименование этапа тихо роняет его в `default: []` и подсказка
+// «Заблокированы этапы» схлопывается в пустую.
+const STAGES_NEEDING_REPO = STAGE_NAMES.filter(
+  (stage) => requiredRepoKeys(stage, 'FE').length || requiredRepoKeys(stage, 'BE').length,
+);
 
 function readStdin() {
   try {

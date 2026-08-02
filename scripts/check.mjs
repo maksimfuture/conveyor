@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { scopeFilePath, REPO_DIRS, STAGE_NAMES } from '../core/scripts/lib/config.mjs';
+import { scopeFilePath, REPO_DIRS, STAGE_NAMES, requiredRepoKeys } from '../core/scripts/lib/config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -89,6 +89,29 @@ for (const rel of [
   if (wantStages.every((s) => STAGE_NAMES.includes(s)) && STAGE_NAMES.length === wantStages.length)
     ok('config: STAGE_NAMES — новый список этапов');
   else bad('config: STAGE_NAMES: ' + STAGE_NAMES.join(', '));
+
+  // requiredRepoKeys проверяем на КАЖДОМ этапе из STAGE_NAMES: `default: []`
+  // молча проглатывает опечатку в имени этапа, и потребители (validate-config)
+  // теряют этап без единого сбоя.
+  const wantRepos = {
+    setup: '',
+    intent: 'systemsAnalysis',
+    'create-specification': 'systemsAnalysis',
+    'create-plan': 'backend',
+    'implement-plan': 'backend',
+    'create-autotest-plan': 'autoTest',
+    'implement-auto-test': 'autoTest',
+    'task-status': '',
+  };
+  const reposDiff = STAGE_NAMES.filter((s) => requiredRepoKeys(s, 'BE').join(',') !== wantRepos[s]);
+  if (!reposDiff.length) ok('config: requiredRepoKeys — репозиторий для каждого этапа');
+  else
+    bad(
+      'config: requiredRepoKeys расходится на этапах: ' +
+        reposDiff.map((s) => `${s}→[${requiredRepoKeys(s, 'BE').join(',')}]`).join(', '),
+    );
+  if (requiredRepoKeys('create-plan', 'FE').join(',') === 'frontend') ok('config: requiredRepoKeys — FE-задача берёт frontend');
+  else bad('config: requiredRepoKeys(create-plan, FE): ' + requiredRepoKeys('create-plan', 'FE').join(','));
 }
 
 // 2) Every skill has a matching stage; every agent has a matching prompt

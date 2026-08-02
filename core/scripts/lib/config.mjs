@@ -230,13 +230,13 @@ export function requiredRepoKeys(stage, taskType) {
     case 'setup':
     case 'task-status':
       return [];
-    case 'create-feature':
+    case 'intent':
     case 'create-specification':
       return ['systemsAnalysis'];
     case 'create-plan':
     case 'implement-plan':
-    case 'create-requirements-auto-test':
       return [code];
+    case 'create-autotest-plan':
     case 'implement-auto-test':
       return ['autoTest'];
     default:
@@ -273,17 +273,19 @@ export const SCOPE_TTL_MS = 8 * 60 * 60 * 1000; // 8 часов
 
 // Which repos a stage may WRITE (narrower than requiredRepoKeys: read-only
 // stages get []). taskType is 'FE' | 'BE' | 'FE-BE' | undefined.
+// create-specification пишет в анализ только в фазе A; фаза B вызывает
+// scope.mjs set --write none.
 export function stageWriteRepoKeys(stage, taskType) {
   const code = taskType === 'BE' ? 'backend' : 'frontend';
   switch (stage) {
-    case 'create-feature':
+    case 'create-specification':
       return ['systemsAnalysis'];
     case 'implement-plan':
       return [code];
     case 'implement-auto-test':
       return ['autoTest'];
-    // setup, task-status, create-specification, create-plan,
-    // create-requirements-auto-test: artifacts only — no repo writes.
+    // setup, task-status, intent, create-plan, create-autotest-plan:
+    // artifacts only — no repo writes.
     default:
       return [];
   }

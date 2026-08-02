@@ -285,13 +285,19 @@ try {
   // repoRootFor выдаст путь ВНУТРИ workspace и тихо расширит права записи.
   const tmpLinks = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-links-'));
   try {
+    // Ссылка наружу уводит ВЫШЕ системного temp (до корня диска): сосед
+    // временного workspace лежал бы в temp, а туда запись разрешена сама по
+    // себе — и дыра в правах на такой цели не видна. Каталог не создаём:
+    // проверяется решение о записи, а не наличие файлов.
+    const outsideRepo = path.join(path.parse(tmpLinks).root, 'conveyor-outside-frontend');
+    const outsideValue = path.relative(tmpLinks, outsideRepo).split(path.sep).join('/');
     fs.writeFileSync(
       path.join(tmpLinks, 'settings.json'),
       JSON.stringify({
         taskPrefix: 'TASK',
         repos: {
           systemsAnalysis: { link: 'git@git.example.com:group/system-analysis.git', mainBranch: 'main' },
-          frontend: { link: '../outside-frontend', mainBranch: 'main' },
+          frontend: { link: outsideValue, mainBranch: 'main' },
           backend: { link: '', mainBranch: 'main' },
           autoTest: { link: '', mainBranch: 'main' },
         },
@@ -302,25 +308,67 @@ try {
     if (
       (rcL.urlLinks || []).join(',') === 'systemsAnalysis' &&
       urlLink.isGitUrl === true &&
-      urlLink.resolved === false &&
+      urlLink.inside === false &&
       urlLink.path === null
     )
-      ok('resolve-config: git-URL → urlLinks, resolved=false, path=null (в путь не превращается)');
+      ok('resolve-config: git-URL → urlLinks, inside=false, path=null (в путь не превращается)');
     else bad('resolve-config: git-URL обработан как путь: ' + JSON.stringify({ urlLinks: rcL.urlLinks, urlLink }));
     if (!(rcL.missingLinks || []).includes('systemsAnalysis'))
       ok('resolve-config: git-URL — не пропущенная ссылка (missingLinks про пустые)');
     else bad('resolve-config: git-URL попал в missingLinks: ' + JSON.stringify(rcL.missingLinks));
+    // Ссылка «../…» выводит из проекта ровно так же, как чужой диск: путь
+    // остаётся для диагностики, но пригодной ссылка не считается.
     const outsideLink = (rcL.links && rcL.links.frontend) || {};
-    if (
-      outsideLink.resolved === true &&
-      outsideLink.path === path.resolve(tmpLinks, '../outside-frontend') &&
-      outsideLink.inside === false
-    )
-      ok('resolve-config: путь вне workspace резолвится, но inside=false');
+    if (outsideLink.inside === false && outsideLink.path === outsideRepo)
+      ok('resolve-config: ссылка наружу — path для диагностики, inside=false');
     else bad('resolve-config: путь вне workspace: ' + JSON.stringify(outsideLink));
+    // Проверяем не флаг, а его последствие: корень «наружу» не должен
+    // становиться записываемым — иначе запись уходит за пределы проекта.
+    const outsideWrite = runScript(
+      'core/scripts/guard-writes.mjs',
+      [],
+      JSON.stringify({
+        cwd: tmpLinks,
+        tool_input: { file_path: path.join(outsideRepo, 'x.js') },
+      }),
+    ).trim();
+    if (outsideWrite && JSON.parse(outsideWrite).hookSpecificOutput.permissionDecision === 'deny')
+      ok('guard-writes: ссылка наружу не даёт права записи вне workspace');
+    else bad('guard-writes: запись по ссылке наружу разрешена: ' + JSON.stringify(outsideWrite));
   } finally {
     fs.rmSync(tmpLinks, { recursive: true, force: true });
   }
+
+  // git-ops locate: --link — путь ОТ корня рабочего репозитория (settings.json),
+  // поэтому резолвится от --workspace. Скрипт запускается из чужого каталога:
+  // молчаливый резолв от cwd даёт «не найдено» там, где путь верный.
+  const locOk = JSON.parse(
+    runScript(
+      'core/scripts/git-ops.mjs',
+      ['locate', '--link', 'repos/system-analysis', '--workspace', tmp, '--name', 'systemsAnalysis'],
+      '',
+      os.tmpdir(),
+    ),
+  );
+  if (locOk.ok === true && locOk.path === path.resolve(repoSA))
+    ok('git-ops locate: относительный link резолвится от --workspace, а не от cwd');
+  else bad('git-ops locate: link не разрезолвился от workspace: ' + JSON.stringify(locOk));
+  // Без --workspace резолвить не от чего — отказ, а не тихий резолв от cwd
+  // (здесь cwd специально совпадает с workspace, чтобы такой резолв «сработал»).
+  const locNoWs = JSON.parse(
+    runScript('core/scripts/git-ops.mjs', ['locate', '--link', 'repos/system-analysis'], '', tmp),
+  );
+  if (locNoWs.ok === false && String(locNoWs.error).includes('--workspace'))
+    ok('git-ops locate: без --workspace — ошибка, а не резолв от cwd');
+  else bad('git-ops locate: без --workspace принят: ' + JSON.stringify(locNoWs));
+  // В ошибке об отсутствующей копии база резолва должна быть НАЗВАНА: иначе
+  // «repos/nope» не отличить от опечатки в --workspace.
+  const locMissing = JSON.parse(
+    runScript('core/scripts/git-ops.mjs', ['locate', '--link', 'repos/nope', '--workspace', tmp, '--name', 'autoTest'], '', tmp),
+  );
+  if (locMissing.ok === false && String(locMissing.error).includes(path.join(tmp, 'repos', 'nope')))
+    ok('git-ops locate: в ошибке об отсутствующей копии назван абсолютный путь');
+  else bad('git-ops locate: путь резолва не назван: ' + JSON.stringify(locMissing));
 
   // validate-config — SessionStart-хук с fail-open: любая его ошибка глотается,
   // и вместо подсказок пользователь получает тишину при коде 0. Поэтому
@@ -354,10 +402,10 @@ try {
   if (gwIn === '') ok('guard-writes: allow внутри workspace');
   else bad('guard-writes: неожиданный вывод для разрешённого пути: ' + gwIn);
 
-  // guard-writes: repos.*.link в settings.json — путь ОТНОСИТЕЛЬНО корня
-  // проекта. git-URL плагин не клонирует, абсолютный путь выводит наружу —
-  // и то и другое отвергается прямо при записи (иначе /setup напишет
-  // конфигурацию, с которой ни один этап не соберёт рабочую копию).
+  // guard-writes: repos.*.link в settings.json — путь ВНУТРИ корня проекта.
+  // git-URL плагин не клонирует, а путь наружу (абсолютный, «../», «..») не
+  // даёт рабочей копии — всё это отвергается прямо при записи (иначе /setup
+  // напишет конфигурацию, с которой ни один этап не соберёт рабочую копию).
   const writeLink = (val) =>
     runScript(
       'core/scripts/guard-writes.mjs',
@@ -373,16 +421,21 @@ try {
   const relLink = writeLink('repos/backend');
   if (relLink === '') ok('guard-writes: относительный link в settings.json разрешён');
   else bad('guard-writes: канонический link отклонён: ' + relLink);
-  const urlLinkOut = writeLink('git@git.example.com:group/backend.git');
-  const absLinkOut = writeLink(process.platform === 'win32' ? 'C:/repos/backend' : '/repos/backend');
-  if (
-    urlLinkOut &&
-    JSON.parse(urlLinkOut).hookSpecificOutput.permissionDecision === 'deny' &&
-    absLinkOut &&
-    JSON.parse(absLinkOut).hookSpecificOutput.permissionDecision === 'deny'
-  )
-    ok('guard-writes: git-URL и абсолютный путь в link ЗАБЛОКИРОВАНЫ');
-  else bad('guard-writes: link с git-URL/абсолютным путём прошёл: ' + JSON.stringify([urlLinkOut, absLinkOut]));
+  const linkDenied = (val) => {
+    const out = writeLink(val);
+    return out !== '' && JSON.parse(out).hookSpecificOutput.permissionDecision === 'deny';
+  };
+  // Относительный выход наружу («../repo», «..») по последствиям равен
+  // абсолютному пути чужого каталога, поэтому проверяются они вместе.
+  const badLinks = [
+    'git@git.example.com:group/backend.git',
+    process.platform === 'win32' ? 'C:/repos/backend' : '/repos/backend',
+    '../outside-backend',
+    '..',
+  ];
+  const passedLinks = badLinks.filter((v) => !linkDenied(v));
+  if (!passedLinks.length) ok('guard-writes: git-URL и любой путь наружу в link ЗАБЛОКИРОВАНЫ');
+  else bad('guard-writes: непригодный link прошёл: ' + passedLinks.join(' | '));
 
   // guard-bash: deny push --force
   const gb = JSON.parse(

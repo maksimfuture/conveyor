@@ -23,7 +23,7 @@
 4. Добавь `.env` и `.cache/` в `.gitignore` (создай файл, если его нет).
 5. Проверь доступность каждой заполненной ссылки. Для этого сначала
    получи конфигурацию (`resolve-config.mjs`), затем по каждой ссылке:
-   `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <root> --repo-cache <bool> --name <key>`
+   `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <root> --name <key>`
    - локальный путь: существует и является git-репозиторием;
    - git-URL при выключенном repoCache — ошибка конфигурации: подскажи
      указать локальный путь или включить `CONVEYOR_REPO_CACHE=true`;

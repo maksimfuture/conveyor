@@ -402,6 +402,67 @@ try {
   if (badStage.includes('неизвестный этап')) ok('scope: неизвестный этап отклоняется');
   else bad('scope: опечатка в этапе не отлавливается');
 
+  // Отказ от неизвестного флага должен быть заметен и вызывающему скрипту, и
+  // модели: ненулевой код возврата И названный флаг в тексте. runScript код
+  // глотает, поэтому здесь берём его отдельно.
+  const runScope = (argv) => {
+    try {
+      const stdout = execFileSync('node', [path.join(root, 'core/scripts/scope.mjs'), ...argv], {
+        encoding: 'utf8',
+        cwd: tmp,
+      });
+      return { code: 0, out: JSON.parse(stdout) };
+    } catch (e) {
+      return { code: e.status, out: JSON.parse(String(e.stdout || '{}')) };
+    }
+  };
+
+  // Опечатка в имени флага СО значением раньше проходила молча: `--tpye BE`
+  // терял тип и выдавал BE-задаче запись во frontend вместо backend.
+  const typoFlag = runScope(['set', '--stage', 'implement-plan', '--tpye', 'BE', '--task', 'TASK-1']);
+  if (typoFlag.code !== 0 && typoFlag.out.ok === false && typoFlag.out.error.includes('--tpye'))
+    ok('scope: опечатка в имени флага (--tpye) отклоняется с названием флага');
+  else bad('scope: опечатка в имени флага принята: ' + JSON.stringify(typoFlag));
+
+  // Выдуманный флаг тоже игнорировался молча: фаза B спецификации сохраняла
+  // запись в анализ, хотя вызывающий думал, что её снял.
+  const inventedFlag = runScope(['set', '--stage', 'create-specification', '--type', 'BE', '--no-write', 'true']);
+  if (inventedFlag.code !== 0 && inventedFlag.out.ok === false && inventedFlag.out.error.includes('--no-write'))
+    ok('scope: выдуманный флаг (--no-write) отклоняется');
+  else bad('scope: выдуманный флаг принят: ' + JSON.stringify(inventedFlag));
+
+  // clear флагов не принимает вовсе — и говорит про неизвестный флаг, а не
+  // про потерянное значение (иначе вызывающий начнёт подбирать значение).
+  const clearFlag = runScope(['clear', '--force']);
+  if (
+    clearFlag.code !== 0 &&
+    clearFlag.out.ok === false &&
+    clearFlag.out.error.includes('--force') &&
+    !clearFlag.out.error.includes('требует значение')
+  )
+    ok('scope: clear --force — неизвестный флаг, а не «требует значение»');
+  else bad('scope: clear --force принят или ошибка не про флаг: ' + JSON.stringify(clearFlag));
+
+  // Легальные вызовы строгостью не задеты
+  const legalSet = runScope(['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-3']);
+  const legalNone = runScope(['set', '--stage', 'create-specification', '--type', 'BE', '--write', 'none']);
+  const legalShow = runScope(['show']);
+  const legalClear = runScope(['clear']);
+  if (
+    legalSet.code === 0 &&
+    legalSet.out.scope.writeRepos.join(',') === 'backend' &&
+    legalSet.out.scope.taskId === 'TASK-3' &&
+    legalNone.code === 0 &&
+    legalNone.out.scope.writeRepos.length === 0 &&
+    legalShow.code === 0 &&
+    legalShow.out.scope.stage === 'create-specification' &&
+    legalClear.code === 0 &&
+    legalClear.out.cleared === true
+  )
+    ok('scope: легальные set/--write none/show/clear работают по-прежнему');
+  else
+    bad('scope: легальный вызов сломан: ' + JSON.stringify([legalSet, legalNone, legalShow, legalClear]));
+
   // фолбэк workspace через CLAUDE_PROJECT_DIR (cd наружу не отключает guard)
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-outside-'));
   try {

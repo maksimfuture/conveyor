@@ -67,11 +67,22 @@ const FLAG_VALUE_HINT = {
   task: 'TASK-ID',
   write: 'список ключей или none',
 };
+// Командную строку набирает модель по шаблону этапа, поэтому опечатка в ИМЕНИ
+// флага — рядовое событие, а не экзотика. Неизвестное имя со значением раньше
+// проходило молча: `--tpye BE` терял тип и открывал BE-задаче запись во
+// frontend, а выдуманный `--no-write true` не отменял ничего. Флаги принимает
+// только `set`; clear и show не принимают ни одного.
+const allowedFlags = sub === 'set' ? Object.keys(FLAG_VALUE_HINT) : [];
 for (const [key, value] of Object.entries(args)) {
   if (key === '_') continue;
+  if (!allowedFlags.includes(key)) {
+    const allowed = allowedFlags.length
+      ? `Допустимые: ${allowedFlags.map((k) => `--${k}`).join(', ')}`
+      : `Подкоманда ${sub || '(нет)'} флагов не принимает`;
+    done({ ok: false, error: `неизвестный флаг «--${key}». ${allowed}` });
+  }
   if (typeof value !== 'string' || value.trim() === '') {
-    const hint = FLAG_VALUE_HINT[key] ? ` (${FLAG_VALUE_HINT[key]})` : '';
-    done({ ok: false, error: `--${key} требует значение${hint}` });
+    done({ ok: false, error: `--${key} требует значение (${FLAG_VALUE_HINT[key]})` });
   }
 }
 

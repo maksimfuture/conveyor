@@ -14,7 +14,8 @@ description: Формирует спецификацию (specification.md) по
 1. resolve-config; определи задачу по TASK-ID. Установи рабочую область:
    `scope.mjs set --stage create-specification --type <FE|BE> --task
    <TASK-ID>` (запись в репозитории запрещена); `clear` при завершении.
-2. Головной ref анализа — `git-ops analysis-head ...`; база — по приоритету:
+2. Головной ref анализа — ветка `analysisBranch` в рабочей копии (нет ветки —
+   спроси диапазон); база — по приоритету:
    --since → headSha прошлого запуска (режим «дополнить») /
    analysisShaAtFeature (режим «перезаписать») → analysisShaAtFeature.
 3. Обнови копию анализа (`update --mode read`); вычисли diff

@@ -229,6 +229,40 @@ for (const st of ['create-feature', 'implement-plan', 'implement-auto-test']) {
   else bad(`stage ${st}: нет ссылки на _review-loop.md`);
 }
 
+// 2c) Вызовы git-ops в текстах этапов и скиллов — по фактическому dispatch.
+// Стейдж — предписание модели, а не код: удалённая подкоманда (analysis-head)
+// или исчезнувший флаг (--kind) здесь ничего не ломают, они всплывают посреди
+// этапа ответом «неизвестная подкоманда» — и этап встаёт у пользователя.
+console.log('Вызовы git-ops в стейджах и скиллах:');
+{
+  const gitOpsSrc = fs.readFileSync(path.join(root, 'core/scripts/git-ops.mjs'), 'utf8');
+  const subs = [...gitOpsSrc.matchAll(/case '([a-z][a-z-]*)':/g)].map((m) => m[1]);
+  const mdFiles = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.md')) mdFiles.push(p);
+    }
+  };
+  walk(path.join(root, 'core'));
+  walk(path.join(root, 'adapters'));
+  const stale = [];
+  for (const file of mdFiles) {
+    const rel = path.relative(root, file).split(path.sep).join('/');
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      // Упоминанием считаем только «git-ops[.mjs] <подкоманда>»: «git — через
+      // git-ops.mjs» и «git-ops) и передаёт текстом» подкоманду не называют.
+      for (const m of line.matchAll(/git-ops(?:\.mjs)?\s+([a-z][a-z-]*)/g)) {
+        if (!subs.includes(m[1])) stale.push(`${rel}: git-ops ${m[1]}`);
+        if (line.includes('--kind')) stale.push(`${rel}: --kind`);
+      }
+    }
+  }
+  if (subs.length && !stale.length) ok('git-ops: подкоманды и флаги в текстах совпадают с dispatch (' + subs.join(', ') + ')');
+  else bad('git-ops: устаревшие вызовы в текстах: ' + (stale.join('; ') || 'не разобран dispatch git-ops.mjs'));
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));
@@ -460,6 +494,50 @@ try {
   } finally {
     fs.rmSync(outsideCopy, { recursive: true, force: true });
   }
+
+  // git-ops update: рабочая копия принадлежит разработчику, и его ветку этап
+  // не переключает НИ ПРИ КАКИХ условиях. Фикстура — настоящий git-репозиторий:
+  // проверяется наблюдаемое состояние (на какой ветке осталась копия), а не
+  // текст скрипта. Legacy-флаг `--kind cache` включал здесь checkout main —
+  // передаём его специально: устаревший вызов из стейджа не должен воскресить
+  // переключение.
+  const liveRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-live-'));
+  try {
+    const g = (a) => spawnSync('git', a, { cwd: liveRepo, encoding: 'utf8' });
+    g(['init', '--quiet']);
+    fs.writeFileSync(path.join(liveRepo, 'README.md'), '# fixture\n');
+    g(['add', '-A']);
+    g(['-c', 'user.email=check@conveyor.local', '-c', 'user.name=check', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'init']);
+    g(['branch', '-m', 'main']);
+    g(['checkout', '--quiet', '-b', 'TASK-1-feature']);
+    const branchNow = () => g(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
+    if (branchNow() !== 'TASK-1-feature') {
+      bad('git-ops update: фикстура git-репозитория не собралась (есть ли git в PATH?)');
+    } else {
+      const upd = JSON.parse(
+        runScript('core/scripts/git-ops.mjs', ['update', '--path', liveRepo, '--main', 'main', '--mode', 'read', '--kind', 'cache']),
+      );
+      if (upd.ok === true && branchNow() === 'TASK-1-feature')
+        ok('git-ops update: ветка рабочей копии не переключается (в том числе с legacy --kind cache)');
+      else bad('git-ops update: копия оказалась на ветке ' + branchNow() + ': ' + JSON.stringify(upd));
+    }
+  } finally {
+    fs.rmSync(liveRepo, { recursive: true, force: true, maxRetries: 3 });
+  }
+
+  // analysis-head удалена: этап спецификации сам вносит правки и знает свой
+  // дифф, реконструировать головной ref больше не по чему. Регрессия здесь —
+  // вернувшаяся подкоманда, поэтому ждём именно отказ dispatch.
+  const ah = runScriptFull(
+    'core/scripts/git-ops.mjs',
+    ['analysis-head', '--path', repoSA, '--branch', 'TASK-1-analysis', '--main', 'main'],
+    '',
+    tmp,
+  );
+  const ahObj = JSON.parse(ah.stdout || '{}');
+  if (ah.status !== 0 && ahObj.ok === false && /неизвестная подкоманда/.test(String(ahObj.error)))
+    ok('git-ops: подкоманда analysis-head удалена');
+  else bad('git-ops: analysis-head отвечает как подкоманда: ' + JSON.stringify({ status: ah.status, out: ahObj }));
 
   const vcLinks = vcCtxOf(JSON.stringify({ cwd: tmp }));
   if (vcLinks.includes('frontend') && vcLinks.includes('autoTest'))

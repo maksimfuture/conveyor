@@ -87,6 +87,17 @@ for (const [key, value] of Object.entries(args)) {
     done({ ok: false, error: `--${key} требует значение (${FLAG_VALUE_HINT[key]})` });
   }
 }
+// Токен без двух дефисов парсер складывал в args._, который никто не читает, —
+// тот же тихий отказ, что и у неизвестного флага: `-write none` (потерянный
+// дефис) оставлял фазе B запись в анализ, а `--write frontend, backend`
+// (пробел в списке) выбрасывал backend. Позиционных аргументов не принимает
+// ни одна подкоманда.
+if (args._.length) {
+  done({
+    ok: false,
+    error: `лишний аргумент «${args._[0]}»: set|clear|show принимают только флаги (имя флага — через два дефиса, список --write — без пробелов)`,
+  });
+}
 
 const cfg = readConfig(process.cwd());
 if (!cfg.found) done({ ok: false, error: 'не найден рабочий репозиторий conveyor (settings.json)' });

@@ -301,6 +301,32 @@ try {
   )
     ok('scope: --write без значения — ошибка, область не перезаписана');
   else bad('scope: --write без значения не отклонён: ' + JSON.stringify(bareWrite));
+  // То же правило для остальных флагов со значением. `--type --task TASK-9`
+  // (незакавыченная пустая подстановка) не должно дать тип null и область
+  // по умолчанию: BE-задача получила бы запись во frontend вместо backend.
+  const bareType = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'implement-plan', '--type', '--task', 'TASK-9'], '', tmp),
+  );
+  const scopeAfterBareType = JSON.parse(runScript('core/scripts/scope.mjs', ['show'], '', tmp));
+  if (bareType.ok === false && scopeAfterBareType.scope.stage === 'create-specification')
+    ok('scope: --type без значения — ошибка, область не перезаписана');
+  else bad('scope: --type без значения не отклонён: ' + JSON.stringify(bareType));
+  // --task без значения раньше писал в область taskId:true
+  const bareTask = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--task'], '', tmp),
+  );
+  if (bareTask.ok === false) ok('scope: --task без значения — ошибка, а не taskId:true');
+  else bad('scope: --task без значения принят: ' + JSON.stringify(bareTask));
+  // пустой список — такое же потерянное значение, а не синоним none
+  const emptyWrite = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--write', ''], '', tmp),
+  );
+  const commaWrite = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--write', ','], '', tmp),
+  );
+  if (emptyWrite.ok === false && commaWrite.ok === false)
+    ok('scope: пустой --write — ошибка, а не необъявленный синоним none');
+  else bad('scope: пустой --write принят как none: ' + JSON.stringify([emptyWrite, commaWrite]));
   // план автотестов читает автотесты, но не пишет никуда
   const apOut = JSON.parse(
     runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-autotest-plan', '--type', 'FE'], '', tmp),

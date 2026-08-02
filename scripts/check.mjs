@@ -279,6 +279,27 @@ try {
   if (rc.config && rc.config.reviewRounds === 2) ok('resolve-config: reviewRounds по умолчанию = 2');
   else bad('resolve-config: reviewRounds не 2: ' + (rc.config && rc.config.reviewRounds));
 
+  // Контракт resolve-config в core/stages/_common.md модель читает на КАЖДОМ
+  // этапе. Поле, которого скрипт больше не отдаёт, — тихий fail-open:
+  // предписанный по нему останов не срабатывает НИКОГДА (undefined вместо
+  // списка). Поэтому сверяем названия полей в тексте с реальным ответом
+  // скрипта, а не со списком по памяти.
+  {
+    const commonMd = fs.readFileSync(path.join(root, 'core/stages/_common.md'), 'utf8');
+    const section = commonMd.split(/^## /m).find((s) => s.startsWith('Первый шаг')) || '';
+    // Берём только одиночные идентификаторы в обратных кавычках: `found:false`
+    // или `repos.<ключ>.link` — это не имена полей верхнего уровня.
+    const mentioned = [...new Set((section.match(/`[A-Za-z][A-Za-z0-9]*`/g) || []).map((s) => s.slice(1, -1)))];
+    const ghosts = mentioned.filter((f) => !Object.keys(rc).includes(f));
+    if (section && mentioned.includes('missingLinks') && mentioned.includes('urlLinks') && !ghosts.length)
+      ok('_common.md: контракт resolve-config назван полями, которые скрипт действительно отдаёт');
+    else
+      bad(
+        '_common.md: контракт resolve-config разошёлся со скриптом — ' +
+          (section ? `нет в ответе: ${ghosts.join(', ') || '(нет)'}; названо: ${mentioned.join(', ')}` : 'секция «Первый шаг» не найдена'),
+      );
+  }
+
   // validate-config — SessionStart-хук с fail-open: любая его ошибка глотается,
   // и вместо подсказок пользователь получает тишину при коде 0. Поэтому
   // проверяем именно ВЫВОД, а не факт запуска.

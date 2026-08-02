@@ -24,12 +24,18 @@ function exists(rel) {
   return fs.existsSync(path.join(root, rel));
 }
 
+// Ненулевой код возврата — штатный ответ скрипта (ok:false), а не сбой прогона:
+// отдаём stdout, чтобы проверка отчиталась FAIL-строкой, а набор шёл дальше.
 function runScript(rel, args, input, cwd) {
-  return execFileSync('node', [path.join(root, rel), ...args], {
-    input: input || '',
-    encoding: 'utf8',
-    cwd: cwd || undefined,
-  });
+  try {
+    return execFileSync('node', [path.join(root, rel), ...args], {
+      input: input || '',
+      encoding: 'utf8',
+      cwd: cwd || undefined,
+    });
+  } catch (e) {
+    return String(e.stdout || '');
+  }
 }
 
 // 1) JSON manifests parse
@@ -310,12 +316,7 @@ try {
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
 
   // scope.mjs валидация аргументов
-  let badStage = '';
-  try {
-    runScript('core/scripts/scope.mjs', ['set', '--stage', 'implment'], '', tmp);
-  } catch (e) {
-    badStage = String(e.stdout || '');
-  }
+  const badStage = runScript('core/scripts/scope.mjs', ['set', '--stage', 'implment'], '', tmp);
   if (badStage.includes('неизвестный этап')) ok('scope: неизвестный этап отклоняется');
   else bad('scope: опечатка в этапе не отлавливается');
 
@@ -360,13 +361,7 @@ try {
   // validate-artifact: неполный артефакт (нет разделов) → ok:false
   const artPath = path.join(tmp, 'plan-test.md');
   fs.writeFileSync(artPath, '# План\n## Краткое резюме подхода\nчто-то\n');
-  let va = '';
-  try {
-    va = runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']);
-  } catch (e) {
-    va = String(e.stdout || '');
-  }
-  const vaObj = JSON.parse(va);
+  const vaObj = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']));
   if (vaObj.ok === false && vaObj.missingSections.length) ok('validate-artifact: неполный план не проходит');
   else bad('validate-artifact: неполный план прошёл валидацию');
   // полный по разделам (шаблон содержит пример чекбокса и REQ-ID) → ok:true
@@ -382,13 +377,7 @@ try {
   fs.writeFileSync(path.join(vtDir, 'meta.json'), '{}');
   fs.writeFileSync(path.join(vtDir, 'GreetingModal.tsx'), 'export {}\n');
   fs.writeFileSync(path.join(vtDir, 'src/util.js'), 'export {}\n');
-  let vt = '';
-  try {
-    vt = runScript('core/scripts/validate-task-folder.mjs', ['--task', vtDir]);
-  } catch (e) {
-    vt = String(e.stdout || '');
-  }
-  const vtObj = JSON.parse(vt);
+  const vtObj = JSON.parse(runScript('core/scripts/validate-task-folder.mjs', ['--task', vtDir]));
   if (
     vtObj.ok === false &&
     vtObj.unexpectedFiles.includes('GreetingModal.tsx') &&

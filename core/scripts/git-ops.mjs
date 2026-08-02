@@ -7,11 +7,10 @@
 // Subcommands:
 //   locate       --link <path> --workspace <root> [--name <key>]
 //   clean-check  --path <p>
-//   update       --path <p> --main <branch> --kind local|cache --mode read|write
+//   update       --path <p> --main <branch> [--mode read|write]
 //   log          --path <p> [--main <branch>] [-n <count>]
 //   branch       --path <p> --branch <name> --from <mainBranch>
 //   diff         --path <p> --base <ref> --head <ref>
-//   analysis-head --path <p> --branch <analysisBranch> --main <mainBranch> --taskid <id>
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -134,7 +133,6 @@ function cmdCleanCheck(a) {
 function cmdUpdate(a) {
   const repoPath = a.path;
   const main = a.main;
-  const kind = a.kind || 'local';
   const mode = a.mode || 'read';
   if (!repoPath || !main) return fail('update: --path and --main required');
 
@@ -159,27 +157,19 @@ function cmdUpdate(a) {
     });
   }
 
-  if (kind === 'cache') {
-    // Cache clone belongs to the plugin: switch to main and fast-forward.
-    const co = tryGit(repoPath, ['checkout', main]);
-    if (!co.ok) warnings.push(`checkout ${main}: ${co.out}`);
-    const pull = tryGit(repoPath, ['pull', '--ff-only', 'origin', main]);
-    if (!pull.ok) warnings.push(`pull ${main}: ${pull.out}`);
-  } else {
-    // Local path: never switch the user's checked-out branch.
-    const cur = currentBranch(repoPath);
-    if (cur === main) {
-      if (clean) {
-        const pull = tryGit(repoPath, ['pull', '--ff-only']);
-        if (!pull.ok) warnings.push(`pull: ${pull.out}`);
-      } else {
-        warnings.push('working tree грязный: обновление пропущено, база — origin/' + main);
-      }
+  // Рабочая копия принадлежит разработчику: НИКОГДА не переключаем его ветку.
+  const cur = currentBranch(repoPath);
+  if (cur === main) {
+    if (clean) {
+      const pull = tryGit(repoPath, ['pull', '--ff-only']);
+      if (!pull.ok) warnings.push(`pull: ${pull.out}`);
     } else {
-      // Update main without checking it out.
-      const upd = tryGit(repoPath, ['fetch', 'origin', `${main}:${main}`]);
-      if (!upd.ok) warnings.push(`обновление ${main} без переключения не удалось: ${upd.out}`);
+      warnings.push('working tree грязный: обновление пропущено, база — origin/' + main);
     }
+  } else {
+    // Update main without checking it out.
+    const upd = tryGit(repoPath, ['fetch', 'origin', `${main}:${main}`]);
+    if (!upd.ok) warnings.push(`обновление ${main} без переключения не удалось: ${upd.out}`);
   }
 
   const mainSha = revParse(repoPath, main) || revParse(repoPath, `origin/${main}`);
@@ -239,47 +229,6 @@ function cmdDiff(a) {
   });
 }
 
-function cmdAnalysisHead(a) {
-  const repoPath = a.path;
-  const branch = a.branch;
-  const main = a.main;
-  const taskid = a.taskid || '';
-  if (!repoPath || !branch || !main) return fail('analysis-head: --path --branch --main required');
-
-  tryGit(repoPath, ['fetch', 'origin']);
-
-  // 1) origin/<branch>
-  if (revParse(repoPath, `origin/${branch}`)) {
-    return done({ ok: true, headRef: `origin/${branch}`, source: 'origin', sha: revParse(repoPath, `origin/${branch}`) });
-  }
-  // 2) local <branch>
-  if (revParse(repoPath, branch)) {
-    return done({ ok: true, headRef: branch, source: 'local', sha: revParse(repoPath, branch) });
-  }
-  // 3) merged: find the merge commit of the branch in main, take ^2
-  const log = tryGit(repoPath, [
-    'log',
-    '--merges',
-    '--grep',
-    taskid || branch,
-    '--pretty=%H',
-    `origin/${main}`,
-  ]);
-  if (log.ok && log.out) {
-    const merge = log.out.split('\n')[0];
-    const second = revParse(repoPath, `${merge}^2`);
-    if (second) {
-      return done({ ok: true, headRef: `${merge}^2`, source: 'merged', sha: second });
-    }
-  }
-  return done({
-    ok: false,
-    error:
-      'не удалось определить головной ref ветки анализа (squash/rebase?). ' +
-      'Укажите диапазон вручную (--since).',
-  });
-}
-
 // ---- dispatch ------------------------------------------------------------
 
 const [, , sub, ...rest] = process.argv;
@@ -304,9 +253,6 @@ try {
       break;
     case 'diff':
       cmdDiff(args);
-      break;
-    case 'analysis-head':
-      cmdAnalysisHead(args);
       break;
     default:
       fail(`неизвестная подкоманда: ${sub || '(нет)'}. См. шапку git-ops.mjs.`);

@@ -8,12 +8,12 @@
 //
 // Usage:
 //   node scope.mjs set --stage <имя> [--type FE|BE|FE-BE] [--task TASK-ID]
-//                      [--write key1,key2]   # override; иначе по этапу
+//                      [--write key1,key2|none]   # override; иначе по этапу
 //   node scope.mjs clear
 //   node scope.mjs show
 //
-// --type опционален (для create-feature FE-BE-пары передавайте FE-BE или
-// опускайте — на область записи это не влияет; --task для пары — TASK-ID
+// --type опционален (для create-specification FE-BE-пары передавайте FE-BE
+// или опускайте — на область записи это не влияет; --task для пары — TASK-ID
 // FE-задачи). Повторный set просто перезаписывает область.
 //
 // Output: JSON { ok, scope? } on stdout. Exit 0/1.
@@ -78,7 +78,9 @@ if (sub === 'set') {
     taskType = t;
   }
   let writeRepos;
-  if (typeof args.write === 'string') {
+  if (args.write === 'none') {
+    writeRepos = []; // явный запрет записи в репозитории (фаза B спецификации)
+  } else if (typeof args.write === 'string') {
     writeRepos = args.write.split(',').map((s) => s.trim()).filter(Boolean);
     const bad = writeRepos.filter((k) => !REPO_KEYS.includes(k));
     if (bad.length) done({ ok: false, error: `неизвестные репозитории: ${bad.join(', ')}` });

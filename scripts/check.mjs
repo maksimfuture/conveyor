@@ -206,9 +206,12 @@ try {
     ok('scope: без scope запись в оба репо разрешена');
   else bad('scope: без scope запись в репо ошибочно заблокирована');
 
-  // scope: create-feature → писать можно только в SA
-  const setOut = JSON.parse(runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'BE', '--task', 'TASK-1'], '', tmp));
-  if (setOut.ok && setOut.scope.writeRepos.join(',') === 'systemsAnalysis') ok('scope: set create-feature → writeRepos=[systemsAnalysis]');
+  // scope: create-specification (фаза A) → писать можно только в SA
+  const setOut = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--task', 'TASK-1'], '', tmp),
+  );
+  if (setOut.ok && setOut.scope.writeRepos.join(',') === 'systemsAnalysis')
+    ok('scope: create-specification (фаза A) → writeRepos=[systemsAnalysis]');
   else bad('scope: set вернул неожиданное: ' + JSON.stringify(setOut));
 
   if (writeTo(path.join(repoSA, 'doc.md')) === '') ok('scope: запись в SA (в области) разрешена');
@@ -252,6 +255,23 @@ try {
     ok('scope: create-plan — запись в репо запрещена (только артефакты)');
   else bad('scope: create-plan не заблокировал запись в репо');
 
+  // --write none: фаза B спецификации снимает право записи в анализ
+  const noneOut = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'BE', '--write', 'none'], '', tmp),
+  );
+  if (noneOut.ok && noneOut.scope.writeRepos.length === 0) ok('scope: --write none → writeRepos=[]');
+  else bad('scope: --write none не сработал: ' + JSON.stringify(noneOut));
+  const denySAphaseB = writeTo(path.join(repoSA, 'doc.adoc'));
+  if (denySAphaseB && JSON.parse(denySAphaseB).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: в фазе B запись в анализ заблокирована');
+  else bad('scope: фаза B не заблокировала запись в анализ');
+  // план автотестов читает автотесты, но не пишет никуда
+  const apOut = JSON.parse(
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-autotest-plan', '--type', 'FE'], '', tmp),
+  );
+  if (apOut.ok && apOut.scope.writeRepos.length === 0) ok('scope: create-autotest-plan → writeRepos=[]');
+  else bad('scope: create-autotest-plan: ' + JSON.stringify(apOut));
+
   // clear → снова всё разрешено
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
   if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: clear снимает ограничения');
@@ -267,7 +287,7 @@ try {
     runScript('core/scripts/guard-bash.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { command: cmd } })).trim();
   const decisionOf = (out) => (out ? JSON.parse(out).hookSpecificOutput.permissionDecision : 'allow');
 
-  runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'FE'], '', tmp);
+  runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'FE'], '', tmp);
 
   // cd-трекинг: относительный редирект после cd в чужой репозиторий
   if (decisionOf(runBash('cd repo-be && echo hack > src.js')) === 'deny') ok('guard-bash: cd-трекинг ловит редирект в чужой репо');
@@ -323,7 +343,7 @@ try {
   // фолбэк workspace через CLAUDE_PROJECT_DIR (cd наружу не отключает guard)
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-outside-'));
   try {
-    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-feature', '--type', 'FE'], '', tmp);
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'FE'], '', tmp);
     const denyOut = execFileSync(
       'node',
       [path.join(root, 'core/scripts/guard-writes.mjs')],

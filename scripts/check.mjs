@@ -1116,18 +1116,16 @@ try {
     ok('validate-artifact: шаблон intent проходит валидацию, плейсхолдеры — предупреждение');
   else bad('validate-artifact: шаблон intent не прошёл: ' + JSON.stringify(vaIntent));
 
-  // Каркас КАЖДОГО раздела шаблона обязан быть виден детектору плейсхолдеров:
-  // intent — единственный этап без цикла ревью, и подсказка, которую детектор
-  // не матчит (нет буквы после «<» или длиннее лимита), уезжает в артефакт
-  // молча. Режем шаблон по разделам и проверяем каждый отдельно.
-  for (const sec of intentSections) {
-    const rest = intentTpl.slice(intentTpl.indexOf(sec) + sec.length);
-    const end = rest.indexOf('\n## ');
-    fs.writeFileSync(intentPath, sec + (end === -1 ? rest : rest.slice(0, end)));
-    const vaSec = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
-    if (vaSec.placeholders.length) ok(`validate-artifact: каркас «${sec.slice(3)}» виден детектору плейсхолдеров`);
-    else bad(`validate-artifact: каркас «${sec.slice(3)}» не даёт ни одного предупреждения`);
-  }
+  // КАЖДЫЙ плейсхолдер шаблона обязан быть виден детектору: intent —
+  // единственный этап без цикла ревью, и подсказка, которую детектор не матчит
+  // (нет буквы после «<» или длиннее лимита), уезжает в артефакт молча.
+  // Собираем токены шаблона наивно — всё в угловых скобках, кроме
+  // html-комментариев, — и требуем, чтобы каждый попал в placeholders.
+  const intentTokens = (intentTpl.match(/<[^<>\n]+>/g) || []).filter((t) => !t.startsWith('<!'));
+  const intentUnseen = intentTokens.filter((t) => !vaIntent.placeholders.includes(t));
+  if (intentTokens.length && !intentUnseen.length)
+    ok(`validate-artifact: все ${intentTokens.length} плейсхолдеров шаблона intent видны детектору`);
+  else bad('validate-artifact: детектор не видит плейсхолдеры шаблона intent: ' + JSON.stringify(intentUnseen));
 
   // Каркас из правильных заголовков с пустыми телами — не заполненный intent:
   // структурное правило требует хотя бы один критерий приёмки чекбоксом.

@@ -1,0 +1,20 @@
+{
+  "repos": {
+    "systemsAnalysis": {
+      "link": "repos/system-analysis",
+      "mainBranch": "main"
+    },
+    "frontend": {
+      "link": "repos/frontend",
+      "mainBranch": "main"
+    },
+    "backend": {
+      "link": "repos/backend",
+      "mainBranch": "main"
+    },
+    "autoTest": {
+      "link": "repos/autotests",
+      "mainBranch": "main"
+    }
+  }
+}

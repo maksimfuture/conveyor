@@ -1108,8 +1108,22 @@ try {
     else bad(`validate-artifact: шаблон ${type} не прошёл: ` + JSON.stringify(vaTpl));
   }
 
+  // КАЖДЫЙ плейсхолдер шаблона обязан быть виден детектору: подсказка, которую
+  // детектор не матчит (нет буквы после «<» или длиннее лимита), уезжает в
+  // артефакт молча. Для intent и спецификации это единственный сигнал: у intent
+  // нет цикла ревью, а у спецификации он ревьюет правки анализа, а не текст
+  // требований. Собираем токены шаблона наивно — всё в угловых скобках, кроме
+  // html-комментариев, — и требуем, чтобы каждый попал в placeholders.
+  for (const type of ['intent', 'specification']) {
+    const tplText = fs.readFileSync(path.join(root, `core/templates/${type}.md`), 'utf8');
+    const tokens = [...new Set((tplText.match(/<[^<>\n]+>/g) || []).filter((t) => !t.startsWith('<!')))];
+    const unseen = tokens.filter((t) => !tplChecked[type].placeholders.includes(t));
+    if (tokens.length && !unseen.length)
+      ok(`validate-artifact: все ${tokens.length} плейсхолдеров шаблона ${type} видны детектору`);
+    else bad(`validate-artifact: детектор не видит плейсхолдеры шаблона ${type}: ` + JSON.stringify(unseen));
+  }
+
   const intentPath = path.join(tmp, 'intent-test.md');
-  const intentTpl = fs.readFileSync(path.join(root, 'core/templates/intent.md'), 'utf8');
   const intentSections = [
     '## Проблема и контекст',
     '## Бизнес-ценность',
@@ -1118,17 +1132,6 @@ try {
     '## Источники в анализе',
     '## Открытые вопросы',
   ];
-
-  // КАЖДЫЙ плейсхолдер шаблона обязан быть виден детектору: intent —
-  // единственный этап без цикла ревью, и подсказка, которую детектор не матчит
-  // (нет буквы после «<» или длиннее лимита), уезжает в артефакт молча.
-  // Собираем токены шаблона наивно — всё в угловых скобках, кроме
-  // html-комментариев, — и требуем, чтобы каждый попал в placeholders.
-  const intentTokens = (intentTpl.match(/<[^<>\n]+>/g) || []).filter((t) => !t.startsWith('<!'));
-  const intentUnseen = intentTokens.filter((t) => !tplChecked.intent.placeholders.includes(t));
-  if (intentTokens.length && !intentUnseen.length)
-    ok(`validate-artifact: все ${intentTokens.length} плейсхолдеров шаблона intent видны детектору`);
-  else bad('validate-artifact: детектор не видит плейсхолдеры шаблона intent: ' + JSON.stringify(intentUnseen));
 
   // Каркас из правильных заголовков с пустыми телами — не заполненный intent:
   // структурное правило требует хотя бы один критерий приёмки чекбоксом.

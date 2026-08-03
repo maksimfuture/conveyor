@@ -785,6 +785,75 @@ console.log('Промпт system-analyst — две фазы этапа create-s
     );
 }
 
+// 2l) Этап create-autotest-plan стоит на трёх решениях, и каждое держится
+// только текстом. Первое: план строится по СПЕЦИФИКАЦИИ — вернувшийся
+// `git-ops diff` молча подменяет предмет проверки, и тесты начинают закреплять
+// то, что получилось в коде, вместо того чтобы ловить расхождение с
+// требованиями. Второе: покрытие критериев приёмки — единственная
+// содержательная проверка артефакта, потому что (третье) цикла ревью здесь
+// нет, он остаётся на /conveyor:implement-auto-test, где тесты реально
+// прогоняются. Скилл и команду модель читает ДО стейджа, поэтому смотрим все
+// три файла этапа.
+console.log('Этап create-autotest-plan — план по спецификации, без диффа и без ревью:');
+{
+  const rels = [
+    'core/stages/create-autotest-plan.md',
+    'adapters/claude-code/skills/create-autotest-plan/SKILL.md',
+    'adapters/gigacode/commands/conveyor/create-autotest-plan.md',
+  ];
+  const absent = rels.filter((rel) => !exists(rel));
+  if (absent.length) bad('create-autotest-plan: нет файлов этапа: ' + absent.join(', '));
+  else {
+    const files = rels.map((rel) => [rel, fs.readFileSync(path.join(root, rel), 'utf8').replace(/\s+/g, ' ')]);
+    const stageFlat = files[0][1];
+
+    const withDiff = files.filter(([, t]) => /git-ops(?:\.mjs)?"?\s+diff/.test(t)).map(([rel]) => rel);
+    const closed = /кодов\S*[^.]{0,140}не открыва/i.test(stageFlat);
+    if (!withDiff.length && closed) ok('create-autotest-plan: дифф реализации не готовится, кодовая база не открывается');
+    else
+      bad(
+        'create-autotest-plan: предмет проверки — ' +
+          [
+            withDiff.length ? `дифф реализации вернулся в ${withDiff.join(', ')}` : null,
+            closed ? null : 'в стейдже не сказано, что кодовая база не открывается',
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+
+    const validates = /validate-artifact[^`]{0,200}--type autotest-plan/.test(stageFlat);
+    const coverage = /критери\S* приёмки/i.test(stageFlat) && /не автоматизируется/i.test(stageFlat);
+    if (validates && coverage) ok('create-autotest-plan: валидация шаблона плюс покрытие критериев приёмки');
+    else
+      bad(
+        'create-autotest-plan: валидация артефакта — ' +
+          [
+            validates ? null : 'нет вызова validate-artifact --type autotest-plan',
+            coverage ? null : 'не предписана проверка покрытия критериев приёмки («не автоматизируется» с причиной)',
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+
+    // Подключением считаем ССЫЛКУ НА ФАЙЛ цикла (`core/stages/_review-loop.md`)
+    // — так его зовут производящие этапы; голое имя в отрицании («_review-loop.md
+    // не подключается») — наоборот, полезная оговорка, как в стейдже intent.
+    const withLoop = files.filter(([, t]) => t.includes('core/stages/_review-loop.md')).map(([rel]) => rel);
+    const saysNo = /ревью[^.]{0,160}НЕ запускается/.test(stageFlat) && /implement-auto-test/.test(stageFlat);
+    if (!withLoop.length && saysNo) ok('create-autotest-plan: цикл ревью не подключён, он остаётся на implement-auto-test');
+    else
+      bad(
+        'create-autotest-plan: цикл ревью — ' +
+          [
+            withLoop.length ? `подключён в ${withLoop.join(', ')}` : null,
+            saysNo ? null : 'в стейдже не сказано, что ревью НЕ запускается и остаётся на implement-auto-test',
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

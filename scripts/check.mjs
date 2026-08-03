@@ -1135,18 +1135,17 @@ try {
     ok('validate-artifact: intent из одних заголовков не проходит (нет критериев приёмки)');
   else bad('validate-artifact: каркас intent прошёл валидацию: ' + JSON.stringify(vaIntentSkel));
 
-  // Обратная сторона: неполный intent обязан назвать ИМЕННО недостающие
-  // разделы — иначе выпадение раздела из REQUIRED.intent не поймается.
-  fs.writeFileSync(intentPath, '# Пусто\n## Проблема и контекст\nх\n## Открытые вопросы\nх\n');
+  // Обратная сторона: пустой файл обязан назвать ВСЕ обязательные разделы —
+  // иначе выпадение любого из них из REQUIRED.intent не поймается.
+  fs.writeFileSync(intentPath, '# Пусто\n');
   const vaIntentBad = runScriptFull('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']);
   const vaIntentBadOut = JSON.parse(vaIntentBad.stdout);
-  const intentMissWant = intentSections.filter((h) => h !== '## Проблема и контекст' && h !== '## Открытые вопросы');
   if (
     vaIntentBadOut.ok === false &&
     vaIntentBad.status === 1 &&
-    JSON.stringify(vaIntentBadOut.missingSections) === JSON.stringify(intentMissWant)
+    JSON.stringify(vaIntentBadOut.missingSections) === JSON.stringify(intentSections)
   )
-    ok('validate-artifact: неполный intent называет недостающие разделы (код возврата 1)');
+    ok('validate-artifact: пустой intent называет все обязательные разделы (код возврата 1)');
   else bad('validate-artifact: состав missingSections у intent: ' + JSON.stringify(vaIntentBadOut));
 
   // Типы удалённых этапов больше не принимаются, тип плана автотестов принимается.

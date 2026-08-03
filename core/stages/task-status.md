@@ -26,7 +26,10 @@ specification → plan → implement-plan → autotest-plan → implement-auto-t
 Этап `specification` состоит из двух подэтапов: `analysisDone` (правки
 репозитория анализа внесены и закоммичены) и `specDone` (спецификация
 собрана). Если `analysisDone:true`, а `specDone:false` — следующий шаг
-«повторить /conveyor:create-specification, он продолжит с фазы B».
+«повторить `/conveyor:create-specification <TASK-ID>` — он продолжит с фазы
+B». TASK-ID в подсказке обязателен: у мигрированных с 1.x задач `intentId`
+пуст, по intent'у этап такую задачу не найдёт, а чужой INTENT-ID завёл бы
+вторую задачу.
 
 ## Совместимость с 1.x
 `meta.json` без `schemaVersion` — репозиторий версии 1.x: показывай задачу

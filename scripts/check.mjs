@@ -435,6 +435,38 @@ console.log('Стейдж create-specification — две фазы:');
           .join('; '),
     );
 
+  // Обратного индекса по intentId мало: migrate-workspace.mjs проставляет
+  // задачам 1.x `intentId: null` и папки `intents/` для них не существует —
+  // такую задачу индекс не находит НИКОГДА, а запуск с чужим INTENT-ID завёл
+  // бы ВТОРУЮ задачу и переиграл правки чужого репозитория. Ровно этим
+  // задачам task-status.md обещает продолжение с фазы B, поэтому этап обязан
+  // принимать аргументом и TASK-ID, а ветка по TASK-ID — вести сразу в фазу B.
+  const argLine = (csMd.match(/^\*\*Аргументы:\*\*.*$/m) || [''])[0];
+  const bothIds = /INTENT-ID\s*\|\s*TASK-ID/.test(argLine);
+  const tellsApart = /intents\//.test(args) && /tasks\//.test(args) && /TASK-ID/.test(args);
+  const taskIdBranch = section('Идемпотентность')
+    .split(/\n(?=- )/)
+    .map(flat)
+    .filter((b) => b.startsWith('- '))
+    .find((b) => /TASK-ID/.test(b));
+  const branchToB = !!taskIdBranch && /(фаз\S* B|шаг 13)/i.test(taskIdBranch);
+  const branchMigrated = !!taskIdBranch && /(null|мигрир)/i.test(taskIdBranch);
+  if (bothIds && tellsApart && branchToB && branchMigrated)
+    ok('stage create-specification: задача с пустым intentId продолжается запуском по TASK-ID');
+  else
+    bad(
+      'stage create-specification: запуск по TASK-ID — ' +
+        [
+          bothIds ? null : 'строка «Аргументы» не принимает TASK-ID наравне с INTENT-ID',
+          tellsApart ? null : '«Разбор аргументов» не говорит, как отличить TASK-ID от INTENT-ID (intents/ vs tasks/)',
+          taskIdBranch ? null : 'в «Идемпотентности» нет ветки по TASK-ID',
+          !taskIdBranch || branchToB ? null : 'ветка по TASK-ID не ведёт в фазу B',
+          !taskIdBranch || branchMigrated ? null : 'ветка по TASK-ID не названа путём для задач с intentId: null',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
   // Папка задачи (на паре FE-BE их две) появляется ЗАПИСЬЮ meta.json: сам
   // каталог — не *.md и не meta.json, поэтому mkdir по нему guard отклоняет
   // (проверка запрета — ниже, на временном workspace), а подсказка отказа
@@ -482,6 +514,36 @@ console.log('Скилл и команда create-specification — без ста
   }
   if (!stale.length) ok('create-specification: скилл и команда описывают двухфазный этап');
   else bad('create-specification: остатки старого этапа — ' + stale.join('; '));
+
+  // Продолжение по TASK-ID — единственный вход для задач с пустым intentId, и
+  // модель читает про аргументы скилл/команду, а не стейдж: нотация «принимаем
+  // и то, и другое» обязана быть во всех трёх файлах. Туда же /task-status:
+  // он советует «повторить create-specification», и совет без TASK-ID для
+  // мигрированной задачи невыполним — вызывать её нечем.
+  const noTaskId = [
+    'core/stages/create-specification.md',
+    'adapters/claude-code/skills/create-specification/SKILL.md',
+    'adapters/gigacode/commands/conveyor/create-specification.md',
+  ].filter((rel) => !/INTENT-ID\s*\|\s*TASK-ID/.test(fs.readFileSync(path.join(root, rel), 'utf8')));
+  const tsAdvice = (
+    fs
+      .readFileSync(path.join(root, 'core/stages/task-status.md'), 'utf8')
+      .split(/\n\n/)
+      .find((p) => /specDone/.test(p)) || ''
+  ).replace(/\s+/g, ' ');
+  const tsNamesTaskId = /create-specification\s*<?TASK-ID/.test(tsAdvice);
+  if (!noTaskId.length && tsNamesTaskId)
+    ok('create-specification: приём TASK-ID заявлен в стейдже, скилле и команде; /task-status зовёт этап с TASK-ID');
+  else
+    bad(
+      'create-specification: продолжение по TASK-ID — ' +
+        [
+          noTaskId.length ? `нет нотации «INTENT-ID | TASK-ID» в: ${noTaskId.join(', ')}` : null,
+          tsNamesTaskId ? null : 'task-status.md советует повторить этап, но не называет TASK-ID в вызове',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
 }
 
 // 3) Scripts run against a temp workspace

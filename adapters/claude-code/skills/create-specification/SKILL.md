@@ -1,27 +1,31 @@
 ---
 name: create-specification
-description: Формирует спецификацию (specification.md) по диффу документов репозитория системного анализа. Запускать после /create-feature, когда нужно превратить внесённые в анализ требования в формальную спецификацию с REQ-ID и критериями приёмки. Аргументы TASK-ID [--since <ref>].
+description: Вносит требования из intent в репозиторий системного анализа и формирует спецификацию задачи. Запускать, когда системный аналитик берёт готовый intent в работу и нужно создать задачу tasks/<тип>/<TASK-ID>/ со specification.md, а сами требования внести в документы анализа в отдельной ветке. Второй шаг конвейера, после /conveyor:intent. Запускать только по явной команде пользователя.
 ---
 
-Этап конвейера conveyor: спецификация по диффу анализа.
-**Агент:** system-analyst. **Предусловие:** есть feature.md.
+Этап конвейера conveyor: правки анализа + спецификация (две фазы).
+**Агент:** system-analyst. **Предусловие:** есть `intents/<INTENT-ID>/intent.md`.
 
 **Плагин-корень:** `${CONVEYOR_ROOT}` = `${CLAUDE_PLUGIN_ROOT}`. Прочитай и
 выполни точно: `${CONVEYOR_ROOT}/core/stages/_common.md` и
 `${CONVEYOR_ROOT}/core/stages/create-specification.md`.
 
 Кратко:
-1. resolve-config; определи задачу по TASK-ID. Установи рабочую область:
-   `scope.mjs set --stage create-specification --type <FE|BE> --task
-   <TASK-ID>` (запись в репозитории запрещена); `clear` при завершении.
-2. Головной ref анализа — ветка `analysisBranch` в рабочей копии (нет ветки —
-   спроси диапазон); база — по приоритету:
-   --since → headSha прошлого запуска (режим «дополнить») /
-   analysisShaAtFeature (режим «перезаписать») → analysisShaAtFeature.
-3. Обнови копию анализа (`update --mode read`); вычисли diff
-   (`git-ops diff`).
-4. Запусти system-analyst → specification.md (core/templates/specification.md);
-   для relatedTaskId скоупь по «Границам фичи» своей задачи.
-5. Валидируй (все разделы, REQ-ID+источник у каждого требования). Зафиксируй
-   baseSha/headSha в meta.json; stages.specification.done. Следующий шаг —
-   /create-plan.
+1. resolve-config; аргументы `INTENT-ID [FE|BE|FE-BE] [номер]` — тип и номер
+   задаёт аналитик, в intent'е их нет; не переданы — спроси ОДНИМ вопросом.
+2. Фаза A (пишем в анализ): `scope.mjs set --stage create-specification
+   --type <тип> --task <TASK-ID>` → создать задачу(и) и meta.json (intentId,
+   пять этапов) → `git-ops locate` + `update --mode write` → ветка
+   `<INTENT-ID>-analysis` (одна общая на пару FE-BE) → агент правит документы
+   точечно, БЕЗ переформатирования → проверка машиночитаемых файлов → цикл
+   ревью (домен systems-analysis) → коммит после ревью → `analysisDone = true`,
+   `analysisBranch`/`analysisBaseSha` в meta.json.
+3. Фаза B (запись в репозитории запрещена): `scope.mjs set … --write none` →
+   `git-ops diff --base <analysisBaseSha> --head <analysisBranch>` → агент
+   собирает specification.md по `core/templates/specification.md` →
+   `validate-artifact --type specification` (возврат агенту не только при
+   `ok:false`, но и при непустом `placeholders`) → `validate-task-folder` →
+   `specDone` и `done`.
+4. Повторный запуск при `analysisDone:true, specDone:false` начинается сразу
+   с фазы B — правки чужого репозитория не переигрываются.
+5. `scope.mjs clear`; следующий шаг — /conveyor:create-plan.

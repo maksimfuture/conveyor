@@ -1563,9 +1563,8 @@ try {
   // Каждый шаблон обязан проходить валидацию СВОЕГО типа: шаблон — эталон
   // артефакта, и если он не проходит сам, этап раздаёт агенту заведомо
   // невалидный каркас. Плейсхолдеры при этом остаются предупреждением.
-  // (autotest-plan.md добавится вместе с этапом плана автотестов.)
   const tplChecked = {};
-  for (const type of ['plan', 'intent', 'specification']) {
+  for (const type of ['plan', 'intent', 'specification', 'autotest-plan']) {
     const tplPath = path.join(tmp, `tpl-${type}.md`);
     fs.copyFileSync(path.join(root, `core/templates/${type}.md`), tplPath);
     const vaTpl = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', tplPath, '--type', type]));
@@ -1577,11 +1576,12 @@ try {
 
   // КАЖДЫЙ плейсхолдер шаблона обязан быть виден детектору: подсказка, которую
   // детектор не матчит (нет буквы после «<» или длиннее лимита), уезжает в
-  // артефакт молча. Для intent и спецификации это единственный сигнал: у intent
-  // нет цикла ревью, а у спецификации он ревьюет правки анализа, а не текст
-  // требований. Собираем токены шаблона наивно — всё в угловых скобках, кроме
+  // артефакт молча. Для intent, спецификации и плана автотестов это единственный
+  // сигнал: у intent нет цикла ревью, у спецификации он ревьюет правки анализа,
+  // а не текст требований, а на create-autotest-plan ревью не запускается вовсе.
+  // Собираем токены шаблона наивно — всё в угловых скобках, кроме
   // html-комментариев, — и требуем, чтобы каждый попал в placeholders.
-  for (const type of ['intent', 'specification']) {
+  for (const type of ['intent', 'specification', 'autotest-plan']) {
     const tplText = fs.readFileSync(path.join(root, `core/templates/${type}.md`), 'utf8');
     const tokens = [...new Set((tplText.match(/<[^<>\n]+>/g) || []).filter((t) => !t.startsWith('<!')))];
     const unseen = tokens.filter((t) => !tplChecked[type].placeholders.includes(t));
@@ -1612,7 +1612,7 @@ try {
       .join('\n')
       .replace(/<!--[\s\S]*?-->/g, '');
   };
-  for (const type of ['intent', 'specification']) {
+  for (const type of ['intent', 'specification', 'autotest-plan']) {
     const tplText = fs.readFileSync(path.join(root, `core/templates/${type}.md`), 'utf8');
     const required = JSON.parse(
       runScript('core/scripts/validate-artifact.mjs', ['--file', emptyArtPath, '--type', type]),

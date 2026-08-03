@@ -360,9 +360,10 @@ export function isInside(childPath, parentDir) {
 const CLEAR_HINT =
   'если этап уже не выполняется — снимите область: node <plugin>/core/scripts/scope.mjs clear';
 
-// В папке задачи живут ТОЛЬКО артефакты конвейера. Исходники (tsx/js/less/…)
-// туда класть нельзя — код пишется в рабочую копию кодовой базы. Слабые
-// модели путают эти два пути, поэтому правило закреплено проверкой.
+// В папке задачи и в папке интента живут ТОЛЬКО артефакты конвейера.
+// Исходники (tsx/js/less/…) туда класть нельзя — код пишется в рабочую копию
+// кодовой базы. Слабые модели путают эти два пути, поэтому правило закреплено
+// проверкой.
 export function isTaskArtifactFile(relPathInTasks) {
   const base = path.basename(relPathInTasks);
   return base.toLowerCase().endsWith('.md') || base === 'meta.json';
@@ -446,15 +447,17 @@ export function checkWrite(targetPath, cfg) {
             `временные файлы — в системный temp`,
         };
       }
-      // В tasks/ — только артефакты (*.md, meta.json). Исходники кладутся в
-      // рабочую копию кодовой базы, а не в папку задачи фасадного репо.
-      if (top === 'tasks' && rel !== 'tasks' && !isTaskArtifactFile(rel)) {
-        return {
-          allowed: false,
-          reason:
-            `в папке задачи разрешены только артефакты (*.md, meta.json); ` +
-            `исходники пиши в рабочую копию кодовой базы (запрошено: ${rel})`,
-        };
+      // В tasks/ и intents/ — только артефакты (*.md, meta.json). Исходники
+      // кладутся в рабочую копию кодовой базы, а не в папку артефактов
+      // фасадного репо.
+      if ((top === 'tasks' || top === 'intents') && rel !== top && !isTaskArtifactFile(rel)) {
+        const hint =
+          top === 'tasks'
+            ? 'в папке задачи разрешены только артефакты (*.md, meta.json); ' +
+              'исходники пиши в рабочую копию кодовой базы'
+            : 'в папке интента разрешены только артефакты (*.md, meta.json); ' +
+              'интент — документ, исходникам в нём не место';
+        return { allowed: false, reason: `${hint} (запрошено: ${rel})` };
       }
     }
     return { allowed: true };

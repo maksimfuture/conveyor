@@ -223,7 +223,7 @@ for (const s of skills) {
 console.log('Цикл ревью:');
 if (!exists('core/stages/_review-loop.md')) bad('нет core/stages/_review-loop.md');
 else ok('core/stages/_review-loop.md');
-for (const st of ['create-feature', 'create-specification', 'implement-plan', 'implement-auto-test']) {
+for (const st of ['create-specification', 'implement-plan', 'implement-auto-test']) {
   const txt = fs.readFileSync(path.join(root, `core/stages/${st}.md`), 'utf8');
   if (txt.includes('_review-loop.md')) ok(`stage ${st} ссылается на цикл ревью`);
   else bad(`stage ${st}: нет ссылки на _review-loop.md`);

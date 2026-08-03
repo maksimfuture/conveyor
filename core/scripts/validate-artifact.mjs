@@ -71,6 +71,12 @@ const REQUIRED = {
 
 // Структурные требования сверх разделов.
 const STRUCTURAL = {
+  intent: [
+    {
+      test: (t) => /- \[[ xX]\]/.test(t),
+      problem: 'нет ни одного критерия-чекбокса в «Критериях приёмки»',
+    },
+  ],
   specification: [
     {
       test: (t) => /REQ-\d+/.test(t),

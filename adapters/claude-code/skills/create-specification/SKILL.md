@@ -12,7 +12,8 @@ description: Вносит требования из intent в репозитор
 выполни точно: `${CONVEYOR_ROOT}/core/stages/_common.md` и
 `${CONVEYOR_ROOT}/core/stages/create-specification.md`.
 
-Кратко:
+Кратко (команды — в полной форме; сокращённый вызов скрипты отвергают,
+`<repo>` — путь из ответа locate):
 1. resolve-config. Первый аргумент — INTENT-ID или TASK-ID: определи по
    файлам (`tasks/<FE|BE>/<аргумент>/meta.json` → TASK-ID,
    `intents/<аргумент>/intent.md` → INTENT-ID). СРАЗУ после resolve-config и
@@ -21,24 +22,30 @@ description: Вносит требования из intent в репозитор
    бери из её meta.json, вторую задачу не заводи). Для НОВОЙ задачи тип и
    номер задаёт аналитик, в intent'е их нет; не переданы — спроси ОДНИМ
    вопросом.
-2. Фаза A (пишем в анализ): `scope.mjs set --stage create-specification
-   --type <тип> --task <TASK-ID>` → задача(и) и meta.json (intentId, пять
-   этапов; каталог задачи появляется этой записью — `mkdir` по нему guard
-   запрещает) → `git-ops locate` + `update --mode write` → ветка
-   `<INTENT-ID>-analysis` (одна общая на пару FE-BE) → агент правит документы
-   точечно, БЕЗ переформатирования → проверка машиночитаемых файлов → цикл
-   ревью (домен systems-analysis) → коммит после ревью → `analysisDone = true`,
+2. Фаза A (пишем в анализ):
+   `scope.mjs set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID>`
+   → задача(и) и meta.json (intentId, пять этапов; каталог задачи появляется
+   этой записью — `mkdir` по нему guard запрещает) →
+   `git-ops locate --link <link systemsAnalysis> --workspace <workspaceRoot> --name systemsAnalysis`
+   → `git-ops update --path <repo> --main <mainBranch> --mode write` →
+   `git-ops branch --path <repo> --branch <INTENT-ID>-analysis --from <mainBranch>`
+   (одна общая ветка на пару FE-BE) → агент правит документы точечно, БЕЗ
+   переформатирования → проверка машиночитаемых файлов → цикл ревью (домен
+   systems-analysis) → коммит после ревью → `analysisDone = true`,
    `analysisBranch`/`analysisBaseSha` в meta.json.
-3. Фаза B (запись в репозитории запрещена): `scope.mjs set … --write none` →
-   `git-ops diff --base <analysisBaseSha> --head <analysisBranch>` → агент
-   собирает specification.md по `core/templates/specification.md` →
-   `validate-artifact --type specification` (возврат агенту не только при
-   `ok:false`, но и при непустом `placeholders`) → `validate-task-folder` →
+3. Фаза B (запись в репозитории запрещена):
+   `scope.mjs set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID> --write none`
+   → `git-ops diff --path <repo> --base <analysisBaseSha> --head <analysisBranch>`
+   → агент собирает specification.md по `core/templates/specification.md` →
+   `validate-artifact.mjs --file <папка задачи>/specification.md --type specification`
+   (возврат агенту не только при `ok:false`, но и при непустом
+   `placeholders`) → `validate-task-folder.mjs --task <папка задачи>` →
    `specDone` и `done`.
 4. Повторный запуск при `analysisDone:true, specDone:false` идёт сразу в фазу
    B — правки чужого репозитория не переигрываются. Всё равно выполняются
-   resolve-config и `git-ops locate`: без первого нет workspaceRoot/links, без
-   второго — `--path <repo>` для `git-ops diff` фазы B. Задачу с пустым
-   `intentId` (мигрированную из 1.x) продолжают ТОЛЬКО запуском по TASK-ID:
-   обратный индекс её не находит, а чужой INTENT-ID завёл бы вторую задачу.
+   resolve-config и тот же вызов locate из п. 2: без первого нет
+   workspaceRoot/links, без второго — `--path <repo>` для диффа фазы B.
+   Задачу с пустым `intentId` (мигрированную из 1.x) продолжают ТОЛЬКО
+   запуском по TASK-ID: обратный индекс её не находит, а чужой INTENT-ID
+   завёл бы вторую задачу.
 5. `scope.mjs clear`; следующий шаг — /conveyor:create-plan.

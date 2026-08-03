@@ -546,6 +546,56 @@ console.log('Скилл и команда create-specification — без ста
     );
 }
 
+// 2i) Команды из скилла модель набирает БУКВАЛЬНО и раньше всего: скилл она
+// читает до стейджа. Сокращённая форма вызова — не «покороче», а невыполнимый
+// вызов: на `git-ops diff --base … --head …` без `--path` скрипт отвечает
+// «diff: --path --base --head required», и этап встаёт на ровном месте —
+// причём этот этап единственный пишет в чужой репозиторий. Обязательные флаги
+// git-ops берём из самого git-ops.mjs (строки `fail('<sub>: … required')`),
+// чтобы проверка не разошлась со скриптом.
+console.log('Скилл create-specification — вызовы скриптов в выполнимой форме:');
+{
+  const skillRel = 'adapters/claude-code/skills/create-specification/SKILL.md';
+  // Код-спан в markdown переносится по строкам, поэтому пробелы схлопываем
+  // ДО нарезки на спаны — иначе половина команды теряется вместе с переносом.
+  const flat = fs.readFileSync(path.join(root, skillRel), 'utf8').replace(/\s+/g, ' ');
+  const spans = (flat.match(/`[^`]+`/g) || []).map((s) => s.slice(1, -1).trim());
+
+  const need = new Map();
+  const addNeed = (name, re, flags) => {
+    const prev = need.get(name);
+    need.set(name, { re, flags: [...new Set([...(prev ? prev.flags : []), ...flags])] });
+  };
+  const gitOpsSrc = fs.readFileSync(path.join(root, 'core/scripts/git-ops.mjs'), 'utf8');
+  for (const m of gitOpsSrc.matchAll(/fail\('([a-z][a-z-]*): ([^']*required)'/g))
+    addNeed(
+      `git-ops ${m[1]}`,
+      new RegExp(`git-ops(?:\\.mjs)?"?\\s+${m[1]}\\b`),
+      [...m[2].matchAll(/--[a-z-]+/g)].map((f) => f[0]),
+    );
+  // Остальные скрипты этапа проверяют аргументы по одному (ответом приходит
+  // первый недостающий), поэтому их обязательный набор перечислен здесь — см.
+  // шапки scope.mjs, validate-artifact.mjs, validate-task-folder.mjs.
+  addNeed('scope.mjs set', /scope\.mjs"?\s+set\b/, ['--stage', '--type', '--task']);
+  addNeed('validate-artifact', /validate-artifact(?:\.mjs)?\b/, ['--file', '--type']);
+  addNeed('validate-task-folder', /validate-task-folder(?:\.mjs)?\b/, ['--task']);
+
+  const short = [];
+  for (const span of spans)
+    for (const [name, { re, flags }] of need) {
+      if (!re.test(span)) continue;
+      const miss = flags.filter((f) => !new RegExp(`${f}\\b`).test(span));
+      if (miss.length) short.push(`${name}: нет ${miss.join(' ')} → «${span}»`);
+    }
+  if (need.size && !short.length)
+    ok('скилл create-specification: у каждого вызова скрипта все обязательные флаги');
+  else
+    bad(
+      'скилл create-specification: невыполнимые вызовы — ' +
+        (short.join('; ') || 'требования git-ops.mjs не разобраны'),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

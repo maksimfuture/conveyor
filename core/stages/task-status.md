@@ -1,24 +1,39 @@
 # Этап /task-status — сводка по задачам
 
 **Кто запускает:** любой участник. **Агент:** не требуется. Внешние
-репозитории НЕ трогает: данные — только `tasks/*/*/meta.json` и наличие
-файлов-артефактов. Работает без заполненного `.env`.
+репозитории НЕ трогает: данные — только `tasks/*/*/meta.json`, список папок
+`intents/*/` и наличие файлов-артефактов. Работает без заполненного `.env`.
 **Аргументы:** `[TASK-ID]` — опционален.
 
 ## Поведение
 1. Найди рабочий репозиторий (каталог с `settings.json`, поднимаясь вверх).
    Если нет — сообщи, что это не рабочий репозиторий conveyor.
-2. Прочитай `tasks/FE/*/meta.json` и `tasks/BE/*/meta.json`.
-3. Без TASK-ID — таблица по всем задачам: TASK-ID, тип, title, прогресс
-   этапов (например, 4/6), следующий этап, ветки, связанная задача (для
-   FE-BE пар).
+2. Прочитай `tasks/FE/*/meta.json` и `tasks/BE/*/meta.json`, а также список
+   папок `intents/*/`.
+3. Без TASK-ID — две таблицы:
+   - задачи: TASK-ID, тип, title, intentId, прогресс этапов (например, 3/5),
+     следующий этап, ветки, связанная задача (для FE-BE пар);
+   - intent'ы, на которые НЕ ссылается ни одна задача («заведён, задача не
+     создана»). Обратный индекс строй по `meta.json → intentId`, в самом
+     intent.md списка задач нет.
 4. С TASK-ID — детали: этапы и SHA, ветки, список существующих артефактов
-   (feature.md, specification.md, plan.md, requirements-auto-test.md,
-   report-auto-test.md), следующий шаг конвейера.
+   (specification.md, plan.md, autotest-plan.md, report-auto-test.md),
+   следующий шаг конвейера.
 
 ## Порядок этапов (для «следующего этапа»)
-feature → specification → plan → implement-plan → requirements-auto-test →
-implement-auto-test.
+specification → plan → implement-plan → autotest-plan → implement-auto-test.
+
+Этап `specification` состоит из двух подэтапов: `analysisDone` (правки
+репозитория анализа внесены и закоммичены) и `specDone` (спецификация
+собрана). Если `analysisDone:true`, а `specDone:false` — следующий шаг
+«повторить /conveyor:create-specification, он продолжит с фазы B».
+
+## Совместимость с 1.x
+`meta.json` без `schemaVersion` — репозиторий версии 1.x: показывай задачу
+как есть, помечай «требуется миграция» и подсказывай
+`node <plugin>/core/scripts/migrate-workspace.mjs --apply`. Файл `feature.md`
+в папке задачи — легаси-артефакт: выводи его в списке с пометкой «1.x»,
+удалять не предлагай.
 
 ## Ошибки
 Повреждённый meta.json → покажи задачу с пометкой «meta.json повреждён» и

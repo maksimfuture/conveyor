@@ -1093,13 +1093,21 @@ try {
   const vaObj = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']));
   if (vaObj.ok === false && vaObj.missingSections.length) ok('validate-artifact: неполный план не проходит');
   else bad('validate-artifact: неполный план прошёл валидацию');
-  // полный по разделам (шаблон содержит пример чекбокса и REQ-ID) → ok:true
-  fs.copyFileSync(path.join(root, 'core/templates/plan.md'), artPath);
-  const va2 = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', artPath, '--type', 'plan']));
-  if (va2.ok === true && va2.placeholders.length) ok('validate-artifact: все разделы на месте + плейсхолдеры как предупреждение');
-  else bad('validate-artifact: полный по разделам план не прошёл: ' + JSON.stringify(va2));
+  // Каждый шаблон обязан проходить валидацию СВОЕГО типа: шаблон — эталон
+  // артефакта, и если он не проходит сам, этап раздаёт агенту заведомо
+  // невалидный каркас. Плейсхолдеры при этом остаются предупреждением.
+  // (autotest-plan.md добавится вместе с этапом плана автотестов.)
+  const tplChecked = {};
+  for (const type of ['plan', 'intent', 'specification']) {
+    const tplPath = path.join(tmp, `tpl-${type}.md`);
+    fs.copyFileSync(path.join(root, `core/templates/${type}.md`), tplPath);
+    const vaTpl = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', tplPath, '--type', type]));
+    tplChecked[type] = vaTpl;
+    if (vaTpl.ok === true && vaTpl.placeholders.length)
+      ok(`validate-artifact: шаблон ${type} проходит валидацию, плейсхолдеры — предупреждение`);
+    else bad(`validate-artifact: шаблон ${type} не прошёл: ` + JSON.stringify(vaTpl));
+  }
 
-  // validate-artifact: intent — шаблон этапа БА обязан проходить свою же проверку
   const intentPath = path.join(tmp, 'intent-test.md');
   const intentTpl = fs.readFileSync(path.join(root, 'core/templates/intent.md'), 'utf8');
   const intentSections = [
@@ -1110,11 +1118,6 @@ try {
     '## Источники в анализе',
     '## Открытые вопросы',
   ];
-  fs.writeFileSync(intentPath, intentTpl);
-  const vaIntent = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
-  if (vaIntent.ok === true && vaIntent.placeholders.length)
-    ok('validate-artifact: шаблон intent проходит валидацию, плейсхолдеры — предупреждение');
-  else bad('validate-artifact: шаблон intent не прошёл: ' + JSON.stringify(vaIntent));
 
   // КАЖДЫЙ плейсхолдер шаблона обязан быть виден детектору: intent —
   // единственный этап без цикла ревью, и подсказка, которую детектор не матчит
@@ -1122,7 +1125,7 @@ try {
   // Собираем токены шаблона наивно — всё в угловых скобках, кроме
   // html-комментариев, — и требуем, чтобы каждый попал в placeholders.
   const intentTokens = (intentTpl.match(/<[^<>\n]+>/g) || []).filter((t) => !t.startsWith('<!'));
-  const intentUnseen = intentTokens.filter((t) => !vaIntent.placeholders.includes(t));
+  const intentUnseen = intentTokens.filter((t) => !tplChecked.intent.placeholders.includes(t));
   if (intentTokens.length && !intentUnseen.length)
     ok(`validate-artifact: все ${intentTokens.length} плейсхолдеров шаблона intent видны детектору`);
   else bad('validate-artifact: детектор не видит плейсхолдеры шаблона intent: ' + JSON.stringify(intentUnseen));

@@ -1,0 +1,19 @@
+{
+  "taskId": "TASK-5",
+  "type": "FE",
+  "title": "Старая задача 1.x",
+  "analysisBranch": "TASK-5-analysis",
+  "stages": {
+    "specification": {
+      "done": false,
+      "analysisDone": true,
+      "specDone": false
+    },
+    "plan": {
+      "done": false
+    }
+  },
+  "analysisBaseSha": "abc123",
+  "intentId": null,
+  "schemaVersion": 2
+}

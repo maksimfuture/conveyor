@@ -19,5 +19,7 @@ description: Формирует намерение (intent) по новой за
 4. `git-ops locate` + `update --mode read` для репозитория анализа.
 5. Запусти business-analyst: вход — описание, путь к анализу (только
    чтение), ПОЛНЫЙ текст `core/templates/intent.md`, файлы соглашений.
-6. Валидация `validate-artifact --type intent`; цикл ревью НЕ запускается.
+6. Валидация `validate-artifact --type intent`: возврат агенту не только при
+   `ok:false`, но и при непустом `placeholders` (остался каркас шаблона);
+   цикл ревью НЕ запускается.
 7. Следующий шаг — `/conveyor:create-specification <INTENT-ID> <FE|BE|FE-BE>`.

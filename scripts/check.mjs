@@ -671,6 +671,120 @@ console.log('Промпт reviewer — источник истины домен�
     );
 }
 
+// 2k) Промпт system-analyst и карточка субагента — всё, что агент этапа
+// видит о своём маршруте: стейдж он не читает никогда. Пока они пересказывают
+// удалённый /create-feature, агент идёт по несуществующему этапу и собирает
+// артефакт по шаблону, которого в плагине нет. Проверяем не стиль, а
+// совпадение с фактическим create-specification.md там, где расхождение стоит
+// дорого: фазы и права записи, источник итога ревью, правила форматов
+// анализа и развилки, где требований может не быть вовсе.
+console.log('Промпт system-analyst — две фазы этапа create-specification:');
+{
+  const flatten = (s) => s.replace(/\s+/g, ' ');
+  const saPrompt = fs.readFileSync(path.join(root, 'core/prompts/system-analyst.md'), 'utf8');
+  const saAgent = fs.readFileSync(path.join(root, 'adapters/claude-code/agents/system-analyst.md'), 'utf8');
+  const pf = flatten(saPrompt);
+  const af = flatten(saAgent);
+  const sect = (name) => flatten(saPrompt.split(/^## /m).find((s) => s.startsWith(name)) || '');
+
+  // Этапа create-feature нет вовсе. Единственное законное упоминание
+  // feature.md — легаси-артефакт задачи, продолженной по TASK-ID из 1.x;
+  // любое другое зовёт агента производить удалённый артефакт.
+  const stale = [];
+  for (const [rel, txt] of [
+    ['core/prompts/system-analyst.md', pf],
+    ['adapters/claude-code/agents/system-analyst.md', af],
+  ]) {
+    if (txt.includes('create-feature')) stale.push(`${rel}: create-feature`);
+    if (
+      txt
+        .split('feature.md')
+        .slice(0, -1)
+        .some((p) => !/легаси-$/.test(p))
+    )
+      stale.push(`${rel}: feature.md без пометки «легаси»`);
+  }
+  if (!stale.length) ok('system-analyst: промпт и карточка агента без удалённого этапа create-feature');
+  else bad('system-analyst: остатки старого маршрута — ' + stale.join('; '));
+
+  // Право записи в чужой репозиторий есть только в фазе A: в фазе B стейдж
+  // ставит `--write none`, и агент, считающий, что ему всё ещё можно править
+  // анализ, будет упираться в guard вместо сборки спецификации.
+  const heads = /^## Фаза A/m.test(saPrompt) && /^## Фаза B/m.test(saPrompt);
+  const tools = sect('Инструменты');
+  const rights = /фаз\S* A/.test(tools) && /фаз\S* B/.test(tools) && /read-only/i.test(tools);
+  const agentPhases = /фаз\S* A/i.test(af) && /фаз\S* B/i.test(af);
+  if (heads && rights && agentPhases) ok('system-analyst: обе фазы названы, запись в анализ — только в фазе A');
+  else
+    bad(
+      'system-analyst: фазы — ' +
+        [
+          heads ? null : 'в промпте нет разделов «Фаза A»/«Фаза B»',
+          rights ? null : 'раздел «Инструменты» не разводит права записи по фазам (фаза A / фаза B read-only)',
+          agentPhases ? null : 'карточка агента не называет обе фазы',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Раздел «Ревью» спецификации заполняется в фазе B, а сам цикл идёт в фазе
+  // A — возможно, в другой сессии. Единственный носитель итога — meta.json;
+  // агент, которому не сказано, откуда его брать и что делать при его
+  // отсутствии, выдумает замечания задним числом (_review-loop.md, «Запись
+  // итога»).
+  const rev = sect('Ревью');
+  const fromMeta = /stages\.specification\.review/.test(rev);
+  const noInvent = /(не выдумыв|не придумыв)/i.test(rev);
+  if (fromMeta && noInvent) ok('system-analyst: итог ревью фазы A берётся из meta.json, при его отсутствии не выдумывается');
+  else
+    bad(
+      'system-analyst: раздел «Ревью» — ' +
+        (rev
+          ? [
+              fromMeta ? null : 'не назван источник stages.specification.review',
+              noInvent ? null : 'не запрещено выдумывать замечания, когда итога нет',
+            ]
+              .filter(Boolean)
+              .join('; ')
+          : 'раздела нет'),
+    );
+
+  // Форматы анализа. Каждый пункт — следствие устройства конвейера: .adoc
+  // собран из include-кусков (один файл ≠ документ), якоря и xref держат
+  // ссылки из других мест, а разобранный и заново сериализованный yml/xml
+  // даёт дифф на весь файл — по нему не работают ни ревью фазы A, ни сборка
+  // спецификации в фазе B.
+  const fmt = sect('Форматы');
+  const missing = [
+    /include::/.test(fmt) ? null : 'include:: — .adoc собирается из кусков',
+    /(якор|anchor|xref)/i.test(fmt) ? null : 'якоря/xref не переименовывать',
+    /(не разбирай|не парси|не разбор)/i.test(fmt) && /сериализ/i.test(fmt)
+      ? null
+      : 'yml/xml — точечно, без разбора и обратной сериализации',
+    /(переносы строк|CRLF)/i.test(fmt) ? null : 'сохранение переносов строк',
+  ].filter(Boolean);
+  if (fmt && !missing.length) ok('system-analyst: правила работы с .adoc/.yml/.xml на месте');
+  else bad('system-analyst: форматы анализа — ' + (fmt ? `нет правил: ${missing.join(', ')}` : 'нет раздела про форматы'));
+
+  // Два входа, на которых требований может не быть: задача, продолженная по
+  // TASK-ID из 1.x (intent'а не существует), и пустой дифф фазы B. Агент, не
+  // предупреждённый об этом, либо встанет, либо сочинит требования сам.
+  const phaseB = sect('Фаза B');
+  const legacy = /легаси-feature\.md/.test(pf) && /только из диффа/i.test(pf);
+  const emptyDiff = /дифф[^.]{0,120}пуст|пуст\S*[^.]{0,60}дифф/i.test(phaseB) && /текущ\S* состояни/i.test(phaseB);
+  if (legacy && emptyDiff) ok("system-analyst: развилки без intent'а и с пустым диффом описаны");
+  else
+    bad(
+      'system-analyst: развилки — ' +
+        [
+          legacy ? null : "не сказано, что вместо intent'а приходит легаси-feature.md, а без него требования только из диффа",
+          emptyDiff ? null : 'в фазе B не сказано, что делать при пустом диффе (текущее состояние документов)',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   readConfig,
+  readJsonFile,
   readScopeState,
   requiredRepoKeys,
   STAGE_NAMES,
@@ -60,7 +61,7 @@ function listActiveTasks(workspaceRoot) {
       const metaPath = path.join(dir, taskId, 'meta.json');
       if (!fs.existsSync(metaPath)) continue;
       try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const meta = readJsonFile(metaPath);
         const stages = Object.values(meta.stages || {});
         const done = stages.filter((s) => s && s.done).length;
         if (done > 0 && done < stages.length) {

@@ -263,6 +263,25 @@ console.log('Вызовы git-ops в стейджах и скиллах:');
   else bad('git-ops: устаревшие вызовы в текстах: ' + (stale.join('; ') || 'не разобран dispatch git-ops.mjs'));
 }
 
+// 2d) Каталог интента создаётся ЗАПИСЬЮ intent.md: mkdir по тому же пути
+// guard проекта отклоняет (в папке артефактов разрешены только *.md и
+// meta.json — проверка запрета ниже, на временном workspace). Отдельный шаг
+// «создай папку» в стейдже упирается в собственный запрет проекта, и узнаёт
+// об этом пользователь посреди этапа. Поэтому шага быть не должно, а пометка
+// про mkdir — должна: без неё модель придумает команду сама.
+console.log('Стейдж intent — каталог интента:');
+{
+  const intentMd = fs.readFileSync(path.join(root, 'core/stages/intent.md'), 'utf8');
+  const orders = intentMd.split('\n').filter((l) => /^\s*\d+\.\s*Созда/i.test(l) && /папк/i.test(l));
+  if (!orders.length && intentMd.includes('mkdir'))
+    ok('stage intent: каталог создаётся записью intent.md, отдельного шага с mkdir нет');
+  else
+    bad(
+      'stage intent: ' +
+        (orders.length ? `предписан шаг создания каталога: ${orders.join(' | ')}` : 'нет пометки, что mkdir каталога запрещён'),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));
@@ -939,6 +958,15 @@ try {
   )
     ok('scope: set --stage intent без --type принят, запись в репозитории запрещена');
   else bad('scope: intent без --type не принят: ' + JSON.stringify(intentSet));
+
+  // Каталог интента появляется при записи артефакта: сам каталог — не *.md и
+  // не meta.json, поэтому mkdir по нему guard запрещает (обе формы, с -p и
+  // без). Это опора текста стейджа: он предписывает Write, а не mkdir.
+  const mkdirIntent = ['mkdir intents/INTENT-7', 'mkdir -p intents/INTENT-7'].map((c) => decisionOf(runBash(c)));
+  if (mkdirIntent.every((d) => d === 'deny') && writeTo(path.join(tmp, 'intents/INTENT-7/intent.md')) === '')
+    ok('guard-bash: mkdir каталога интента запрещён, запись intent.md разрешена');
+  else bad('guard-bash: mkdir каталога интента: ' + mkdirIntent.join(', '));
+
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
 
   // Легальные вызовы строгостью не задеты

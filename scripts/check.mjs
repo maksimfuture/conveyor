@@ -1081,10 +1081,34 @@ try {
 
   // validate-artifact: intent — шаблон этапа БА обязан проходить свою же проверку
   const intentPath = path.join(tmp, 'intent-test.md');
-  fs.copyFileSync(path.join(root, 'core/templates/intent.md'), intentPath);
+  const intentTpl = fs.readFileSync(path.join(root, 'core/templates/intent.md'), 'utf8');
+  const intentSections = [
+    '## Проблема и контекст',
+    '## Бизнес-ценность',
+    '## Границы',
+    '## Критерии приёмки',
+    '## Источники в анализе',
+    '## Открытые вопросы',
+  ];
+  fs.writeFileSync(intentPath, intentTpl);
   const vaIntent = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
-  if (vaIntent.ok === true) ok('validate-artifact: шаблон intent проходит валидацию');
+  if (vaIntent.ok === true && vaIntent.placeholders.length)
+    ok('validate-artifact: шаблон intent проходит валидацию, плейсхолдеры — предупреждение');
   else bad('validate-artifact: шаблон intent не прошёл: ' + JSON.stringify(vaIntent));
+
+  // Каркас КАЖДОГО раздела шаблона обязан быть виден детектору плейсхолдеров:
+  // intent — единственный этап без цикла ревью, и подсказка, которую детектор
+  // не матчит (нет буквы после «<» или длиннее лимита), уезжает в артефакт
+  // молча. Режем шаблон по разделам и проверяем каждый отдельно.
+  for (const sec of intentSections) {
+    const rest = intentTpl.slice(intentTpl.indexOf(sec) + sec.length);
+    const end = rest.indexOf('\n## ');
+    fs.writeFileSync(intentPath, sec + (end === -1 ? rest : rest.slice(0, end)));
+    const vaSec = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
+    if (vaSec.placeholders.length) ok(`validate-artifact: каркас «${sec.slice(3)}» виден детектору плейсхолдеров`);
+    else bad(`validate-artifact: каркас «${sec.slice(3)}» не даёт ни одного предупреждения`);
+  }
+
   fs.writeFileSync(intentPath, '# Пусто\n');
   const vaIntentBad = runScriptFull('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']);
   if (JSON.parse(vaIntentBad.stdout).ok === false && vaIntentBad.status === 1)

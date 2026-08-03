@@ -223,7 +223,7 @@ for (const s of skills) {
 console.log('Цикл ревью:');
 if (!exists('core/stages/_review-loop.md')) bad('нет core/stages/_review-loop.md');
 else ok('core/stages/_review-loop.md');
-for (const st of ['create-feature', 'implement-plan', 'implement-auto-test']) {
+for (const st of ['create-feature', 'create-specification', 'implement-plan', 'implement-auto-test']) {
   const txt = fs.readFileSync(path.join(root, `core/stages/${st}.md`), 'utf8');
   if (txt.includes('_review-loop.md')) ok(`stage ${st} ссылается на цикл ревью`);
   else bad(`stage ${st}: нет ссылки на _review-loop.md`);
@@ -326,6 +326,112 @@ console.log('Стейдж intent — остатки каркаса шаблон�
       'stage intent: ' +
         (named ? 'placeholders назван, но реакция на него не предписана' : 'шаг валидации не упоминает placeholders'),
     );
+}
+
+// 2g) Стейдж create-specification — единственный этап, который ПИШЕТ в чужой
+// репозиторий, и самый дорогой в конвейере. Проверяем не «текст красивый», а
+// пять свойств, потерю которых пользователь замечает уже после испорченной
+// ветки анализа или сожжённого прогона.
+console.log('Стейдж create-specification — две фазы:');
+{
+  const csMd = fs.readFileSync(path.join(root, 'core/stages/create-specification.md'), 'utf8');
+  const flat = (s) => s.replace(/\s+/g, ' ');
+  const section = (name) => csMd.split(/^## /m).find((s) => s.startsWith(name)) || '';
+  const phaseA = section('Фаза A');
+  const phaseB = section('Фаза B');
+
+  // Право записи в анализ отбирается на границе фаз: scope.mjs поддерживает
+  // `--write none` именно ради фазы B. Забытый флаг оставляет агенту сборки
+  // спецификации запись в чужой репозиторий — правки пойдут мимо ревью и
+  // мимо коммита, а спецификация будет собрана по диффу, который им уже не
+  // соответствует.
+  const setsScope = (s) => /scope\.mjs\S*\s+set\b/.test(flat(s));
+  if (setsScope(phaseA) && !phaseA.includes('--write none') && setsScope(phaseB) && phaseB.includes('--write none'))
+    ok('stage create-specification: фаза A ставит область записи, фаза B — --write none');
+  else
+    bad(
+      'stage create-specification: смена области между фазами — ' +
+        (!phaseA || !phaseB
+          ? 'нет разделов «Фаза A»/«Фаза B»'
+          : `фаза A: set=${setsScope(phaseA)}, --write none=${phaseA.includes('--write none')}; ` +
+            `фаза B: set=${setsScope(phaseB)}, --write none=${phaseB.includes('--write none')}`),
+    );
+
+  // Подэтапы analysisDone/specDone — ради них делалась миграция задач 1.x.
+  // Без предписания «при analysisDone:true начинай с фазы B» обрыв на фазе B
+  // приводит к повторному прогону правок ЧУЖОГО репозитория поверх уже
+  // закоммиченных.
+  const idem = flat(section('Идемпотентность'));
+  const flags = /analysisDone/.test(idem) && /specDone/.test(idem);
+  const skipsA = /пропусти фазу A/i.test(idem) && /фазы B/.test(idem);
+  if (flags && skipsA) ok('stage create-specification: повторный запуск при analysisDone:true начинается с фазы B');
+  else
+    bad(
+      'stage create-specification: идемпотентность — ' +
+        (flags ? 'подэтапы названы, но пропуск фазы A не предписан' : 'раздел не называет analysisDone/specDone'),
+    );
+
+  // Ревью идёт ДО коммита (_review-loop.md, «Что ревьюит reviewer»): reviewer
+  // смотрит НЕзакоммиченные правки. Коммит, предписанный раньше цикла, молча
+  // отдаёт в ветку анализа неотревьюенное.
+  const reviewAt = phaseA.indexOf('_review-loop.md');
+  const commitAt = phaseA.search(/^\s*\d+\.\s*Закоммить/m);
+  if (reviewAt > -1 && /systems-analysis/.test(phaseA) && commitAt > reviewAt)
+    ok('stage create-specification: цикл ревью (домен systems-analysis) в фазе A, коммит — после него');
+  else
+    bad(
+      'stage create-specification: ревью в фазе A — ' +
+        (reviewAt < 0
+          ? 'нет ссылки на _review-loop.md'
+          : !/systems-analysis/.test(phaseA)
+            ? 'не назван домен systems-analysis'
+            : 'шаг коммита не найден или стоит до ревью'),
+    );
+
+  // Валидатор при остатках каркаса шаблона отдаёт ok:true и непустой
+  // placeholders. На этом этапе цикл ревью смотрит правки анализа, а не текст
+  // спецификации, поэтому placeholders — единственный сигнал «секцию не
+  // заполнили» (та же логика, что в 2f для intent).
+  const step = (csMd.split(/\n(?=\d+\. )/).find((s) => s.includes('validate-artifact.mjs')) || '').replace(/\s+/g, ' ');
+  const named = /placeholders/.test(step);
+  const reaction = /placeholders[^.]{0,200}(верн|возврат|покаж)/i.test(step);
+  if (named && reaction) ok('stage create-specification: шаг валидации реагирует на непустой placeholders');
+  else
+    bad(
+      'stage create-specification: ' +
+        (named ? 'placeholders назван, но реакция на него не предписана' : 'шаг валидации не упоминает placeholders'),
+    );
+
+  // Документы анализа — .adoc/.yml/.xml. Переформатирование раздувает дифф на
+  // весь файл, а по этому диффу работают и ревью фазы A, и сборка
+  // спецификации в фазе B: запрет обязан быть в тексте этапа, как и проверка
+  // синтаксиса машиночитаемых файлов после правок.
+  const machine = /\.adoc/.test(csMd) && /\.ya?ml/.test(csMd) && /\.xml/.test(csMd);
+  const noReformat = /переформатиров\S*[^.]{0,120}(ЗАПРЕЩ|запрещ|нельз)/i.test(flat(csMd));
+  if (machine && noReformat) ok('stage create-specification: форматы анализа проверяются, переформатирование запрещено');
+  else
+    bad(
+      'stage create-specification: правки документов — ' +
+        (machine ? 'нет запрета на переформатирование' : 'не названы форматы .adoc/.yml/.xml'),
+    );
+}
+
+// 2h) Скилл и команда — то, что модель читает ПЕРЕД стейджем. Пересказ старого
+// контракта (feature.md как предусловие, `--since`, analysisShaAtFeature)
+// уводит её на удалённый маршрут ещё до чтения самого стейджа.
+console.log('Скилл и команда create-specification — без старого контракта:');
+{
+  const stale = [];
+  for (const rel of [
+    'adapters/claude-code/skills/create-specification/SKILL.md',
+    'adapters/gigacode/commands/conveyor/create-specification.md',
+  ]) {
+    const txt = fs.readFileSync(path.join(root, rel), 'utf8');
+    for (const token of ['feature.md', 'create-feature', '--since', 'analysisShaAtFeature'])
+      if (txt.includes(token)) stale.push(`${rel}: ${token}`);
+  }
+  if (!stale.length) ok('create-specification: скилл и команда описывают двухфазный этап');
+  else bad('create-specification: остатки старого этапа — ' + stale.join('; '));
 }
 
 // 3) Scripts run against a temp workspace

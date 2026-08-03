@@ -13,6 +13,21 @@ import crypto from 'node:crypto';
 
 const VAR_RE = /\$\{([A-Za-z0-9_]+)\}/g;
 
+// JSON, записанный штатными средствами Windows (PowerShell
+// `Set-Content -Encoding utf8`, «UTF-8 with BOM» в редакторе), начинается с
+// U+FEFF, и голый JSON.parse на нём падает — то есть НЕ РАБОТАЕТ ВЕСЬ плагин,
+// а не одна команда: settings.json читает ядро, meta.json — хуки и скрипты.
+// Ведущий BOM срезаем в ОДНОМ месте: все чтения settings.json / meta.json идут
+// через эти два хелпера.
+export function parseJsonText(text) {
+  const str = String(text);
+  return JSON.parse(str.charCodeAt(0) === 0xfeff ? str.slice(1) : str);
+}
+
+export function readJsonFile(file) {
+  return parseJsonText(fs.readFileSync(file, 'utf8'));
+}
+
 // The four repositories, in the order they appear in settings.json.
 export const REPO_KEYS = ['systemsAnalysis', 'frontend', 'backend', 'autoTest'];
 
@@ -130,7 +145,7 @@ export function readConfig(startDir = process.cwd()) {
   const settingsPath = path.join(workspaceRoot, 'settings.json');
   let settings;
   try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    settings = readJsonFile(settingsPath);
   } catch (e) {
     return { found: true, workspaceRoot, error: `settings.json: ${e.message}` };
   }

@@ -21,7 +21,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findWorkspaceRoot, parseEnvFile, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
+import { findWorkspaceRoot, parseEnvFile, readJsonFile, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');
@@ -45,7 +45,7 @@ const write = (file, text) => {
 const settingsPath = path.join(workspaceRoot, 'settings.json');
 let settings;
 try {
-  settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  settings = readJsonFile(settingsPath);
 } catch (e) {
   process.stdout.write(JSON.stringify({ ok: false, error: `settings.json: ${e.message}` }) + '\n');
   process.exit(1);
@@ -92,7 +92,7 @@ for (const type of ['FE', 'BE']) {
     if (fs.existsSync(metaPath)) {
       let meta;
       try {
-        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta = readJsonFile(metaPath);
       } catch {
         // Одна битая задача не должна оставить остальные не мигрированными.
         warnings.push(`${taskId}: meta.json не разбирается — пропущен`);

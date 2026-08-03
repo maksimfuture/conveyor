@@ -432,6 +432,43 @@ try {
     fs.rmSync(tmpLinks, { recursive: true, force: true });
   }
 
+  // BOM (U+FEFF) в начале файла — штатный результат стандартных средств Windows
+  // (PowerShell `Set-Content -Encoding utf8`, «UTF-8 with BOM» в редакторе).
+  // Голый JSON.parse на таком файле падает, и не работает ВЕСЬ плагин, а не
+  // одна команда: settings.json читает ядро, meta.json — хук сессии.
+  const tmpBom = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-bom-'));
+  try {
+    const withBom = (obj) => '\uFEFF' + JSON.stringify(obj, null, 2);
+    fs.writeFileSync(
+      path.join(tmpBom, 'settings.json'),
+      withBom({
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+          frontend: { link: '', mainBranch: 'main' },
+          backend: { link: '', mainBranch: 'main' },
+          autoTest: { link: '', mainBranch: 'main' },
+        },
+      }),
+    );
+    const rcBom = JSON.parse(runScript('core/scripts/resolve-config.mjs', [tmpBom]));
+    if (rcBom.found === true && !rcBom.error && rcBom.config && rcBom.config.taskPrefix === 'TASK')
+      ok('readConfig: settings.json с BOM читается');
+    else bad('readConfig: settings.json с BOM не читается: ' + JSON.stringify(rcBom.error || rcBom.config));
+
+    const bomTask = path.join(tmpBom, 'tasks', 'BE', 'TASK-9');
+    fs.mkdirSync(bomTask, { recursive: true });
+    fs.writeFileSync(
+      path.join(bomTask, 'meta.json'),
+      withBom({ taskId: 'TASK-9', type: 'BE', stages: { specification: { done: true }, plan: { done: false } } }),
+    );
+    const vcBom = vcCtxOf(JSON.stringify({ cwd: tmpBom }));
+    if (vcBom.includes('TASK-9')) ok('validate-config: meta.json с BOM разбирается');
+    else bad('validate-config: meta.json с BOM не разобран: ' + JSON.stringify(vcBom));
+  } finally {
+    fs.rmSync(tmpBom, { recursive: true, force: true });
+  }
+
   // git-ops locate: --link — путь ОТ корня рабочего репозитория (settings.json),
   // поэтому резолвится от --workspace. Скрипт запускается из чужого каталога:
   // молчаливый резолв от cwd даёт «не найдено» там, где путь верный.

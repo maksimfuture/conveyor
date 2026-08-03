@@ -998,6 +998,40 @@ try {
   if (va2.ok === true && va2.placeholders.length) ok('validate-artifact: все разделы на месте + плейсхолдеры как предупреждение');
   else bad('validate-artifact: полный по разделам план не прошёл: ' + JSON.stringify(va2));
 
+  // validate-artifact: intent — шаблон этапа БА обязан проходить свою же проверку
+  const intentPath = path.join(tmp, 'intent-test.md');
+  fs.copyFileSync(path.join(root, 'core/templates/intent.md'), intentPath);
+  const vaIntent = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
+  if (vaIntent.ok === true) ok('validate-artifact: шаблон intent проходит валидацию');
+  else bad('validate-artifact: шаблон intent не прошёл: ' + JSON.stringify(vaIntent));
+  fs.writeFileSync(intentPath, '# Пусто\n');
+  const vaIntentBad = runScriptFull('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']);
+  if (JSON.parse(vaIntentBad.stdout).ok === false && vaIntentBad.status === 1)
+    ok('validate-artifact: пустой intent не проходит (код возврата 1)');
+  else bad('validate-artifact: пустой intent прошёл: ' + JSON.stringify(vaIntentBad));
+
+  // Типы удалённых этапов больше не принимаются, тип плана автотестов принимается.
+  for (const gone of ['feature', 'requirements-auto-test']) {
+    const vaGone = runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', gone]);
+    if (/неизвестный тип/.test(vaGone)) ok(`validate-artifact: тип ${gone} удалён`);
+    else bad(`validate-artifact: тип ${gone} ещё есть: ${vaGone}`);
+  }
+  const vaAtp = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'autotest-plan']));
+  if (vaAtp.missingSections && vaAtp.missingSections.includes('## Тест-кейсы'))
+    ok('validate-artifact: тип autotest-plan известен');
+  else bad('validate-artifact: тип autotest-plan не заведён: ' + JSON.stringify(vaAtp));
+
+  // Спецификация получила два новых обязательных раздела (шаблон правит Task 15).
+  const specPath = path.join(tmp, 'spec-test.md');
+  fs.writeFileSync(specPath, '# Спецификация\n## Цель\nх\n## Открытые вопросы\nх\n');
+  const vaSpec = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', specPath, '--type', 'specification']));
+  if (
+    vaSpec.missingSections.includes('## Границы задачи') &&
+    vaSpec.missingSections.includes('## Внесённые изменения анализа')
+  )
+    ok('validate-artifact: спецификация требует «Границы задачи» и «Внесённые изменения анализа»');
+  else bad('validate-artifact: новые разделы спецификации не обязательны: ' + JSON.stringify(vaSpec.missingSections));
+
   // validate-task-folder: исходник в папке задачи → ok:false + имя файла
   const vtDir = path.join(tmp, 'tasks/FE/TASK-7');
   fs.mkdirSync(path.join(vtDir, 'src'), { recursive: true });

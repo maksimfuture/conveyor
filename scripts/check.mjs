@@ -1109,11 +1109,27 @@ try {
     else bad(`validate-artifact: каркас «${sec.slice(3)}» не даёт ни одного предупреждения`);
   }
 
-  fs.writeFileSync(intentPath, '# Пусто\n');
+  // Каркас из правильных заголовков с пустыми телами — не заполненный intent:
+  // структурное правило требует хотя бы один критерий приёмки чекбоксом.
+  fs.writeFileSync(intentPath, intentSections.map((h) => h + '\n').join('\n'));
+  const vaIntentSkel = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']));
+  if (vaIntentSkel.ok === false && !vaIntentSkel.missingSections.length && vaIntentSkel.problems.length)
+    ok('validate-artifact: intent из одних заголовков не проходит (нет критериев приёмки)');
+  else bad('validate-artifact: каркас intent прошёл валидацию: ' + JSON.stringify(vaIntentSkel));
+
+  // Обратная сторона: неполный intent обязан назвать ИМЕННО недостающие
+  // разделы — иначе выпадение раздела из REQUIRED.intent не поймается.
+  fs.writeFileSync(intentPath, '# Пусто\n## Проблема и контекст\nх\n## Открытые вопросы\nх\n');
   const vaIntentBad = runScriptFull('core/scripts/validate-artifact.mjs', ['--file', intentPath, '--type', 'intent']);
-  if (JSON.parse(vaIntentBad.stdout).ok === false && vaIntentBad.status === 1)
-    ok('validate-artifact: пустой intent не проходит (код возврата 1)');
-  else bad('validate-artifact: пустой intent прошёл: ' + JSON.stringify(vaIntentBad));
+  const vaIntentBadOut = JSON.parse(vaIntentBad.stdout);
+  const intentMissWant = intentSections.filter((h) => h !== '## Проблема и контекст' && h !== '## Открытые вопросы');
+  if (
+    vaIntentBadOut.ok === false &&
+    vaIntentBad.status === 1 &&
+    JSON.stringify(vaIntentBadOut.missingSections) === JSON.stringify(intentMissWant)
+  )
+    ok('validate-artifact: неполный intent называет недостающие разделы (код возврата 1)');
+  else bad('validate-artifact: состав missingSections у intent: ' + JSON.stringify(vaIntentBadOut));
 
   // Типы удалённых этапов больше не принимаются, тип плана автотестов принимается.
   for (const gone of ['feature', 'requirements-auto-test']) {

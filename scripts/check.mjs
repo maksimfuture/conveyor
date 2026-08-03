@@ -282,6 +282,32 @@ console.log('Стейдж intent — каталог интента:');
     );
 }
 
+// 2e) Скилл велит выполнить _common.md и intent.md ЦЕЛИКОМ, но два раздела
+// общих правил для intent'а невыполнимы и противоречат стейджу: «Определение
+// задачи» уводит к TASK-ID из tasks/ и полям из meta.json (у intent'а свой
+// INTENT-N и никакого meta.json), «Завершение этапа» требует
+// validate-task-folder по папке задачи и отметки stages.<этап>.done в
+// meta.json (папки задачи нет вовсе). Список исключений сами эти разделы не
+// перечисляют, поэтому оговорка обязана стоять в стейдже — иначе слабая
+// модель пойдёт по общему правилу.
+console.log('Стейдж intent — неприменимые разделы _common.md:');
+{
+  const intentFlat = fs.readFileSync(path.join(root, 'core/stages/intent.md'), 'utf8').replace(/\s+/g, ' ');
+  const commonMd = fs.readFileSync(path.join(root, 'core/stages/_common.md'), 'utf8');
+  const sections = ['Определение задачи', 'Завершение этапа'];
+  const renamed = sections.filter((s) => !commonMd.includes(`## ${s}`));
+  // Имя раздела и «не применяются» — в одном предложении: упоминание раздела
+  // само по себе оговоркой не является.
+  const unmarked = sections.filter((s) => !new RegExp(`${s}[^.]{0,200}не примен`).test(intentFlat));
+  if (!renamed.length && !unmarked.length)
+    ok('stage intent: разделы _common.md «' + sections.join('», «') + '» помечены как неприменимые');
+  else
+    bad(
+      'stage intent: ' +
+        (renamed.length ? `в _common.md нет разделов: ${renamed.join(', ')}` : `оговорка не найдена: ${unmarked.join(', ')}`),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

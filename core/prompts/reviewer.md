@@ -13,7 +13,7 @@
 ## Контекст, который тебе передаёт скилл
 - домен;
 - source-of-truth (для кода — specification.md и plan.md; для анализа —
-  требования из промпта и feature.md; для тестов — requirements-auto-test.md
+  требования из промпта и intent.md; для тестов — requirements-auto-test.md
   и спецификация);
 - diff/файлы произведённой работы и абсолютные пути к рабочим копиям.
 

@@ -496,6 +496,33 @@ console.log('Стейдж create-specification — две фазы:');
       'stage create-specification: правки документов — ' +
         (machine ? 'нет запрета на переформатирование' : 'не названы форматы .adoc/.yml/.xml'),
     );
+
+  // На паре FE-BE этап производит ДВЕ задачи и ДВЕ спецификации, и оговорка
+  // про пару обязана стоять в КАЖДОМ шаге, который называет одну задачу.
+  // В фазе A она есть (шаги 3 и 12), в фазе B её недоставало: шаг области
+  // (`--type FE-BE`, `--task` FE-задачи) и шаг завершения
+  // (validate-task-folder, specDone/done, baseSha/headSha — в ОБЕ задачи).
+  // Без неё слабая модель закрывает только FE-задачу, а /task-status потом
+  // вечно предлагает повторить этап для BE.
+  const stepWith = (section, marker) =>
+    flat(section.split(/\n(?=\d+\. )/).find((s) => s.includes(marker)) || '');
+  const scopeStepB = stepWith(phaseB, 'scope.mjs');
+  const finishStepB = stepWith(phaseB, 'validate-task-folder');
+  const pairNoted = (s) => /(для пары|пары FE-BE|обеих|обе задачи)/i.test(s);
+  if (scopeStepB && finishStepB && pairNoted(scopeStepB) && pairNoted(finishStepB))
+    ok('stage create-specification: в фазе B пара FE-BE оговорена и в шаге области, и в шаге завершения');
+  else
+    bad(
+      'stage create-specification: пара FE-BE в фазе B — ' +
+        [
+          scopeStepB ? null : 'не найден шаг со scope.mjs',
+          finishStepB ? null : 'не найден шаг с validate-task-folder',
+          !scopeStepB || pairNoted(scopeStepB) ? null : 'шаг области не говорит, что для пары передаётся FE-BE и TASK-ID FE-задачи',
+          !finishStepB || pairNoted(finishStepB) ? null : 'шаг завершения не говорит, что закрываются ОБЕ задачи пары',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
 }
 
 // 2h) Скилл и команда — то, что модель читает ПЕРЕД стейджем. Пересказ старого

@@ -375,6 +375,11 @@ export function isInside(childPath, parentDir) {
 const CLEAR_HINT =
   'если этап уже не выполняется — снимите область: node <plugin>/core/scripts/scope.mjs clear';
 
+// Папки артефактов конвейера в рабочем репозитории. Список ОДИН на два правила
+// checkWrite — что разрешено писать в корне и где действует «только артефакты»:
+// разъехавшись, они дают дыру (папка разрешена, а состав в ней не проверяется).
+export const ARTIFACT_DIRS = ['tasks', 'intents'];
+
 // В папке задачи и в папке интента живут ТОЛЬКО артефакты конвейера.
 // Исходники (tsx/js/less/…) туда класть нельзя — код пишется в рабочую копию
 // кодовой базы. Слабые модели путают эти два пути, поэтому правило закреплено
@@ -452,12 +457,13 @@ export function checkWrite(targetPath, cfg) {
     if (scopedKeys || corrupt) {
       const rel = path.relative(wsRoot, target);
       const top = rel.split(path.sep)[0];
-      const allowedTop = ['tasks', 'intents', 'settings.json', '.env', '.env.example', '.gitignore'];
+      const allowedTop = [...ARTIFACT_DIRS, 'settings.json', '.env', '.env.example', '.gitignore'];
       if (rel !== '' && !allowedTop.includes(top)) {
         return {
           allowed: false,
           reason:
-            `при активном этапе в рабочем репозитории запись разрешена только в tasks/ и intents/ ` +
+            `при активном этапе в рабочем репозитории запись разрешена только в ` +
+            `${ARTIFACT_DIRS.map((d) => `${d}/`).join(' и ')} ` +
             `(запрошено: ${rel}); рабочие копии — только те, что в области этапа; ` +
             `временные файлы — в системный temp`,
         };
@@ -465,7 +471,7 @@ export function checkWrite(targetPath, cfg) {
       // В tasks/ и intents/ — только артефакты (*.md, meta.json). Исходники
       // кладутся в рабочую копию кодовой базы, а не в папку артефактов
       // фасадного репо.
-      if ((top === 'tasks' || top === 'intents') && rel !== top && !isTaskArtifactFile(rel)) {
+      if (ARTIFACT_DIRS.includes(top) && rel !== top && !isTaskArtifactFile(rel)) {
         const hint =
           top === 'tasks'
             ? 'в папке задачи разрешены только артефакты (*.md, meta.json); ' +

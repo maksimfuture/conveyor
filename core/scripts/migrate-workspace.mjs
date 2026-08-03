@@ -191,7 +191,10 @@ for (const type of ['FE', 'BE']) {
         meta.stages = meta.stages || {};
         meta.stages.specification = meta.stages.specification || { done: false };
         // Пройденный этап feature = правки анализа уже внесены: новая
-        // двухфазная спецификация начнёт сразу с фазы B.
+        // двухфазная спецификация начнёт сразу с фазы B. Запускать её для
+        // такой задачи надо по TASK-ID: intentId у неё null и intent'а не
+        // существует (см. core/stages/create-specification.md,
+        // «Идемпотентность»).
         const featureDone = !!(meta.stages.feature && meta.stages.feature.done);
         meta.stages.specification.analysisDone = featureDone;
         meta.stages.specification.specDone = !!meta.stages.specification.done;

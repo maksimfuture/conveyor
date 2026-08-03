@@ -9,14 +9,18 @@
 // Usage:
 //   node scope.mjs set --stage <имя> --type FE|BE|FE-BE [--task TASK-ID]
 //                      [--write key1,key2|none]   # override; иначе по этапу
+//   node scope.mjs set --stage intent --task INTENT-ID   # этап без типа
 //   node scope.mjs clear
 //   node scope.mjs show
 //
 // --type обязателен у set: на implement-plan область записи считается по нему
 // (BE → backend, иначе frontend), и пропуск молча отдал бы BE-задаче frontend.
-// Правило одно для всех этапов — вызывающему не нужно помнить, где тип на
-// область влияет, а где нет. Для FE-BE-пары в create-specification передавайте
-// FE-BE, --task — TASK-ID FE-задачи. Повторный set перезаписывает область.
+// Единственное исключение — этапы из STAGES_WITHOUT_TASK_TYPE (intent): типа
+// задачи там не существует, он появляется только на спецификации. У них --type
+// не просто необязателен, а ЗАПРЕЩЁН: принятый «FE» записал бы в область
+// выдумку и скрыл бы, что строку скопировали с соседнего этапа. Для FE-BE-пары
+// в create-specification передавайте FE-BE, --task — TASK-ID FE-задачи.
+// Повторный set перезаписывает область.
 //
 // Output: JSON { ok, scope? } on stdout. Exit 0/1.
 
@@ -29,6 +33,7 @@ import {
   repoRootFor,
   REPO_KEYS,
   STAGE_NAMES,
+  STAGES_WITHOUT_TASK_TYPE,
   scopeFilePath,
   LEGACY_SCOPE_FILE,
 } from './lib/config.mjs';
@@ -113,10 +118,18 @@ if (sub === 'set') {
   }
   // Тип обязателен (см. шапку): без него область этапа implement-plan
   // считалась бы по умолчанию и BE-задача получила бы запись во frontend.
-  if (typeof args.type !== 'string') done({ ok: false, error: 'set: требуется --type FE|BE|FE-BE' });
+  // У этапов без типа задачи (intent) он, наоборот, запрещён — там ещё нечему
+  // быть FE или BE, и принятое значение было бы выдумкой в области.
+  const typeless = STAGES_WITHOUT_TASK_TYPE.includes(args.stage);
+  if (typeless && typeof args.type === 'string') {
+    done({ ok: false, error: `этап «${args.stage}» типа задачи не имеет: уберите --type` });
+  }
+  if (!typeless && typeof args.type !== 'string') {
+    done({ ok: false, error: 'set: требуется --type FE|BE|FE-BE' });
+  }
   // Нормализуем тип: FE | BE | FE-BE (регистронезависимо); иное — ошибка.
-  const taskType = args.type.trim().toUpperCase();
-  if (!['FE', 'BE', 'FE-BE'].includes(taskType)) {
+  const taskType = typeless ? null : args.type.trim().toUpperCase();
+  if (!typeless && !['FE', 'BE', 'FE-BE'].includes(taskType)) {
     done({ ok: false, error: `неизвестный тип «${args.type}». Допустимые: FE, BE, FE-BE` });
   }
   let writeRepos;

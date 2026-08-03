@@ -5,8 +5,7 @@
 //
 // Usage:
 //   node validate-artifact.mjs --file <путь> --type <тип>
-//     тип: feature | specification | plan | requirements-auto-test |
-//          report-auto-test
+//     тип: intent | specification | plan | autotest-plan | report-auto-test
 //
 // Output (stdout, JSON):
 //   { ok, missingSections: [...], problems: [...], placeholders: [...] }
@@ -29,22 +28,24 @@ function parseArgs(argv) {
 }
 
 const REQUIRED = {
-  feature: [
-    '## Контекст',
-    '## Границы фичи',
-    '## Внесённые изменения анализа',
-    '## Заинтересованные стороны',
+  intent: [
+    '## Проблема и контекст',
+    '## Бизнес-ценность',
+    '## Границы',
+    '## Критерии приёмки',
+    '## Источники в анализе',
     '## Открытые вопросы',
-    '## Ревью',
   ],
   specification: [
     '## Цель',
+    '## Границы задачи',
     '## Пользовательские сценарии',
     '## Функциональные требования',
     '## Контракты',
     '## Граничные случаи',
     '## Нефункциональные требования',
     '## Критерии приёмки',
+    '## Внесённые изменения анализа',
     '## Открытые вопросы',
   ],
   plan: [
@@ -58,7 +59,7 @@ const REQUIRED = {
     '## Отклонения и остатки',
     '## Ревью',
   ],
-  'requirements-auto-test': [
+  'autotest-plan': [
     '## Объект тестирования',
     '## Уровни тестирования',
     '## Тест-кейсы',
@@ -86,7 +87,7 @@ const STRUCTURAL = {
       problem: 'шаги не ссылаются на REQ-ID из спецификации',
     },
   ],
-  'requirements-auto-test': [
+  'autotest-plan': [
     { test: (t) => /TC-\d+/.test(t), problem: 'нет ни одного тест-кейса с ID (TC-N)' },
     { test: (t) => /REQ-\d+/.test(t), problem: 'кейсы не трассированы на REQ-ID' },
   ],

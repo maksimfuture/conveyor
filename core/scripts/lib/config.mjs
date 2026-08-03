@@ -18,8 +18,8 @@ const VAR_RE = /\$\{([A-Za-z0-9_]+)\}/g;
 // U+FEFF, и голый JSON.parse на нём падает — то есть НЕ РАБОТАЕТ ВЕСЬ плагин,
 // а не одна команда: settings.json читает ядро, meta.json — хуки и скрипты.
 // Ведущий BOM срезаем в ОДНОМ месте: все чтения settings.json / meta.json идут
-// через эти два хелпера.
-export function parseJsonText(text) {
+// через readJsonFile.
+function parseJsonText(text) {
   const str = String(text);
   return JSON.parse(str.charCodeAt(0) === 0xfeff ? str.slice(1) : str);
 }

@@ -1123,6 +1123,36 @@ try {
     else bad(`validate-artifact: детектор не видит плейсхолдеры шаблона ${type}: ` + JSON.stringify(unseen));
   }
 
+  // Видимости заглушек мало — заглушка нужна в КАЖДОЙ обязательной секции.
+  // Секция, у которой в каркасе только html-комментарий, пропускается молча:
+  // заголовок на месте → ok:true, missingSections и placeholders пусты, и ни
+  // одного сигнала «сюда не написали». Список обязательных секций спрашиваем у
+  // самого валидатора (пустой файл называет все), чтобы не разъехаться с
+  // REQUIRED. Заглушкой считаем только ту, что валидатор ПОКАЖЕТ в placeholders.
+  const emptyArtPath = path.join(tmp, 'empty-artifact.md');
+  fs.writeFileSync(emptyArtPath, '# Пусто\n');
+  const sectionBody = (text, heading) => {
+    const lines = text.split('\n');
+    const start = lines.findIndex((l) => l.startsWith(heading));
+    if (start < 0) return '';
+    let end = start + 1;
+    while (end < lines.length && !lines[end].startsWith('## ')) end++;
+    return lines.slice(start + 1, end).join('\n');
+  };
+  for (const type of ['intent', 'specification']) {
+    const tplText = fs.readFileSync(path.join(root, `core/templates/${type}.md`), 'utf8');
+    const required = JSON.parse(
+      runScript('core/scripts/validate-artifact.mjs', ['--file', emptyArtPath, '--type', type]),
+    ).missingSections;
+    const bare = required.filter((h) => {
+      const body = sectionBody(tplText, h);
+      return !tplChecked[type].placeholders.some((p) => body.includes(p));
+    });
+    if (required.length && !bare.length)
+      ok(`validate-artifact: каждая из ${required.length} обязательных секций шаблона ${type} несёт заглушку`);
+    else bad(`validate-artifact: секции шаблона ${type} без заглушки: ` + JSON.stringify(bare));
+  }
+
   const intentPath = path.join(tmp, 'intent-test.md');
   const intentSections = [
     '## Проблема и контекст',

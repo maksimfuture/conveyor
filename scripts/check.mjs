@@ -651,6 +651,26 @@ console.log('Скилл create-specification — вызовы скриптов �
     );
 }
 
+// 2j) Домен systems-analysis ревьюит правки анализа в фазе A
+// /create-specification, и требования, по которым эти правки внесены, лежат в
+// intent.md: feature.md на этом маршруте больше не производится. reviewer —
+// субагент, он видит ТОЛЬКО то, что дал скилл, и подменить источник истины
+// сам не может: названный не тот файл он либо пойдёт искать, либо будет
+// ревьюить правки, не сверяя их с требованиями вообще.
+console.log('Промпт reviewer — источник истины домена systems-analysis:');
+{
+  const rv = fs.readFileSync(path.join(root, 'core/prompts/reviewer.md'), 'utf8');
+  const sot = (rv.split(/\n(?=- )/).find((b) => /source-of-truth/.test(b)) || '').replace(/\s+/g, ' ');
+  const analysisPart = (sot.match(/для анализа[^;)]*/) || [''])[0];
+  if (analysisPart.includes('intent.md') && !analysisPart.includes('feature.md'))
+    ok('reviewer.md: для анализа источник истины — intent.md');
+  else
+    bad(
+      'reviewer.md: source-of-truth для анализа — ' +
+        (sot ? `«${analysisPart || sot}»` : 'пункт про source-of-truth не найден'),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

@@ -668,6 +668,15 @@ try {
   if (denyNested && JSON.parse(denyNested).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник во вложенной папке задачи заблокирован');
   else bad('scope: вложенный исходник в папке задачи прошёл');
+  // то же правило в intents/: интент — документ, исходникам в нём не место
+  const denyIntentTsx = writeTo(path.join(tmp, 'intents/INTENT-1/hack.tsx'));
+  if (denyIntentTsx && JSON.parse(denyIntentTsx).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник (.tsx) в папке интента ЗАБЛОКИРОВАН');
+  else bad('scope: исходник в папке интента прошёл');
+  const denyIntentNested = writeTo(path.join(tmp, 'intents/INTENT-1/src/util.js'));
+  if (denyIntentNested && JSON.parse(denyIntentNested).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник во вложенной папке интента заблокирован');
+  else bad('scope: вложенный исходник в папке интента прошёл');
   if (!fs.existsSync(path.join(tmp, '.cache'))) ok('scope: .cache в workspace НЕ создаётся (файл области в temp)');
   else bad('scope: .cache появился в workspace при локальных ссылках');
   // пробный файл в корне workspace при активном этапе — deny
@@ -753,6 +762,9 @@ try {
   if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.tsx')) === '')
     ok('scope: без scope whitelist папки задачи не применяется');
   else bad('scope: whitelist папки задачи ошибочно активен без scope');
+  if (writeTo(path.join(tmp, 'intents/INTENT-1/manual.tsx')) === '')
+    ok('scope: без scope whitelist папки интента не применяется');
+  else bad('scope: whitelist папки интента ошибочно активен без scope');
   if (!fs.existsSync(scopeFilePath(tmp))) ok('scope: clear удаляет файл области из temp');
   else bad('scope: clear не удалил файл области');
 

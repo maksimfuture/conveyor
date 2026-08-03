@@ -198,7 +198,7 @@ for (const s of skills) {
   else if (!exists(`core/stages/${s}.md`)) bad(`skill ${s}: нет core/stages/${s}.md`);
   else ok(`skill ${s} → core/stages/${s}.md`);
 }
-for (const a of ['system-analyst', 'frontend-developer', 'backend-developer', 'qa-autotest-engineer', 'reviewer']) {
+for (const a of ['business-analyst', 'system-analyst', 'frontend-developer', 'backend-developer', 'qa-autotest-engineer', 'reviewer']) {
   if (!exists(`adapters/claude-code/agents/${a}.md`)) bad(`agent ${a}: нет файла`);
   else if (!exists(`core/prompts/${a}.md`)) bad(`agent ${a}: нет core/prompts/${a}.md`);
   else ok(`agent ${a} → core/prompts/${a}.md`);

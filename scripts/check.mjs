@@ -981,6 +981,87 @@ try {
   const vt2 = JSON.parse(runScript('core/scripts/validate-task-folder.mjs', ['--task', vtDir]));
   if (vt2.ok === true && vt2.checkedFiles === 2) ok('validate-task-folder: чистая папка задачи проходит');
   else bad('validate-task-folder: чистая папка не прошла: ' + JSON.stringify(vt2));
+
+  // ---- миграция рабочего репозитория 1.x -> 2.0 ----
+  {
+    const old = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-old-'));
+    try {
+      fs.writeFileSync(
+        path.join(old, 'settings.json'),
+        JSON.stringify({
+          taskPrefix: 'TASK',
+          repos: {
+            systemsAnalysis: { link: '${SYSTEMS_ANALYSIS_REPO}', mainBranch: '${SYSTEMS_ANALYSIS_MAIN_BRANCH}' },
+            frontend: { link: '${FRONTEND_REPO}', mainBranch: '${FRONTEND_MAIN_BRANCH}' },
+            backend: { link: '${BACKEND_REPO}', mainBranch: '${BACKEND_MAIN_BRANCH}' },
+            autoTest: { link: '${AUTOTEST_REPO}', mainBranch: '${AUTOTEST_MAIN_BRANCH}' },
+          },
+          repoCache: '${CONVEYOR_REPO_CACHE}',
+          reviewRounds: '${CONVEYOR_REVIEW_ROUNDS}',
+          fast: '${CONVEYOR_FAST}',
+          language: 'ru',
+        }, null, 2),
+      );
+      fs.writeFileSync(path.join(old, '.env'), 'SYSTEMS_ANALYSIS_REPO=C:/work/sa\nBACKEND_MAIN_BRANCH=master\n');
+      const taskDir = path.join(old, 'tasks', 'BE', 'TASK-3');
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, 'meta.json'),
+        JSON.stringify({
+          taskId: 'TASK-3',
+          type: 'BE',
+          analysisBranch: 'TASK-3-analysis',
+          analysisShaAtFeature: 'abc123',
+          stages: {
+            feature: { done: true },
+            specification: { done: true, baseSha: 'abc123', headSha: 'def456' },
+            plan: { done: false },
+            'implement-plan': { done: false },
+            'requirements-auto-test': { done: false },
+            'implement-auto-test': { done: false },
+          },
+        }, null, 2),
+      );
+      fs.writeFileSync(path.join(taskDir, 'feature.md'), '# Фича\n');
+      fs.writeFileSync(path.join(taskDir, 'requirements-auto-test.md'), '# Требования\n');
+
+      // сухой прогон ничего не меняет
+      const dry = JSON.parse(runScript('core/scripts/migrate-workspace.mjs', [old]));
+      const stillOld = JSON.parse(fs.readFileSync(path.join(old, 'settings.json'), 'utf8'));
+      if (dry.ok && dry.applied === false && 'repoCache' in stillOld) ok('migrate: сухой прогон ничего не меняет');
+      else bad('migrate: сухой прогон изменил файлы');
+
+      const res = JSON.parse(runScript('core/scripts/migrate-workspace.mjs', [old, '--apply']));
+      const st = JSON.parse(fs.readFileSync(path.join(old, 'settings.json'), 'utf8'));
+      if (!('repoCache' in st) && st.repos.systemsAnalysis.link === 'repos/system-analysis')
+        ok('migrate: settings.json переведён на пути repos/*');
+      else bad('migrate: settings.json не мигрирован: ' + JSON.stringify(st.repos));
+      if (st.repos.backend.mainBranch === 'master') ok('migrate: mainBranch перенесён из .env');
+      else bad('migrate: mainBranch не перенесён: ' + st.repos.backend.mainBranch);
+
+      const meta = JSON.parse(fs.readFileSync(path.join(taskDir, 'meta.json'), 'utf8'));
+      if (meta.schemaVersion === 2) ok('migrate: schemaVersion добавлен');
+      else bad('migrate: нет schemaVersion');
+      if (meta.stages.specification.analysisDone === true && meta.analysisBaseSha === 'abc123')
+        ok('migrate: этап feature свёрнут в specification.analysisDone');
+      else bad('migrate: feature не свёрнут: ' + JSON.stringify(meta.stages.specification));
+      if (meta.stages['autotest-plan'] && !meta.stages['requirements-auto-test'])
+        ok('migrate: этап requirements-auto-test переименован');
+      else bad('migrate: этап не переименован: ' + Object.keys(meta.stages).join(','));
+      if (fs.existsSync(path.join(taskDir, 'autotest-plan.md')) && !fs.existsSync(path.join(taskDir, 'requirements-auto-test.md')))
+        ok('migrate: артефакт переименован в autotest-plan.md');
+      else bad('migrate: артефакт не переименован');
+      if (fs.existsSync(path.join(taskDir, 'feature.md'))) ok('migrate: feature.md сохранён как легаси-артефакт');
+      else bad('migrate: feature.md удалён — так нельзя');
+      if (fs.readFileSync(path.join(old, '.gitignore'), 'utf8').includes('repos/'))
+        ok('migrate: .gitignore дополнен');
+      else bad('migrate: .gitignore не дополнен');
+      if (res.changes.length >= 4) ok('migrate: отчёт о изменениях сформирован');
+      else bad('migrate: пустой отчёт: ' + JSON.stringify(res.changes));
+    } finally {
+      fs.rmSync(old, { recursive: true, force: true });
+    }
+  }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

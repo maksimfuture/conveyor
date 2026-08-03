@@ -1062,13 +1062,41 @@ try {
       fs.writeFileSync(path.join(taskDir, 'feature.md'), '# Фича\n');
       fs.writeFileSync(path.join(taskDir, 'requirements-auto-test.md'), '# Требования\n');
 
+      // Задача с meta.json только для чтения (на Windows это же даёт файл,
+      // открытый редактором, OneDrive или антивирус). Идёт ПЕРВОЙ по имени:
+      // сбой записи на ней не должен оставить остальные задачи не
+      // мигрированными и не должен превратить stdout в сырой стек.
+      const roDir = path.join(old, 'tasks', 'BE', 'TASK-1');
+      fs.mkdirSync(roDir, { recursive: true });
+      const roMeta = path.join(roDir, 'meta.json');
+      fs.writeFileSync(roMeta, JSON.stringify({ taskId: 'TASK-1', type: 'BE', stages: { feature: { done: true } } }, null, 2));
+      fs.chmodSync(roMeta, 0o444);
+
+      // meta.json с BOM: тот же дефект чтения, что и у settings.json.
+      const bomDir = path.join(old, 'tasks', 'BE', 'TASK-5');
+      fs.mkdirSync(bomDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(bomDir, 'meta.json'),
+        '\uFEFF' + JSON.stringify({ taskId: 'TASK-5', type: 'BE', stages: { feature: { done: false } } }, null, 2),
+      );
+
       // сухой прогон ничего не меняет
       const dry = JSON.parse(runScript('core/scripts/migrate-workspace.mjs', [old]));
       const stillOld = JSON.parse(fs.readFileSync(path.join(old, 'settings.json'), 'utf8'));
       if (dry.ok && dry.applied === false && 'repoCache' in stillOld) ok('migrate: сухой прогон ничего не меняет');
       else bad('migrate: сухой прогон изменил файлы');
 
-      const res = JSON.parse(runScript('core/scripts/migrate-workspace.mjs', [old, '--apply']));
+      // Вызывающая сторона парсит stdout как JSON: сбой записи обязан остаться
+      // внутри контракта вывода, а не уйти сырым стеком в stderr.
+      const applyRun = runScriptFull('core/scripts/migrate-workspace.mjs', [old, '--apply']);
+      let res;
+      try {
+        res = JSON.parse(applyRun.stdout);
+        ok('migrate: при сбое записи stdout остаётся валидным JSON');
+      } catch (e) {
+        res = { changes: [], warnings: [], writeErrors: [] };
+        bad('migrate: stdout не JSON: ' + JSON.stringify(applyRun.stdout.slice(0, 120)));
+      }
       const st = JSON.parse(fs.readFileSync(path.join(old, 'settings.json'), 'utf8'));
       if (!('repoCache' in st) && st.repos.systemsAnalysis.link === 'repos/system-analysis')
         ok('migrate: settings.json переведён на пути repos/*');
@@ -1095,8 +1123,79 @@ try {
       else bad('migrate: .gitignore не дополнен');
       if (res.changes.length >= 4) ok('migrate: отчёт о изменениях сформирован');
       else bad('migrate: пустой отчёт: ' + JSON.stringify(res.changes));
+
+      // Порядок этапов в meta.json — канонический: иначе «следующий этап»
+      // в /task-status считается по autotest-plan ПОСЛЕ implement-auto-test.
+      const stageOrder = Object.keys(meta.stages).join(',');
+      if (stageOrder === 'specification,plan,implement-plan,autotest-plan,implement-auto-test')
+        ok('migrate: этапы в meta.json пересобраны в каноническом порядке');
+      else bad('migrate: порядок этапов: ' + stageOrder);
+
+      // Задача с BOM в meta.json мигрирована, а не отброшена как «не
+      // разбирается».
+      const bomMeta = JSON.parse(fs.readFileSync(path.join(bomDir, 'meta.json'), 'utf8').replace(/^\uFEFF/, ''));
+      if (bomMeta.schemaVersion === 2) ok('migrate: meta.json с BOM мигрирован');
+      else bad('migrate: meta.json с BOM не мигрирован: ' + JSON.stringify(res.warnings));
+
+      // Сбой записи назван отдельно от обычных предупреждений, код возврата
+      // ненулевой, остальные задачи при этом мигрированы (проверено выше).
+      const writeErrors = res.writeErrors || [];
+      if (writeErrors.some((w) => w.includes('TASK-1')) && applyRun.status !== 0)
+        ok('migrate: сбой записи назван в writeErrors, код возврата ненулевой');
+      else
+        bad(
+          'migrate: сбой записи не назван: ' +
+            JSON.stringify({ writeErrors, status: applyRun.status }),
+        );
+
+      // Явно переданный путь с опечаткой: молчаливый подъём вверх взял бы
+      // корень СОВСЕМ ДРУГОГО workspace — под --apply это правки не в том
+      // репозитории.
+      const missRun = runScriptFull('core/scripts/migrate-workspace.mjs', [path.join(old, 'tasks', 'BE', 'TASK-999')]);
+      let missObj = {};
+      try {
+        missObj = JSON.parse(missRun.stdout);
+      } catch {
+        /* проверка ниже сообщит */
+      }
+      if (missObj.ok === false && missRun.status !== 0 && String(missObj.error || '').includes('TASK-999'))
+        ok('migrate: несуществующий путь — остановка с ошибкой, без подъёма вверх');
+      else
+        bad(
+          'migrate: несуществующий путь принят: ' +
+            JSON.stringify({ out: missRun.stdout.slice(0, 160), status: missRun.status }),
+        );
     } finally {
+      // Атрибут «только чтение» снимаем, иначе каталог не удалить.
+      try {
+        fs.chmodSync(path.join(old, 'tasks', 'BE', 'TASK-1', 'meta.json'), 0o666);
+      } catch {
+        /* файла может не быть */
+      }
       fs.rmSync(old, { recursive: true, force: true });
+    }
+
+    // settings.json версии 1.x правили руками: форма может быть любой.
+    // Непонятную запись скрипт обязан положить в warnings, а не упасть стеком.
+    const bent = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-bent-'));
+    try {
+      fs.writeFileSync(path.join(bent, 'settings.json'), '{"repos":{"backend":"C:/work/be"}}');
+      const bentRun = runScriptFull('core/scripts/migrate-workspace.mjs', [bent]);
+      let bentObj = {};
+      try {
+        bentObj = JSON.parse(bentRun.stdout);
+      } catch {
+        /* проверка ниже сообщит */
+      }
+      if ((bentObj.warnings || []).some((w) => w.includes('backend')))
+        ok('migrate: repos.<ключ> строкой вместо объекта — предупреждение, а не падение');
+      else
+        bad(
+          'migrate: нестандартный settings.json уронил скрипт: ' +
+            JSON.stringify({ out: bentRun.stdout.slice(0, 160), err: bentRun.stderr.slice(0, 160) }),
+        );
+    } finally {
+      fs.rmSync(bent, { recursive: true, force: true });
     }
   }
 } finally {

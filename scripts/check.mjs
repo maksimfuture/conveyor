@@ -1148,6 +1148,31 @@ try {
             JSON.stringify({ writeErrors, status: applyRun.status }),
         );
 
+      // Явно переданный каталог обязан САМ быть корнем workspace. Существующий
+      // подкаталог (копия без settings.json, копия внутри настоящего
+      // workspace) не должен уводить миграцию вверх — под --apply это правки
+      // в репозитории, который человек не называл.
+      const deeper = path.join(old, 'sub', 'deeper');
+      fs.mkdirSync(deeper, { recursive: true });
+      const deeperRun = runScriptFull('core/scripts/migrate-workspace.mjs', [deeper]);
+      let deeperObj = {};
+      try {
+        deeperObj = JSON.parse(deeperRun.stdout);
+      } catch {
+        /* проверка ниже сообщит */
+      }
+      if (
+        deeperObj.ok === false &&
+        deeperRun.status !== 0 &&
+        String(deeperObj.error || '').includes('settings.json')
+      )
+        ok('migrate: существующий подкаталог без settings.json отвергается, без подъёма вверх');
+      else
+        bad(
+          'migrate: подъём вверх от явного пути: ' +
+            JSON.stringify({ stdout: deeperRun.stdout.slice(0, 160), status: deeperRun.status }),
+        );
+
       // Явно переданный путь с опечаткой: молчаливый подъём вверх взял бы
       // корень СОВСЕМ ДРУГОГО workspace — под --apply это правки не в том
       // репозитории.

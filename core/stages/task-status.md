@@ -30,8 +30,9 @@ specification → plan → implement-plan → autotest-plan → implement-auto-t
 
 ## Совместимость с 1.x
 `meta.json` без `schemaVersion` — репозиторий версии 1.x: показывай задачу
-как есть, помечай «требуется миграция» и подсказывай
-`node <plugin>/core/scripts/migrate-workspace.mjs --apply`. Файл `feature.md`
+как есть, помечай «требуется миграция» и подсказывай СНАЧАЛА сухой прогон
+`node <plugin>/core/scripts/migrate-workspace.mjs` (покажет план изменений,
+ничего не тронет), и только потом — тот же вызов с `--apply`. Файл `feature.md`
 в папке задачи — легаси-артефакт: выводи его в списке с пометкой «1.x»,
 удалять не предлагай.
 

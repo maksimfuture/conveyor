@@ -42,13 +42,22 @@ function fail(msg) {
 // Путь передают руками (чек-лист велит указывать копию репозитория), и опечатка
 // в нём под --apply означала бы правки в СОВСЕМ ДРУГОМ репозитории: от
 // несуществующего каталога вверх не поднимаемся, а останавливаемся.
-if (argPath !== undefined) {
+let workspaceRoot;
+if (argPath === undefined) {
+  workspaceRoot = findWorkspaceRoot(process.cwd());
+  if (!workspaceRoot) fail('не найден settings.json');
+} else {
   const abs = path.resolve(argPath);
   if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) fail(`каталог не найден: ${abs}`);
+  // Названный каталог обязан САМ быть корнем: подъём вверх отсюда увёл бы
+  // миграцию в соседний репозиторий (копия без settings.json, копия внутри
+  // настоящего workspace) — под --apply это правки не там, где имел в виду
+  // человек.
+  if (!fs.existsSync(path.join(abs, 'settings.json'))) {
+    fail(`в каталоге нет settings.json: ${abs} — укажите корень рабочего репозитория conveyor`);
+  }
+  workspaceRoot = abs;
 }
-
-const workspaceRoot = findWorkspaceRoot(argPath === undefined ? process.cwd() : path.resolve(argPath));
-if (!workspaceRoot) fail('не найден settings.json');
 
 const changes = [];
 const warnings = [];

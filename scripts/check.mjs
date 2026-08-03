@@ -914,6 +914,33 @@ try {
     ok('scope: set без --type отклоняется, область не установлена');
   else bad('scope: set без --type принят: ' + JSON.stringify(noType));
 
+  // У intent типа задачи НЕТ вовсе (FE/BE решает системный аналитик позже),
+  // поэтому обязательный --type сделал бы этап невыполнимым, а придуманный
+  // «FE» — записал бы в область неправду. Тип у такого этапа запрещён: иначе
+  // скопированная из соседнего этапа строка молча проходит.
+  const intentWithType = runScope(['set', '--stage', 'intent', '--type', 'FE', '--task', 'INTENT-7']);
+  const scopeAfterIntentType = JSON.parse(runScript('core/scripts/scope.mjs', ['show'], '', tmp));
+  if (
+    intentWithType.code !== 0 &&
+    intentWithType.out.ok === false &&
+    intentWithType.out.error.includes('--type') &&
+    intentWithType.out.error.includes('intent') &&
+    scopeAfterIntentType.state === 'none'
+  )
+    ok('scope: --type у этапа без типа (intent) отклоняется, область не установлена');
+  else bad('scope: --type у intent принят: ' + JSON.stringify(intentWithType));
+
+  const intentSet = runScope(['set', '--stage', 'intent', '--task', 'INTENT-7']);
+  if (
+    intentSet.code === 0 &&
+    intentSet.out.scope.taskType === null &&
+    intentSet.out.scope.taskId === 'INTENT-7' &&
+    intentSet.out.scope.writeRepos.length === 0
+  )
+    ok('scope: set --stage intent без --type принят, запись в репозитории запрещена');
+  else bad('scope: intent без --type не принят: ' + JSON.stringify(intentSet));
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+
   // Легальные вызовы строгостью не задеты
   const legalSet = runScope(['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-3']);
   const legalNone = runScope(['set', '--stage', 'create-specification', '--type', 'BE', '--write', 'none']);

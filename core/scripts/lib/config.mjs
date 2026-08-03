@@ -53,6 +53,12 @@ export const STAGE_NAMES = [
   'task-status',
 ];
 
+// Этапы, у которых типа задачи НЕТ: intent работает с намерением (INTENT-ID)
+// до того, как системный аналитик решит, FE это, BE или пара. Для остальных
+// этапов тип обязателен (scope.mjs), потому что от него зависит область
+// записи. Список — здесь, а не в scope.mjs: конвейер описан в этом модуле.
+export const STAGES_WITHOUT_TASK_TYPE = ['intent'];
+
 // Walk up from startDir until a directory containing settings.json is found.
 // Returns the absolute workspace root, or null if none exists.
 export function findWorkspaceRoot(startDir = process.cwd()) {

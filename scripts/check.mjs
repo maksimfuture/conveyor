@@ -1131,13 +1131,19 @@ try {
   // REQUIRED. Заглушкой считаем только ту, что валидатор ПОКАЖЕТ в placeholders.
   const emptyArtPath = path.join(tmp, 'empty-artifact.md');
   fs.writeFileSync(emptyArtPath, '# Пусто\n');
+  // Тело секции БЕЗ html-комментариев: они инструкция агенту, а не место для
+  // заполнения, и заглушкой не считаются (так же смотрит validate-artifact).
+  // Иначе секцию с одним комментарием и без единого поля инвариант пропустит.
   const sectionBody = (text, heading) => {
     const lines = text.split('\n');
     const start = lines.findIndex((l) => l.startsWith(heading));
     if (start < 0) return '';
     let end = start + 1;
     while (end < lines.length && !lines[end].startsWith('## ')) end++;
-    return lines.slice(start + 1, end).join('\n');
+    return lines
+      .slice(start + 1, end)
+      .join('\n')
+      .replace(/<!--[\s\S]*?-->/g, '');
   };
   for (const type of ['intent', 'specification']) {
     const tplText = fs.readFileSync(path.join(root, `core/templates/${type}.md`), 'utf8');

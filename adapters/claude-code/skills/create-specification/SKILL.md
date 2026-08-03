@@ -11,11 +11,16 @@ description: Вносит требования из intent в репозитор
 `${CONVEYOR_ROOT}/core/stages/create-specification.md`.
 
 Кратко:
-1. resolve-config; аргументы `INTENT-ID [FE|BE|FE-BE] [номер]` — тип и номер
-   задаёт аналитик, в intent'е их нет; не переданы — спроси ОДНИМ вопросом.
+1. resolve-config; аргументы `INTENT-ID [FE|BE|FE-BE] [номер]`. СРАЗУ после
+   resolve-config и ДО любых вопросов — обратный индекс
+   `tasks/*/*/meta.json → intentId`: задача с этим intentId уже есть →
+   запуск повторный (тип, номер и подэтапы бери из её meta.json, вторую
+   задачу не заводи). Для НОВОЙ задачи тип и номер задаёт аналитик, в
+   intent'е их нет; не переданы — спроси ОДНИМ вопросом.
 2. Фаза A (пишем в анализ): `scope.mjs set --stage create-specification
-   --type <тип> --task <TASK-ID>` → создать задачу(и) и meta.json (intentId,
-   пять этапов) → `git-ops locate` + `update --mode write` → ветка
+   --type <тип> --task <TASK-ID>` → задача(и) и meta.json (intentId, пять
+   этапов; каталог задачи появляется этой записью — `mkdir` по нему guard
+   запрещает) → `git-ops locate` + `update --mode write` → ветка
    `<INTENT-ID>-analysis` (одна общая на пару FE-BE) → агент правит документы
    точечно, БЕЗ переформатирования → проверка машиночитаемых файлов → цикл
    ревью (домен systems-analysis) → коммит после ревью → `analysisDone = true`,
@@ -26,6 +31,8 @@ description: Вносит требования из intent в репозитор
    `validate-artifact --type specification` (возврат агенту не только при
    `ok:false`, но и при непустом `placeholders`) → `validate-task-folder` →
    `specDone` и `done`.
-4. Повторный запуск при `analysisDone:true, specDone:false` начинается сразу
-   с фазы B — правки чужого репозитория не переигрываются.
+4. Повторный запуск при `analysisDone:true, specDone:false` идёт сразу в фазу
+   B — правки чужого репозитория не переигрываются. Всё равно выполняются
+   resolve-config и `git-ops locate`: без первого нет workspaceRoot/links, без
+   второго — `--path <repo>` для `git-ops diff` фазы B.
 5. `scope.mjs clear`; следующий шаг — /conveyor:create-plan.

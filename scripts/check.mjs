@@ -358,17 +358,22 @@ console.log('Стейдж create-specification — две фазы:');
     );
 
   // Подэтапы analysisDone/specDone — ради них делалась миграция задач 1.x.
-  // Без предписания «при analysisDone:true начинай с фазы B» обрыв на фазе B
-  // приводит к повторному прогону правок ЧУЖОГО репозитория поверх уже
-  // закоммиченных.
+  // Без предписания «при analysisDone:true работа фазы A не переигрывается»
+  // обрыв на фазе B приводит к повторному прогону правок ЧУЖОГО репозитория
+  // поверх уже закоммиченных. (Что при этом всё же выполняется — проверяет
+  // отдельная проверка ниже: «пропусти фазу A целиком» уносило с собой
+  // обязательные resolve-config и locate.)
   const idem = flat(section('Идемпотентность'));
   const flags = /analysisDone/.test(idem) && /specDone/.test(idem);
-  const skipsA = /пропусти фазу A/i.test(idem) && /фазы B/.test(idem);
+  // \w в JS — только латиница: для «фазы B» нужен \S.
+  const skipsA = /пропуск|пропусти/i.test(idem) && /не переигрыва/i.test(idem) && /фаз\S* B/i.test(idem);
   if (flags && skipsA) ok('stage create-specification: повторный запуск при analysisDone:true начинается с фазы B');
   else
     bad(
       'stage create-specification: идемпотентность — ' +
-        (flags ? 'подэтапы названы, но пропуск фазы A не предписан' : 'раздел не называет analysisDone/specDone'),
+        (flags
+          ? 'подэтапы названы, но пропуск работы фазы A при analysisDone:true не предписан'
+          : 'раздел не называет analysisDone/specDone'),
     );
 
   // Ревью идёт ДО коммита (_review-loop.md, «Что ревьюит reviewer»): reviewer
@@ -400,6 +405,51 @@ console.log('Стейдж create-specification — две фазы:');
     bad(
       'stage create-specification: ' +
         (named ? 'placeholders назван, но реакция на него не предписана' : 'шаг валидации не упоминает placeholders'),
+    );
+
+  // Свойство «не переигрывать правки чужого репозитория» держится не на
+  // флагах, а на том, что повторный запуск ВООБЩЕ распознан: единственный
+  // признак — обратный индекс `tasks/*/*/meta.json → intentId`, и пройти его
+  // надо ДО вопроса про тип/номер и ДО заведения задачи (иначе на повторе
+  // появится ВТОРАЯ задача на тот же intent). Ветка «сразу фаза B» обязана
+  // перечислить, что всё равно выполняется: resolve-config (workspaceRoot,
+  // links, mainBranch) и `git-ops locate` — без него у шага диффа фазы B
+  // неоткуда взять `--path <repo>`.
+  const args = section('Разбор аргументов');
+  const detectAt = phaseA.search(/tasks\/\*\/\*\/meta\.json/);
+  const createAt = phaseA.search(/со скелетом/);
+  const detectsFirst = detectAt > -1 && createAt > -1 && detectAt < createAt;
+  const argsDefer = /повторн/i.test(args);
+  const keepsMandatory = /resolve-config/.test(idem) && /locate/.test(idem);
+  if (detectsFirst && argsDefer && keepsMandatory)
+    ok('stage create-specification: повторный запуск распознаётся по intentId до вопросов и до заведения задачи');
+  else
+    bad(
+      'stage create-specification: распознавание повторного запуска — ' +
+        [
+          detectsFirst ? null : 'обратный индекс tasks/*/*/meta.json не пройден до шага со скелетом meta.json',
+          argsDefer ? null : '«Разбор аргументов» не отсылает к повторному запуску перед вопросом о типе/номере',
+          keepsMandatory ? null : 'ветка «сразу фаза B» не называет resolve-config и locate как обязательные',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Папка задачи (на паре FE-BE их две) появляется ЗАПИСЬЮ meta.json: сам
+  // каталог — не *.md и не meta.json, поэтому mkdir по нему guard отклоняет
+  // (проверка запрета — ниже, на временном workspace), а подсказка отказа
+  // здесь ещё и уводит в сторону («исходники пиши в рабочую копию»). Значит
+  // шага «создай папку» быть не должно, а пометка про mkdir — должна.
+  const orders = phaseA.split('\n').filter((l) => /^\s*\d+\.\s*Созда/i.test(l) && /папк/i.test(l));
+  const mkdirNote = /mkdir[^.]{0,200}(guard|запрещ)/i.test(flat(phaseA));
+  if (!orders.length && mkdirNote)
+    ok('stage create-specification: папки задач появляются записью meta.json, отдельного шага с mkdir нет');
+  else
+    bad(
+      'stage create-specification: ' +
+        (orders.length
+          ? `предписан шаг создания папки: ${orders.join(' | ')}`
+          : 'нет пометки, что mkdir папки задачи guard запрещает'),
     );
 
   // Документы анализа — .adoc/.yml/.xml. Переформатирование раздувает дифф на
@@ -982,6 +1032,16 @@ try {
   const decisionOf = (out) => (out ? JSON.parse(out).hookSpecificOutput.permissionDecision : 'allow');
 
   runScript('core/scripts/scope.mjs', ['set', '--stage', 'create-specification', '--type', 'FE'], '', tmp);
+
+  // Папка задачи появляется при записи meta.json: сам каталог — не *.md и не
+  // meta.json, поэтому mkdir по нему guard запрещает (обе формы, с -p и без),
+  // а подсказка отказа говорит про исходники и уводит в сторону. Это опора
+  // текста create-specification: он заводит до ДВУХ таких папок и предписывает
+  // Write, а не mkdir.
+  const mkdirTask = ['mkdir tasks/FE', 'mkdir -p tasks/FE/TASK-12'].map((c) => decisionOf(runBash(c)));
+  if (mkdirTask.every((d) => d === 'deny') && writeTo(path.join(tmp, 'tasks/FE/TASK-12/meta.json')) === '')
+    ok('guard-bash: mkdir папки задачи запрещён, запись meta.json разрешена');
+  else bad('guard-bash: mkdir папки задачи: ' + mkdirTask.join(', '));
 
   // cd-трекинг: относительный редирект после cd в чужой репозиторий
   if (decisionOf(runBash('cd repos/backend && echo hack > src.js')) === 'deny') ok('guard-bash: cd-трекинг ловит редирект в чужой репо');

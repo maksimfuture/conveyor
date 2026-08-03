@@ -308,6 +308,26 @@ console.log('Стейдж intent — неприменимые разделы _co
     );
 }
 
+// 2f) Валидатор возвращает не только ok: непустой `placeholders` — это
+// оставшийся в артефакте каркас шаблона, причём ok при этом true. intent —
+// единственный производящий этап без цикла ревью, и шаг валидации,
+// реагирующий только на ok:false, принимает нетронутый шаблон за готовый
+// артефакт. Поэтому шаг обязан назвать поле и предписать реакцию.
+console.log('Стейдж intent — остатки каркаса шаблона:');
+{
+  const intentMd = fs.readFileSync(path.join(root, 'core/stages/intent.md'), 'utf8');
+  // Шаг валидации целиком: от его номера до следующего пункта алгоритма.
+  const step = (intentMd.split(/\n(?=\d+\. )/).find((s) => s.includes('validate-artifact.mjs')) || '').replace(/\s+/g, ' ');
+  const named = /placeholders/.test(step);
+  const reaction = /placeholders[^.]{0,200}(верн|возврат|покаж)/i.test(step);
+  if (named && reaction) ok('stage intent: шаг валидации реагирует на непустой placeholders');
+  else
+    bad(
+      'stage intent: ' +
+        (named ? 'placeholders назван, но реакция на него не предписана' : 'шаг валидации не упоминает placeholders'),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

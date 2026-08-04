@@ -23,28 +23,40 @@
    `node -e "...fs.existsSync..."` — не shell-командами (`dir`, `> nul`).
    - **есть** — репозиторий уже инициализирован: НЕ трогай ни его, ни
      остальную структуру; скажи, что инициализация уже сделана, и переходи
-     сразу к шагу 5 — это роль «диагностика окружения»;
-   - **нет** — первичная инициализация: шаги 2-4, затем та же диагностика.
+     сразу к шагу 4 — это роль «диагностика окружения»;
+   - **нет** — первичная инициализация: шаги 2-3, затем то же, что и все.
+   Шаги 4-6 выполняются в ОБЕИХ ролях: они ничего не пересоздают и не
+   перезаписывают — только дописывают недостающее и показывают состояние.
 2. Спроси у пользователя `taskPrefix` (по умолчанию `TASK`).
 3. Создай структуру:
    - каталоги `tasks/FE/`, `tasks/BE/`, `intents/`, `repos/`;
    - `settings.json` и `.env.example` — СКОПИРУЙ ФАЙЛЫ шаблонов МЕХАНИЧЕСКИ
      (НЕ набирай содержимое по памяти — потеряешь новые ключи):
-     `node -e "const f=require('fs');f.copyFileSync('<CONVEYOR_ROOT>/core/templates/settings.example.json','settings.json');f.copyFileSync('<CONVEYOR_ROOT>/core/templates/env.example','.env.example')"`
+     `node -e "const f=require('fs'),r=process.argv[1];f.copyFileSync(r+'/core/templates/settings.example.json','settings.json');f.copyFileSync(r+'/core/templates/env.example','.env.example')" "${CONVEYOR_ROOT}"`
+     Корень плагина передавай ИМЕННО аргументом (`process.argv[1]`), а не
+     подставляй внутрь JS-строки: на Windows это путь с обратными слэшами,
+     и JS разберёт их как escape (`\U`, `\t`) — команда упадёт с ENOENT на
+     пути, которого ты не писал. В аргументе escape не действует.
      Затем, если пользователь выбрал не-дефолтный taskPrefix, — точечная
      правка ТОЛЬКО этого значения в скопированном settings.json.
    Сам `.env` не создавай: он не обязателен (в нём только личные
    `CONVEYOR_REVIEW_ROUNDS` и `CONVEYOR_FAST`), а без него действуют
    умолчания. Ссылки на репозитории и основные ветки живут в `settings.json`.
    Самопроверка: сверь ключи созданного settings.json с шаблоном —
-   `node -e "const a=Object.keys(require('<CONVEYOR_ROOT>/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}"`
+   `node -e "const r=process.argv[1];const a=Object.keys(require(r+'/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}" "${CONVEYOR_ROOT}"`
    — при missing дополни файл недостающими ключами из шаблона.
-4. Запиши `.gitignore` — ДО того, как в `repos/` появятся рабочие копии
-   (иначе первый же `git status` затянет чужие рабочие деревья целиком).
+4. `.gitignore` — в ОБЕИХ ролях, до диагностики. Он должен появиться ДО
+   того, как в `repos/` появятся рабочие копии (иначе первый же `git status`
+   затянет чужие рабочие деревья целиком), а при диагностике это
+   единственная проверка `.gitignore` во всём конвейере: после прерванной
+   инициализации и в репозитории 1.x без миграции его может не быть.
    Нужны строки: `repos/` и `.env`. Файла нет — создай; есть — допиши
-   недостающие строки, ничего не удаляя. Затем закоммить `settings.json`
-   вместе с `.gitignore`: конфигурация команды живёт в git и приезжает
-   разработчику вместе с репозиторием.
+   недостающие, ничего не удаляя; обе на месте — не трогай файл. Шаг
+   идемпотентен, лишний прогон ничего не портит. При первичной
+   инициализации закоммить `settings.json` вместе с `.gitignore`:
+   конфигурация команды живёт в git и приезжает разработчику вместе с
+   репозиторием. Если дописывать пришлось в роли «диагностика» — скажи об
+   этом и предложи закоммитить `.gitignore`.
 5. Диагностика рабочих копий:
    `node "${CONVEYOR_ROOT}/core/scripts/repos-status.mjs"`
    Скрипт отдаёт JSON: `repos[]` и `summary`. Покажи таблицу по каждому
@@ -88,5 +100,6 @@
 ## DoD
 При первичной инициализации структура создана (`tasks/FE`, `tasks/BE`,
 `intents/`, `repos/`, `settings.json`, `.env.example`, `.gitignore`), а
-`settings.json` закоммичен; при повторном запуске ничего не перезаписано.
+`settings.json` закоммичен; при повторном запуске ничего не перезаписано,
+но состав `.gitignore` проверен и при нехватке дополнен.
 Диагностика выполнена, и пользователю показано, что настроено и что осталось.

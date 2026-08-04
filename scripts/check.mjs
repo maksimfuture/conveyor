@@ -1018,6 +1018,35 @@ console.log('Стейдж setup — инициализация и диагнос
           .join('; '),
     );
 
+  // Корень плагина, подставленный ВНУТРЬ JS-строки (`copyFileSync('<корень>/…')`),
+  // на Windows ломается молча: путь приходит с обратными слэшами, и JS съедает
+  // их как escape — `C:\Users\…\test-ai` превращается в `C:Users…` с табуляцией
+  // вместо `\t`, а copyFileSync падает с ENOENT на пути, которого никто не
+  // писал. Корень отдаём аргументом (`process.argv`), где никакой escape не
+  // действует, и обозначаем `${CONVEYOR_ROOT}` — той же нотацией, что и весь
+  // остальной плагин, включая соседний шаг диагностики.
+  const eCmds = [...flat.matchAll(/node -e "([^"]*)"((?: "[^"]*")*)/g)].map((m) => ({ script: m[1], args: m[2] }));
+  const rootCmds = eCmds.filter((c) => /core\/(templates|scripts)\//.test(c.script));
+  const rootInString = rootCmds.filter((c) => /CONVEYOR_ROOT/.test(c.script)).length;
+  const rootByArg = rootCmds.filter((c) => /process\.argv/.test(c.script) && /\$\{CONVEYOR_ROOT\}/.test(c.args)).length;
+  const angleRoot = /<CONVEYOR_ROOT>/.test(flat);
+  if (rootCmds.length && !rootInString && rootByArg === rootCmds.length && !angleRoot)
+    ok('stage setup: корень плагина в `node -e` передаётся аргументом (process.argv), а не внутрь JS-строки');
+  else
+    bad(
+      'stage setup: корень плагина в командах — ' +
+        [
+          rootCmds.length ? null : 'нет ни одной команды node -e, читающей файл плагина',
+          rootInString ? 'корень подставляется внутрь JS-строки — на Windows обратные слэши съест escape' : null,
+          !rootCmds.length || rootByArg === rootCmds.length
+            ? null
+            : 'корень не передан аргументом "${CONVEYOR_ROOT}" и не прочитан из process.argv',
+          angleRoot ? 'нотация <CONVEYOR_ROOT> расходится с ${CONVEYOR_ROOT} из _common.md' : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
   // `.gitignore` обязан появиться ДО того, как в `repos/` окажутся рабочие
   // копии: иначе первый же `git status` в фасадном репозитории покажет чужие
   // рабочие деревья целиком, а разработчик их закоммитит. `.cache/` — строка
@@ -1032,8 +1061,19 @@ console.log('Стейдж setup — инициализация и диагнос
   const giListed = (giText.match(/строк[а-яё]*[^]{0,120}/i) || [''])[0];
   const giLines = ['`repos/`', '`.env`'].filter((l) => !giListed.includes(l));
   const staleCache = /\.cache\//.test(giText);
-  if (giStep > -1 && diagStep > giStep && !giLines.length && !staleCache)
-    ok('stage setup: .gitignore (repos/, .env) записывается до диагностики рабочих копий');
+  // Порядка шагов мало: роль «диагностика» уходит из шага 1 сразу к номеру,
+  // который там назван, и если это номер ПОСЛЕ .gitignore — состав .gitignore
+  // не проверяет вообще никто (в validate-config.mjs его нет, а
+  // migrate-workspace.mjs дописывает строки только с --apply). Прерванная
+  // инициализация и 1.x без миграции остаются с чужими рабочими деревьями в
+  // `git status`. Шаг только дописывает недостающее, поэтому обязан выполняться
+  // в обеих ролях.
+  const stepNum = (s) => Number((s.match(/(?:^|\n)(\d+)\. /) || [, 0])[1]);
+  const giNum = stepNum(steps.find((s) => s.includes('.gitignore')) || '');
+  const jumpTo = Number((firstStep.match(/шаг[уа] (\d+)/i) || [, 0])[1]);
+  const giBothRoles = /обе(их)? рол/i.test(giText);
+  if (giStep > -1 && diagStep > giStep && !giLines.length && !staleCache && jumpTo && giNum && jumpTo <= giNum && giBothRoles)
+    ok('stage setup: .gitignore (repos/, .env) дописывается в обеих ролях и до диагностики рабочих копий');
   else
     bad(
       'stage setup: .gitignore — ' +
@@ -1042,6 +1082,12 @@ console.log('Стейдж setup — инициализация и диагнос
           giStep > -1 && diagStep > giStep ? null : 'шаг .gitignore стоит не раньше диагностики рабочих копий',
           giLines.length ? `в шаге нет строк: ${giLines.join(', ')}` : null,
           staleCache ? 'предписан .cache/ от версии 1.x' : null,
+          !jumpTo || !giNum
+            ? 'не разобран переход из шага 1 (нет «переходи к шагу N») или номер шага .gitignore'
+            : jumpTo <= giNum
+              ? null
+              : `роль «диагностика» уходит к шагу ${jumpTo} и перепрыгивает .gitignore (шаг ${giNum})`,
+          giBothRoles ? null : 'не сказано, что шаг .gitignore выполняется в обеих ролях',
         ]
           .filter(Boolean)
           .join('; '),

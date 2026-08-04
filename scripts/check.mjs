@@ -1130,8 +1130,46 @@ console.log('Стейдж setup — инициализация и диагнос
   // пустым списком.
   const rsSrc = fs.readFileSync(path.join(root, 'core/scripts/repos-status.mjs'), 'utf8');
   const cfgSrc = fs.readFileSync(path.join(root, 'core/scripts/lib/config.mjs'), 'utf8');
+  // Литерал entry разбираем по запятым ВЕРХНЕГО уровня и берём имя из каждой
+  // части. Регексп «имя, за которым идёт , или :» так не умеет: он съедает
+  // разделитель и пропускает каждое второе поле, а последнее — у него
+  // завершающего разделителя нет — не видит вовсе. Из-за этого список молча
+  // обмелел до key, path, state, clean, и `hint`, который стейдж обязан
+  // показывать дословно, не спрашивался со стейджа ничем.
+  // Число полей зафиксировано отдельно: разбор берёт ожидаемое из самого
+  // скрипта, поэтому без ассерта сжатие repos-status.mjs так же незаметно
+  // уменьшит и требования к стейджу — вместе с регрессией, которую эта
+  // проверка ловит.
+  const RS_FIELD_COUNT = 7; // key, link, path, state, branch, clean, hint
+  const topLevelParts = (src) => {
+    const parts = [];
+    let depth = 0;
+    let quote = null;
+    let cur = '';
+    for (const ch of src) {
+      if (quote) {
+        cur += ch;
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+      else if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch)) depth--;
+      else if (ch === ',' && depth === 0) {
+        parts.push(cur);
+        cur = '';
+        continue;
+      }
+      cur += ch;
+    }
+    parts.push(cur);
+    return parts.map((p) => p.trim()).filter(Boolean);
+  };
   const entryLiteral = (rsSrc.match(/const entry = \{([^}]*)\}/) || [, ''])[1];
-  const rsFields = [...entryLiteral.matchAll(/(?:^|,)\s*([a-zA-Z]+)\s*[,:]/g)].map((m) => m[1]);
+  // Имя поля — начало части: `key` (сокращение) или `key: value`.
+  const rsFields = topLevelParts(entryLiteral)
+    .map((p) => (p.match(/^([A-Za-z_$][\w$]*)\s*(?::|$)/) || [, ''])[1])
+    .filter(Boolean);
   // Только тело repoState: в config.mjs есть и состояния рабочей ОБЛАСТИ
   // (none/stale/corrupt/active) — к таблице /setup они отношения не имеют.
   const repoStateSrc = (cfgSrc.match(/export function repoState\(([\s\S]*?)\n\}/) || [''])[0];
@@ -1143,14 +1181,25 @@ console.log('Стейдж setup — инициализация и диагнос
   const noField = rsFields.filter((f) => !diagText.includes('`' + f + '`'));
   const noState = rsStates.filter((s) => !diagText.includes('`' + s + '`'));
   const calls = /repos-status\.mjs/.test(diagText);
-  if (calls && rsFields.length && rsStates.length && !noField.length && !noState.length)
-    ok('stage setup: диагностика — repos-status.mjs, поля и состояния названы как в скрипте (' + rsStates.join(', ') + ')');
+  const fieldsParsed = rsFields.length === RS_FIELD_COUNT;
+  if (calls && fieldsParsed && rsStates.length && !noField.length && !noState.length)
+    ok(
+      'stage setup: диагностика — repos-status.mjs, все ' +
+        RS_FIELD_COUNT +
+        ' полей и состояния названы как в скрипте (' +
+        rsStates.join(', ') +
+        ')',
+    );
   else
     bad(
       'stage setup: диагностика — ' +
         [
           calls ? null : 'не вызывается repos-status.mjs',
-          rsFields.length && rsStates.length ? null : 'ответ repos-status.mjs не разобран',
+          fieldsParsed
+            ? null
+            : `в литерале entry репозиториев разобрано полей: ${rsFields.length} (${rsFields.join(', ') || '—'}), ожидалось ${RS_FIELD_COUNT}` +
+              ' — состав ответа repos-status.mjs изменился, обнови RS_FIELD_COUNT и стейдж',
+          rsStates.length ? null : 'состояния repoState не разобраны',
           noField.length ? `не названы поля: ${noField.join(', ')}` : null,
           noState.length ? `не названы состояния: ${noState.join(', ')}` : null,
         ]

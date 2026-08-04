@@ -1558,23 +1558,40 @@ console.log('Сквозная зачистка удалённых имён:');
   // validate-config.mjs подчищают. Проверяются имена, которых больше НЕТ.
   const gone = /create-feature|create-requirements-auto-test|requirements-auto-test|missingVars|repoCache|CONVEYOR_REPO_CACHE|repoCacheEnabled/;
   const hits = [];
-  (function walk(dir) {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (['node_modules', '.git', 'dist', 'docs'].includes(e.name)) continue;
-      const abs = path.join(dir, e.name);
-      if (e.isDirectory()) walk(abs);
-      else if (/\.(md|mjs|json)$/.test(e.name)) {
-        const rel = path.relative(root, abs).split(path.sep).join('/');
-        if (allowed.has(rel)) continue;
-        fs.readFileSync(abs, 'utf8')
-          .split(/\r?\n/)
-          .forEach((line, i) => {
-            const m = line.match(gone);
-            if (m) hits.push(`${rel}:${i + 1} (${m[0]})`);
-          });
-      }
+  // Список файлов берём из git, а не обходом каталога. Рядом с исходниками
+  // .gitignore разрешает временные workspace `ws*/`, и они по назначению
+  // содержат фикстуры 1.x: обход красил гейт по файлам, которых в репозитории
+  // нет. Проверяем ровно то, что версионируется. Без git (распакованный архив)
+  // остаётся обход, но `ws*` пропускается наравне с node_modules.
+  const skipTop = ['node_modules', '.git', 'dist', 'docs'];
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
+  const files = [];
+  if (listed.status === 0 && listed.stdout) {
+    for (const rel of listed.stdout.split('\0')) {
+      if (rel && !skipTop.includes(rel.split('/')[0])) files.push(rel);
     }
-  })(root);
+  } else {
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (skipTop.includes(e.name) || (e.isDirectory() && /^ws/.test(e.name))) continue;
+        const abs = path.join(dir, e.name);
+        if (e.isDirectory()) walk(abs);
+        else files.push(path.relative(root, abs).split(path.sep).join('/'));
+      }
+    })(root);
+  }
+  for (const rel of files) {
+    if (!/\.(md|mjs|json)$/.test(rel) || allowed.has(rel)) continue;
+    const abs = path.join(root, rel);
+    // Файл может числиться в индексе, но быть удалён из рабочего дерева.
+    if (!fs.existsSync(abs)) continue;
+    fs.readFileSync(abs, 'utf8')
+      .split(/\r?\n/)
+      .forEach((line, i) => {
+        const m = line.match(gone);
+        if (m) hits.push(`${rel}:${i + 1} (${m[0]})`);
+      });
+  }
   if (!hits.length) ok('удалённых имён этапов, артефактов и полей конфигурации в репозитории нет');
   else bad('остатки старых имён — ' + hits.join('; '));
 }

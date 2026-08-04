@@ -1377,6 +1377,86 @@ try {
     fs.rmSync(tmpLinks, { recursive: true, force: true });
   }
 
+  // Свежий рабочий репозиторий: settings.json взят ИЗ ШАБЛОНА (ссылки заполнены
+  // дефолтами repos/*), но ничего ещё не склонировано. Пустых ссылок нет,
+  // git-URL нет, inside=true — и по трём «ссылочным» критериям хук молчит,
+  // хотя ни один этап работать не может. Первый внятный сигнал человек ловил
+  // только глубоко внутри этапа, ошибкой git-ops locate. Фикстура — копия
+  // шаблона: разъедься дефолты с REPO_DIRS, проверка поедет вместе с ними.
+  const tmpFresh = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-fresh-'));
+  try {
+    fs.copyFileSync(path.join(root, 'core/templates/settings.example.json'), path.join(tmpFresh, 'settings.json'));
+    const vcFresh = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
+    const namesAll = REPO_KEYS.filter((k) => vcFresh.includes(k));
+    if (namesAll.length === REPO_KEYS.length)
+      ok('validate-config: в свежем workspace названы все несклонированные рабочие копии');
+    else
+      bad(
+        'validate-config: несклонированные копии не названы (названы: ' +
+          `${namesAll.join(', ') || 'никто'}): ` +
+          JSON.stringify(vcFresh),
+      );
+    // Ради самой ценной части сообщения: какие этапы из-за этого не поедут.
+    if (
+      /Заблокированы этапы/.test(vcFresh) &&
+      ['create-specification', 'implement-plan', 'implement-auto-test'].every((s) => vcFresh.includes(s))
+    )
+      ok('validate-config: несклонированные копии названы вместе с заблокированными этапами');
+    else bad('validate-config: этапы при несклонированных копиях не названы: ' + JSON.stringify(vcFresh));
+
+    // Каталог есть, но это не репозиторий — состояние отдельное, и лечится
+    // иначе (git не клонирует в непустой каталог). Не свести его с «копии нет».
+    fs.mkdirSync(path.join(tmpFresh, 'repos', 'backend'), { recursive: true });
+    fs.writeFileSync(path.join(tmpFresh, 'repos', 'backend', 'note.txt'), 'чужой каталог\n');
+    const vcNotRepo = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
+    if (/не git-репозитор/i.test(vcNotRepo) && /backend/.test(vcNotRepo))
+      ok('validate-config: каталог без .git назван отдельно от «копии нет»');
+    else bad('validate-config: not-a-repo не отличён: ' + JSON.stringify(vcNotRepo));
+
+    // Настоящая рабочая копия молчания заслуживает: предупреждение, которое
+    // не гаснет после устранения причины, читают как шум и перестают замечать.
+    for (const key of REPO_KEYS) {
+      const dir = path.join(tmpFresh, REPO_DIRS[key]);
+      fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+    }
+    const vcCloned = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
+    if (!/⚠ conveyor/.test(vcCloned)) ok('validate-config: при готовых рабочих копиях предупреждений нет');
+    else bad('validate-config: предупреждение не гаснет после клонирования: ' + JSON.stringify(vcCloned));
+  } finally {
+    fs.rmSync(tmpFresh, { recursive: true, force: true });
+  }
+
+  // Fail-open — свойство хука, а не деталь: SessionStart с ненулевым кодом или
+  // мусором в stdout ломает старт сессии. Проверяем на неразбираемом
+  // settings.json (внутренняя ошибка) и на каталоге без него.
+  const tmpFail = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-failopen-'));
+  try {
+    fs.writeFileSync(path.join(tmpFail, 'settings.json'), '{ это не JSON');
+    const broken = runScriptFull('core/scripts/validate-config.mjs', [], JSON.stringify({ cwd: tmpFail }));
+    const parses = (s) => {
+      if (!s.trim()) return true;
+      try {
+        JSON.parse(s);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (broken.status === 0 && parses(broken.stdout))
+      ok('validate-config: неразбираемый settings.json — код 0 и валидный stdout (fail-open)');
+    else bad('validate-config: сломанный settings.json роняет хук: ' + JSON.stringify(broken));
+    const noSettings = runScriptFull(
+      'core/scripts/validate-config.mjs',
+      [],
+      JSON.stringify({ cwd: path.parse(tmpFail).root }),
+    );
+    if (noSettings.status === 0 && noSettings.stdout.trim() === '')
+      ok('validate-config: вне рабочего репозитория — тишина и код 0');
+    else bad('validate-config: вне workspace хук не молчит: ' + JSON.stringify(noSettings));
+  } finally {
+    fs.rmSync(tmpFail, { recursive: true, force: true });
+  }
+
   // BOM (U+FEFF) в начале файла — штатный результат стандартных средств Windows
   // (PowerShell `Set-Content -Encoding utf8`, «UTF-8 with BOM» в редакторе).
   // Голый JSON.parse на таком файле падает, и не работает ВЕСЬ плагин, а не

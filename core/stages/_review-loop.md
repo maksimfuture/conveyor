@@ -1,10 +1,13 @@
 # Общий цикл ревью (_review-loop.md)
 
 Применяется на этапах, где агент ПРОИЗВОДИТ содержимое:
-- `/create-feature` — правки документов анализа + feature.md (домен
-  `systems-analysis`);
-- `/implement-plan` — код (домен `frontend` или `backend` по типу задачи);
-- `/implement-auto-test` — автотесты (домен `autotests`).
+- фаза A этапа `/conveyor:create-specification` — правки документов
+  репозитория системного анализа (домен `systems-analysis`); цикл идёт по
+  этим правкам, а не по спецификации: её собирает фаза B, уже из отревьюенного
+  диффа;
+- `/conveyor:implement-plan` — код (домен `frontend` или `backend` по типу
+  задачи);
+- `/conveyor:implement-auto-test` — автотесты (домен `autotests`).
 
 Участники: **producer** — агент этапа; **reviewer** — агент `reviewer`
 (`${CONVEYOR_ROOT}/core/prompts/reviewer.md`) с указанным доменом. Оба —
@@ -60,7 +63,7 @@
   «как есть» пункты остаются в разделе «Ревью» как сознательно принятые.
 
 ## Запись итога
-- В артефакт этапа (feature.md / plan.md / report-auto-test.md) — раздел
+- В артефакт этапа (specification.md / plan.md / report-auto-test.md) — раздел
   **«Ревью»**: сколько раундов, что исправлено, что отклонено (REBUT→withdraw
   с обоснованием), нерешённые (unresolved) и решение пользователя по ним.
 - `meta.json → stages.<этап>`:
@@ -93,11 +96,14 @@ Producer и reviewer — субагенты без общей памяти. За
 артефакта помечает «ревью отключено (reviewRounds=0)». DoD «цикл ревью
 пройден» при 0 считается выполненным без ревью.
 
-## FE-BE пара (только /create-feature)
-Правки анализа — в одной общей ветке `analysisBranch`, но feature.md — два.
-Ревью запускается ОДИН раз на общие правки анализа + обе feature.md; раздел
-«Ревью» и объект `review` дублируются в ОБА feature.md и в meta.json ОБЕИХ
-задач (единый итог, ссылки на relatedTaskId).
+## FE-BE пара (только /conveyor:create-specification)
+Правки анализа у пары ОДНИ: они идут в общей ветке `analysisBranch`,
+именованной по INTENT-ID. Поэтому в фазе A цикл запускается ОДИН раз — на эти
+общие правки; двух ревью не бывает. Объект `review` пишется в `meta.json`
+ОБЕИХ задач (единый итог, ссылки на `relatedTaskId`).
+Спецификаций при этом две: в фазе B агент разносит требования по
+`specification.md` FE- и BE-задачи, и раздел «Ревью» — с одним и тем же
+содержимым из `review` — заполняется в ОБЕИХ.
 
 ## Замечания
 - reviewer код не правит — только findings; правки вносит producer.

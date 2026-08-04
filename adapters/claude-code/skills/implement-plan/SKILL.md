@@ -27,4 +27,4 @@ description: Реализует задачу в кодовой базе по п�
 5. Скилл коммитит финальные изменения в ветку задачи (push/MR — по
    подтверждению + permission-prompt guard-хука). Обнови meta.json
    (stages.implement-plan.done + review). Напечатай итог. Следующий шаг —
-   /create-requirements-auto-test.
+   `/conveyor:create-autotest-plan`.

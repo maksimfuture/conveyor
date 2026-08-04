@@ -16,6 +16,7 @@ import {
   REPO_KEYS,
   REPO_DIRS,
   STAGE_NAMES,
+  STAGES_WITHOUT_TASK_TYPE,
   requiredRepoKeys,
   stageWriteRepoKeys,
 } from '../core/scripts/lib/config.mjs';
@@ -1300,6 +1301,20 @@ console.log('_common.md — таблица рабочих областей пр�
         ]
           .filter(Boolean)
           .join('; '),
+    );
+
+  // Строка intent появилась в таблице вместе с самим этапом, а образец вызова
+  // над таблицей остался с `--type <FE|BE>`: у этапов из STAGES_WITHOUT_TASK_TYPE
+  // тип не просто лишний — scope.mjs его ОТВЕРГАЕТ, и область не встанет вовсе.
+  const noTypeStage = STAGES_WITHOUT_TASK_TYPE.filter(
+    (s) => !new RegExp(`--stage ${s}\\b(?![^\`]*--type)`).test(scopeSect.replace(/\s+/g, ' ')),
+  );
+  if (!noTypeStage.length)
+    ok('_common.md: у этапов без типа задачи показан вызов scope.mjs без --type');
+  else
+    bad(
+      '_common.md: вызов scope.mjs для этапов без типа задачи не показан — ' +
+        `${noTypeStage.join(', ')} (scope.mjs отвергает --type у этих этапов)`,
     );
 
   // Колонка «пишет» = stageWriteRepoKeys. Единственное расхождение с кодом

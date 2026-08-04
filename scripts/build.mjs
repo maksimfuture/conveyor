@@ -8,14 +8,26 @@
 //
 // The adapters/ split keeps platform-specific bits isolated; core/ is shared.
 //
-// Usage: node scripts/build.mjs
+// Usage: node scripts/build.mjs [--out <каталог>]
+//
+// `--out` собирает в указанный каталог вместо dist/. Нужен scripts/check.mjs:
+// он сверяет СОСТАВ дистрибутива и обязан собирать свежий во временном
+// каталоге — иначе проверка смотрела бы на dist/ от прошлого прогона (каталог
+// в .gitignore) и зависела от того, кто и когда запускал сборку.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dist = path.join(root, 'dist');
+const outFlag = process.argv.indexOf('--out');
+if (outFlag !== -1 && !process.argv[outFlag + 1]) {
+  console.error('build: --out требует путь к каталогу.');
+  process.exit(1);
+}
+// Каталог сборки затирается целиком (rmrf ниже), поэтому путь резолвим сразу и
+// от текущего каталога вызова — так видно, что именно будет затёрто.
+const dist = outFlag !== -1 ? path.resolve(process.argv[outFlag + 1]) : path.join(root, 'dist');
 const core = path.join(root, 'core');
 
 function rmrf(p) {
@@ -86,7 +98,10 @@ for (const t of targets) {
     continue;
   }
   const out = buildTarget(t.name, t.dir);
-  console.log(`  + ${path.relative(root, out)}  (${countFiles(out)} файлов)`);
+  // Каталог вне репозитория (--out) печатаем абсолютным: `..\..\..\Temp\x`
+  // человеку ничего не говорит.
+  const shown = path.relative(root, out);
+  console.log(`  + ${shown.startsWith('..') ? out : shown}  (${countFiles(out)} файлов)`);
   built++;
 }
 if (!built) {

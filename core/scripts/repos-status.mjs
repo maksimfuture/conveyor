@@ -11,10 +11,8 @@
 //     summary: { ok, problems } }
 // state: ok | missing | not-a-repo | link-empty | link-is-url | outside
 
-import fs from 'node:fs';
-import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { readConfig, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
+import { readConfig, repoState, REPO_KEYS } from './lib/config.mjs';
 
 function git(cwd, args) {
   try {
@@ -39,39 +37,13 @@ if (cfg.error) {
 const repos = [];
 for (const key of REPO_KEYS) {
   const l = cfg.links[key];
-  const entry = { key, link: l.value, path: l.path, state: 'ok', branch: null, clean: null, hint: null };
+  // Состояние и подсказку считает ядро (config.repoState) — тот же критерий
+  // применяет SessionStart-хук validate-config. Здесь остаётся только то,
+  // ради чего нужен git: ветка и чистота дерева.
+  const { state, hint } = repoState(cfg, key);
+  const entry = { key, link: l.value, path: l.path, state, branch: null, clean: null, hint };
 
-  // Порядок ветвлений — от причины к следствию. Границу проекта проверяем ДО
-  // существования каталога: критерий пригодности ссылки один на весь плагин
-  // (isUsableLink → links[key].inside), и ссылка наружу непригодна независимо
-  // от того, лежит там что-нибудь или нет. Отложи её за `!existsSync`, и
-  // несуществующий путь наружу получит state `missing` с подсказкой
-  // «склонируйте сюда» — туда, куда клонировать нельзя вовсе: guard-writes
-  // такую копию не примет, а GigaCode такую конфигурацию не разрешит.
-  if (!l.value) {
-    entry.state = 'link-empty';
-    entry.hint = `заполните repos.${key}.link в settings.json (обычно ${REPO_DIRS[key]}) и склонируйте туда репозиторий`;
-  } else if (l.isGitUrl) {
-    entry.state = 'link-is-url';
-    entry.hint =
-      `в repos.${key}.link нужен путь, а не git-URL: плагин не клонирует — ` +
-      `склонируйте репозиторий в ${REPO_DIRS[key]} и укажите этот путь`;
-  } else if (!l.inside) {
-    entry.state = 'outside';
-    entry.hint =
-      `путь repos.${key}.link ведёт за пределы рабочего репозитория (${l.path}); ` +
-      `он резолвится от корня рабочего репозитория и обязан остаться внутри него — укажите ${REPO_DIRS[key]}`;
-  } else if (!fs.existsSync(l.path)) {
-    entry.state = 'missing';
-    entry.hint = `рабочей копии нет — склонируйте репозиторий в ${l.path}`;
-  } else if (!fs.existsSync(path.join(l.path, '.git'))) {
-    // `git clone` в СУЩЕСТВУЮЩИЙ непустой каталог не выполняется — одного
-    // «склонируйте сюда» мало: человек упрётся в ошибку git и вернётся сюда же.
-    entry.state = 'not-a-repo';
-    entry.hint =
-      `каталог ${l.value} существует, но это не git-репозиторий: склонируйте репозиторий в ${l.path}; ` +
-      `клонировать в непустой каталог git не станет — очистите его или переименуйте, если он лишний`;
-  } else {
+  if (state === 'ok') {
     // Ветку и чистоту дерева читаем только у пригодной копии. git может
     // отсутствовать в PATH или каталог может быть повреждён — тогда остаются
     // null: состояние копии от этого не меняется, а вызывающий видит «неизвестно».

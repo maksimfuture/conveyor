@@ -264,6 +264,28 @@ for (const rel of [
             .join('; '),
       );
   }
+
+  // Версию человек сверяет глазами: инструкции по установке обещают, что
+  // `gigacode extensions list` покажет `conveyor (<версия>)`. Забытая там
+  // прошлая версия — повод решить, что установилось не то (или что установка
+  // не прошла), и переставлять расширение по кругу.
+  const version = String(manifests[0][1].version);
+  const docFiles = [path.join(root, 'README.md'), path.join(root, 'INSTALL.md')];
+  (function walkMd(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walkMd(abs);
+      else if (e.name.endsWith('.md')) docFiles.push(abs);
+    }
+  })(path.join(root, 'adapters'));
+  const wrongDocs = [];
+  for (const abs of docFiles) {
+    for (const m of fs.readFileSync(abs, 'utf8').match(/conveyor \(\d+\.\d+\.\d+\)/g) || []) {
+      if (m !== `conveyor (${version})`) wrongDocs.push(`${path.relative(root, abs).split(path.sep).join('/')}: ${m}`);
+    }
+  }
+  if (!wrongDocs.length) ok(`документация: версия в примерах вывода — ${version}`);
+  else bad(`документация: версия в примерах вывода не ${version} — ` + wrongDocs.join(', '));
 }
 
 // 2) Every skill has a matching stage; every agent has a matching prompt

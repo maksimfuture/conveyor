@@ -1766,6 +1766,29 @@ console.log('Скилл setup — «Кратко» против стейджа:'
   else bad('skill setup — ' + problems.join('; '));
 }
 
+// 2v) У команды GigaCode тело безопасное (отсылает к стейджу), но description
+// читается ПЕРВЫМ — при выборе команды и при разборе «настрой конвейер». Если
+// он обещает структуру 1.x или «проверку ссылок» вместо диагностики рабочих
+// копий, пользователь получает не тот этап ещё до чтения стейджа.
+console.log('Команда GigaCode setup — описание:');
+{
+  const cmd = fs.readFileSync(path.join(root, 'adapters/gigacode/commands/conveyor/setup.md'), 'utf8');
+  const desc = ((cmd.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || '').replace(/\s+/g, ' ');
+  const problems = [];
+  if (!/description:/.test(desc)) problems.push('нет frontmatter description');
+  else {
+    for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
+      if (!desc.includes(d)) problems.push('описание не называет часть структуры: ' + d);
+    // Вторая (и более частая) роль этапа — диагностика рабочих копий через
+    // repos-status; «проверяет ссылки» — формулировка 1.x, когда копий в
+    // рабочем репозитории не было.
+    // \w в JS — только ASCII, кириллицу им не добрать: класс задаём явно.
+    if (!/рабоч[а-яё]* копи/i.test(desc)) problems.push('описание не обещает диагностику рабочих копий');
+  }
+  if (!problems.length) ok('gigacode setup: описание команды — структура и диагностика по core/stages/setup.md');
+  else bad('gigacode setup — ' + problems.join('; '));
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

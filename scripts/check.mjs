@@ -12,6 +12,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   scopeFilePath,
+  ARTIFACT_DIRS,
   REPO_KEYS,
   REPO_DIRS,
   STAGE_NAMES,
@@ -1255,6 +1256,312 @@ console.log('Стейдж setup — инициализация и диагнос
           .filter(Boolean)
           .join('; '),
     );
+}
+
+// 2o) _common.md модель читает на КАЖДОМ этапе, и таблица рабочих областей —
+// единственное место, откуда она узнаёт, куда этапу можно писать. Строка
+// удалённого этапа хуже отсутствующей: своей строки модель не находит и берёт
+// ближайшую — то есть считает, что вправе править чужой репозиторий там, где
+// scope.mjs этого права не даёт, и упирается в guard посреди этапа. Состав
+// строк и колонку «пишет» сверяем со stageWriteRepoKeys, а не с текстом плана.
+console.log('_common.md — таблица рабочих областей против stageWriteRepoKeys:');
+{
+  const commonRaw = fs.readFileSync(path.join(root, 'core/stages/_common.md'), 'utf8');
+  const csect = (name) => commonRaw.split(/^## /m).find((s) => s.startsWith(name)) || '';
+  const scopeSect = csect('Рабочая область этапа');
+  const rows = scopeSect
+    .split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) =>
+      l
+        .trim()
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((c) => c.trim()),
+    )
+    .filter((c) => c.length >= 3 && !/^-+$/.test(c[0]) && c[0] !== 'Этап');
+
+  // Область ставят все этапы, кроме служебных setup/task-status: у них нет ни
+  // типа задачи, ни рабочих копий.
+  const scopedStages = STAGE_NAMES.filter((s) => s !== 'setup' && s !== 'task-status');
+  const rowStage = (cell) => (cell.match(/[a-z][a-z-]+/) || [''])[0];
+  const listed = rows.map((c) => rowStage(c[0]));
+  const unknown = [...new Set(listed.filter((s) => !STAGE_NAMES.includes(s)))];
+  const absent = scopedStages.filter((s) => !listed.includes(s));
+  if (!unknown.length && !absent.length && rows.length)
+    ok('_common.md: в таблице ровно этапы конвейера, у которых есть рабочая область');
+  else
+    bad(
+      '_common.md: состав таблицы рабочих областей — ' +
+        [
+          rows.length ? null : 'таблица не найдена',
+          unknown.length ? `несуществующие этапы: ${unknown.join(', ')}` : null,
+          absent.length ? `нет строки для: ${absent.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Колонка «пишет» = stageWriteRepoKeys. Единственное расхождение с кодом
+  // законно и названо в самой таблице: фаза B create-specification снимает
+  // право записи вызовом `--write none`, хотя у этапа оно есть.
+  const wrong = [];
+  for (const c of rows) {
+    const stage = rowStage(c[0]);
+    if (!STAGE_NAMES.includes(stage)) continue;
+    const phaseB = /фаза\s*B/i.test(c[0]);
+    const declared = !/^—/.test(c[2]) && !/только артефакт/i.test(c[2]);
+    const actual = stageWriteRepoKeys(stage, 'FE').length > 0 && !phaseB;
+    if (declared !== actual)
+      wrong.push(`${c[0]}: таблица говорит «${c[2]}», stageWriteRepoKeys — ${actual ? 'запись в репозиторий' : 'только артефакты'}`);
+  }
+  const writeNone = /--write\s+none/.test(scopeSect);
+  if (!wrong.length && writeNone)
+    ok('_common.md: право записи в колонке «пишет» совпадает с ядром, у фазы B назван --write none');
+  else
+    bad(
+      '_common.md: права записи в таблице — ' +
+        [wrong.join('; ') || null, writeNone ? null : 'не сказано, что фаза B снимает запись через --write none']
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Папки, которые guard пускает на запись при активном этапе, перечислены в
+  // ARTIFACT_DIRS. Правило, называющее только tasks/, отправляет intent.md в
+  // отказ guard'а, а обещанный `.cache/` — в отказ гарантированно: этой папки
+  // в разрешённых больше нет вовсе.
+  const rules = scopeSect.replace(/\s+/g, ' ');
+  const missingDirs = ARTIFACT_DIRS.filter((d) => !new RegExp(`${d}/`).test(rules));
+  const cacheAllowed = /\.cache\//.test(rules);
+  if (!missingDirs.length && !cacheAllowed)
+    ok('_common.md: правило артефактов называет обе папки (tasks/, intents/) и не обещает .cache/');
+  else
+    bad(
+      '_common.md: правило про папки артефактов — ' +
+        [
+          missingDirs.length ? `не названы: ${missingDirs.map((d) => d + '/').join(', ')}` : null,
+          cacheAllowed ? '.cache/ назван разрешённым к записи, хотя guard его не пускает' : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Артефакты конвейера = шаблоны в core/templates. Промахнувшийся перечень
+  // велит модели вставить в промпт агента шаблон по несуществующему пути, а в
+  // «Быстром режиме» — вызвать валидатор с типом, который тот не знает
+  // (`неизвестный тип`), и валидация артефакта просто не выполнится.
+  const artifacts = fs
+    .readdirSync(path.join(root, 'core/templates'))
+    .filter((f) => f.endsWith('.md'))
+    .sort();
+  const tplRule = (commonRaw.split(/\n\n/).find((p) => /Шаблон артефакта/.test(p)) || '').replace(/\s+/g, ' ');
+  const tplMiss = artifacts.filter((a) => !tplRule.includes(a));
+  const tplExtra = ['feature.md', 'requirements-auto-test.md'].filter((a) => tplRule.includes(a));
+  if (tplRule && !tplMiss.length && !tplExtra.length)
+    ok('_common.md: «шаблон текстом» перечисляет ровно артефакты из core/templates');
+  else
+    bad(
+      '_common.md: перечень артефактов в правиле «шаблон текстом» — ' +
+        [
+          tplRule ? null : 'правило не найдено',
+          tplMiss.length ? `нет: ${tplMiss.join(', ')}` : null,
+          tplExtra.length ? `удалённые: ${tplExtra.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const bogus = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', 'x', '--type', '__нет__']));
+  const validTypes = ((String(bogus.problems && bogus.problems[0]).match(/Допустимые:\s*(.+)$/) || [])[1] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const fastRule = (csect('Быстрый режим').match(/--type\s*<[^>]*>/) || [''])[0];
+  const typeMiss = validTypes.filter((t) => !new RegExp(`\\b${t}\\b`).test(fastRule));
+  const typeExtra = ((fastRule.match(/<(.*)>/) || ['', ''])[1] || '')
+    .split('|')
+    .map((s) => s.trim())
+    .filter((t) => t && !validTypes.includes(t));
+  if (validTypes.length && !typeMiss.length && !typeExtra.length)
+    ok('_common.md: типы валидатора в «Быстром режиме» совпадают с validate-artifact.mjs');
+  else
+    bad(
+      '_common.md: типы валидатора в «Быстром режиме» — ' +
+        [
+          validTypes.length ? null : 'список допустимых типов не разобран из validate-artifact.mjs',
+          typeMiss.length ? `не названы: ${typeMiss.join(', ')}` : null,
+          typeExtra.length ? `неизвестные валидатору: ${typeExtra.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
+// 2p) _review-loop.md — единственное описание цикла ревью, и оба его конца
+// сместились: производит содержимое теперь фаза A create-specification, а итог
+// ревью по домену systems-analysis ложится в specification.md. Перечень,
+// зовущий /create-feature, оставляет цикл без входа на реально производящем
+// этапе; названный feature.md — без места для раздела «Ревью».
+console.log('_review-loop.md — производящие этапы и место итога:');
+{
+  const rl = fs.readFileSync(path.join(root, 'core/stages/_review-loop.md'), 'utf8');
+  const flat = rl.replace(/\s+/g, ' ');
+  // Производящие этапы — ровно те, что ссылаются на цикл (проверено в 2b).
+  const producing = ['create-specification', 'implement-plan', 'implement-auto-test'];
+  const head = rl.split(/^## /m)[0].replace(/\s+/g, ' ');
+  const notNamed = producing.filter((s) => !head.includes(s));
+  const staleStage = /create-feature/.test(flat);
+  if (!notNamed.length && !staleStage)
+    ok('_review-loop.md: перечень производящих этапов — фаза A спецификации, реализация, автотесты');
+  else
+    bad(
+      '_review-loop.md: перечень производящих этапов — ' +
+        [
+          notNamed.length ? `не назван: ${notNamed.join(', ')}` : null,
+          staleStage ? 'остался удалённый /create-feature' : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const outcome = (rl.split(/^## /m).find((s) => s.startsWith('Запись итога')) || '').replace(/\s+/g, ' ');
+  const namesSpec = /specification\.md/.test(outcome) && !/feature\.md/.test(outcome);
+  // Три списка держат итог ревью между фазами: раздел «Ревью» в specification.md
+  // заполняет фаза B, которая после обрыва идёт ОТДЕЛЬНОЙ сессией и контекста
+  // фазы A не видит. Схлопнутый до одного счётчика объект — потерянный итог.
+  const lists = ['fixed', 'rebutted', 'unresolved'].filter((k) => !outcome.includes(k));
+  if (namesSpec && !lists.length)
+    ok('_review-loop.md: итог домена анализа пишется в specification.md, в meta.json — три списка');
+  else
+    bad(
+      '_review-loop.md: запись итога — ' +
+        [
+          namesSpec ? null : 'артефакт итога назван не specification.md (или остался feature.md)',
+          lists.length ? `в meta.json нет списков: ${lists.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const pair = (rl.split(/^## /m).find((s) => /FE-BE пара/.test(s)) || '').replace(/\s+/g, ' ');
+  if (pair && /create-specification/.test(pair) && !/feature\.md/.test(pair))
+    ok('_review-loop.md: FE-BE пара описана через create-specification');
+  else bad('_review-loop.md: раздел «FE-BE пара» — ' + (pair ? `остался про удалённый этап: «${pair.slice(0, 90)}…»` : 'не найден'));
+}
+
+// 2q) reviewer — субагент: перечень доменов в промпте и карточке агента это
+// всё, что он знает о своём месте в конвейере. Названный удалённый этап или
+// артефакт, которого никто не производит, он не может ни открыть, ни сверить:
+// вместо ревью получится ревью «по памяти о конвейере 1.x».
+console.log('reviewer — домены и артефакты по фактическим этапам:');
+{
+  const files = ['core/prompts/reviewer.md', 'adapters/claude-code/agents/reviewer.md'];
+  const stale = [];
+  for (const rel of files) {
+    const txt = fs.readFileSync(path.join(root, rel), 'utf8').replace(/\s+/g, ' ');
+    for (const token of ['create-feature', 'feature.md', 'requirements-auto-test'])
+      if (txt.includes(token)) stale.push(`${rel}: ${token}`);
+  }
+  const prompt = fs.readFileSync(path.join(root, 'core/prompts/reviewer.md'), 'utf8').replace(/\s+/g, ' ');
+  const card = fs.readFileSync(path.join(root, 'adapters/claude-code/agents/reviewer.md'), 'utf8').replace(/\s+/g, ' ');
+  const domainsNamed = ['systems-analysis', 'frontend', 'backend', 'autotests'].filter((d) => !prompt.includes(d));
+  const specStage = /create-specification/.test(prompt) && /create-specification/.test(card);
+  const testsSot = /autotest-plan\.md/.test(prompt);
+  if (!stale.length && !domainsNamed.length && specStage && testsSot)
+    ok('reviewer: домены названы через актуальные этапы, источник истины автотестов — autotest-plan.md');
+  else
+    bad(
+      'reviewer: описание доменов — ' +
+        [
+          stale.length ? `удалённые имена: ${stale.join('; ')}` : null,
+          domainsNamed.length ? `в промпте нет доменов: ${domainsNamed.join(', ')}` : null,
+          specStage ? null : 'этап домена systems-analysis назван не create-specification (промпт и/или карточка)',
+          testsSot ? null : 'source-of-truth для автотестов — не autotest-plan.md',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
+// 2r) «Следующий шаг» — единственная навигация по конвейеру: пользователь
+// набирает то, что назвал предыдущий этап. Имя удалённого этапа здесь — тупик
+// (команды нет), а имя не-соседа тихо пропускает этап. Порядок берём из
+// STAGE_NAMES, чтобы проверка не разошлась с ядром.
+console.log('Следующий шаг этапов — по порядку STAGE_NAMES:');
+{
+  const chain = STAGE_NAMES.filter((s) => s !== 'task-status');
+  const wrong = [];
+  const seen = new Set();
+  for (let i = 0; i < chain.length - 1; i++) {
+    const stage = chain[i];
+    const successor = chain[i + 1];
+    for (const rel of [`core/stages/${stage}.md`, `adapters/claude-code/skills/${stage}/SKILL.md`]) {
+      const p = path.join(root, rel);
+      if (!fs.existsSync(p)) continue;
+      const txt = fs.readFileSync(p, 'utf8').replace(/\s+/g, ' ');
+      for (const m of txt.matchAll(/ледующий шаг[^.]{0,120}/g)) {
+        const named = (m[0].match(/\/(?:conveyor:)?([a-z][a-z-]+)/) || [])[1];
+        if (!named) continue;
+        seen.add(stage);
+        if (named !== successor) wrong.push(`${rel}: «${named}» вместо «${successor}»`);
+      }
+    }
+  }
+  // implement-plan — тот самый разрыв: без явного требования проверка
+  // молчала бы, просто не найдя предложения про следующий шаг.
+  const silent = ['implement-plan'].filter((s) => !seen.has(s));
+  if (!wrong.length && !silent.length)
+    ok('следующий шаг каждого этапа — его сосед по STAGE_NAMES');
+  else
+    bad(
+      'следующий шаг этапа — ' +
+        [wrong.join('; ') || null, silent.length ? `не назван вовсе у: ${silent.join(', ')}` : null]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
+// 2s) Сквозная зачистка: имена удалённых этапов, артефактов и полей конфигурации
+// живут ещё и в шапках скриптов и в «кратко» скиллов — тех текстах, которые
+// модель читает раньше стейджа. Один общий проход по репозиторию дешевле
+// точечных проверок и ловит возврат старого имени в любом новом файле.
+console.log('Сквозная зачистка удалённых имён:');
+{
+  // Файлы, где старые имена ЗАКОННЫ: миграция 1.x переименовывает старое (и
+  // потому обязана его называть), а check.mjs это переименование проверяет.
+  // QWEN.md, README.md и INSTALL.md — не законны, а ещё не переписаны
+  // (Task 24 и Task 25); их строки исключаются вместе с задачами.
+  const allowed = new Set([
+    'core/scripts/migrate-workspace.mjs',
+    'scripts/check.mjs',
+    'adapters/gigacode/QWEN.md',
+    'README.md',
+    'INSTALL.md',
+  ]);
+  // `.cache/repos` в список не входит: каталог 1.x упоминается законно —
+  // setup.md его ищет как признак старого репозитория, scope.mjs и
+  // validate-config.mjs подчищают. Проверяются имена, которых больше НЕТ.
+  const gone = /create-feature|create-requirements-auto-test|requirements-auto-test|missingVars|repoCache|CONVEYOR_REPO_CACHE|repoCacheEnabled/;
+  const hits = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (['node_modules', '.git', 'dist', 'docs'].includes(e.name)) continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (/\.(md|mjs|json)$/.test(e.name)) {
+        const rel = path.relative(root, abs).split(path.sep).join('/');
+        if (allowed.has(rel)) continue;
+        fs.readFileSync(abs, 'utf8')
+          .split(/\r?\n/)
+          .forEach((line, i) => {
+            const m = line.match(gone);
+            if (m) hits.push(`${rel}:${i + 1} (${m[0]})`);
+          });
+      }
+    }
+  })(root);
+  if (!hits.length) ok('удалённых имён этапов, артефактов и полей конфигурации в репозитории нет');
+  else bad('остатки старых имён — ' + hits.join('; '));
 }
 
 // 3) Scripts run against a temp workspace

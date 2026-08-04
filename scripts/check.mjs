@@ -95,13 +95,18 @@ for (const rel of [
   }
 }
 
-// 1b) settings-шаблон содержит все ожидаемые ключи (включая fast)
+// 1b) settings-шаблон содержит ожидаемые ключи и НЕ содержит удалённых
 {
   const st = JSON.parse(fs.readFileSync(path.join(root, 'core/templates/settings.example.json'), 'utf8'));
-  const need = ['taskPrefix', 'repos', 'repoCache', 'reviewRounds', 'fast', 'language'];
+  const need = ['taskPrefix', 'repos', 'reviewRounds', 'fast', 'language'];
   const miss = need.filter((k) => !(k in st));
   if (!miss.length) ok('settings.example.json: все ключи на месте (' + need.join(', ') + ')');
   else bad('settings.example.json: нет ключей: ' + miss.join(', '));
+  if (!('repoCache' in st)) ok('settings.example.json: repoCache удалён');
+  else bad('settings.example.json: repoCache ещё есть');
+  const linksOk = Object.values(st.repos).every((r) => typeof r.link === 'string' && r.link.startsWith('repos/'));
+  if (linksOk) ok('settings.example.json: ссылки — пути repos/*');
+  else bad('settings.example.json: ссылки не пути: ' + JSON.stringify(st.repos));
 }
 
 // 1c) Константы ядра: каталоги репозиториев и имена этапов

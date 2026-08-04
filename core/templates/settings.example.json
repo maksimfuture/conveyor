@@ -1,12 +1,11 @@
 {
   "taskPrefix": "TASK",
   "repos": {
-    "systemsAnalysis": { "link": "${SYSTEMS_ANALYSIS_REPO}", "mainBranch": "${SYSTEMS_ANALYSIS_MAIN_BRANCH}" },
-    "frontend":        { "link": "${FRONTEND_REPO}",         "mainBranch": "${FRONTEND_MAIN_BRANCH}" },
-    "backend":         { "link": "${BACKEND_REPO}",          "mainBranch": "${BACKEND_MAIN_BRANCH}" },
-    "autoTest":        { "link": "${AUTOTEST_REPO}",         "mainBranch": "${AUTOTEST_MAIN_BRANCH}" }
+    "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
+    "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
+    "backend":         { "link": "repos/backend",         "mainBranch": "main" },
+    "autoTest":        { "link": "repos/autotests",       "mainBranch": "main" }
   },
-  "repoCache": "${CONVEYOR_REPO_CACHE}",
   "reviewRounds": "${CONVEYOR_REVIEW_ROUNDS}",
   "fast": "${CONVEYOR_FAST}",
   "language": "ru"

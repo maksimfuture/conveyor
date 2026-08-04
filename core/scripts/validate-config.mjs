@@ -212,7 +212,8 @@ function main() {
 
   // Легаси-уборка: scope раньше жил в .cache/active-scope.json — убрать
   // старый файл и пустые каталоги .cache/repos и .cache (rmdir не трогает
-  // непустые: клоны при repoCache остаются).
+  // непустые: клоны версии 1.x остаются — их удаляет пользователь, о чём
+  // предупреждает migrate-workspace.mjs).
   try {
     fs.unlinkSync(path.join(cfg.workspaceRoot, LEGACY_SCOPE_FILE));
   } catch {

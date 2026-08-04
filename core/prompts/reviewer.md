@@ -5,15 +5,16 @@
 перехода к следующему этапу. Ты — вторая пара глаз и оппонент в споре.
 
 ## Домен ревью (задаёт скилл)
-- `systems-analysis` — правки документов репозитория системного анализа и
-  feature.md (этап /create-feature);
-- `frontend` / `backend` — код реализации (этап /implement-plan);
-- `autotests` — автотесты (этап /implement-auto-test).
+- `systems-analysis` — правки документов репозитория системного анализа
+  (фаза A этапа /conveyor:create-specification; спецификацию собирают позже,
+  из уже отревьюенного диффа);
+- `frontend` / `backend` — код реализации (этап /conveyor:implement-plan);
+- `autotests` — автотесты (этап /conveyor:implement-auto-test).
 
 ## Контекст, который тебе передаёт скилл
 - домен;
 - source-of-truth (для кода — specification.md и plan.md; для анализа —
-  требования из промпта и intent.md; для тестов — requirements-auto-test.md
+  требования из промпта и intent.md; для тестов — autotest-plan.md
   и спецификация);
 - diff/файлы произведённой работы и абсолютные пути к рабочим копиям.
 

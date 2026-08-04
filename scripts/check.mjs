@@ -1538,8 +1538,26 @@ try {
   // текст скрипта. Legacy-флаг `--kind cache` включал здесь checkout main —
   // передаём его специально: устаревший вызов из стейджа не должен воскресить
   // переключение.
-  const liveRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-live-'));
+  // Копия лежит ВНУТРИ временного workspace: тот же живой репозиторий —
+  // единственная фикстура, на которой repos-status может ЗАПОЛНИТЬ branch и
+  // clean. У поддельных каталогов `.git` (обе «ok»-фикстуры выше) git падает,
+  // и оба поля там всегда null — то есть не проверяются ничем.
+  const liveWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-live-'));
+  const liveRepo = path.join(liveWs, 'repos', 'backend');
   try {
+    fs.mkdirSync(liveRepo, { recursive: true });
+    fs.writeFileSync(
+      path.join(liveWs, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: { link: '', mainBranch: 'main' },
+          frontend: { link: '', mainBranch: 'main' },
+          backend: { link: 'repos/backend', mainBranch: 'main' },
+          autoTest: { link: '', mainBranch: 'main' },
+        },
+      }),
+    );
     const g = (a) => spawnSync('git', a, { cwd: liveRepo, encoding: 'utf8' });
     g(['init', '--quiet']);
     fs.writeFileSync(path.join(liveRepo, 'README.md'), '# fixture\n');
@@ -1557,9 +1575,25 @@ try {
       if (upd.ok === true && branchNow() === 'TASK-1-feature')
         ok('git-ops update: ветка рабочей копии не переключается (в том числе с legacy --kind cache)');
       else bad('git-ops update: копия оказалась на ветке ' + branchNow() + ': ' + JSON.stringify(upd));
+
+      // /setup печатает branch и clean в таблице «что настроено»: пустые поля
+      // на исправной копии человек читает как «git недоступен».
+      const liveStatus = () =>
+        ((JSON.parse(runScript('core/scripts/repos-status.mjs', [liveWs])).repos || []).find((r) => r.key === 'backend')) || {};
+      const liveClean = liveStatus();
+      if (liveClean.state === 'ok' && liveClean.branch === 'TASK-1-feature' && liveClean.clean === true)
+        ok('repos-status: на живой копии branch — текущая ветка, clean=true у чистого дерева');
+      else bad('repos-status: branch/clean на живой копии: ' + JSON.stringify(liveClean));
+
+      // Второй замер обязателен: без него clean=true неотличим от константы.
+      fs.writeFileSync(path.join(liveRepo, 'dirty.txt'), 'не закоммичено\n');
+      const liveDirty = liveStatus();
+      if (liveDirty.state === 'ok' && liveDirty.branch === 'TASK-1-feature' && liveDirty.clean === false)
+        ok('repos-status: незакоммиченная правка → clean=false (ветка та же)');
+      else bad('repos-status: грязное дерево не отличено от чистого: ' + JSON.stringify(liveDirty));
     }
   } finally {
-    fs.rmSync(liveRepo, { recursive: true, force: true, maxRetries: 3 });
+    fs.rmSync(liveWs, { recursive: true, force: true, maxRetries: 3 });
   }
 
   // analysis-head удалена: этап спецификации сам вносит правки и знает свой

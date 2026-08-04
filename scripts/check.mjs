@@ -337,6 +337,31 @@ console.log('Стейдж intent — неприменимые разделы _co
     );
 }
 
+// «Определение задачи» в _common.md ложно для create-specification: аргументом
+// может быть INTENT-ID, при пустом аргументе предлагаются intent'ы, а тип и
+// номер спрашиваются у аналитика — задача там ЗАВОДИТСЯ, а не читается.
+// intent.md защищён собственным блоком исключений, у create-specification.md
+// такого блока нет, а _common.md модель читает РАНЬШЕ стейджа — поэтому
+// оговорка обязана стоять в самом разделе.
+console.log('Раздел «Определение задачи» — область применения:');
+{
+  const commonMd = fs.readFileSync(path.join(root, 'core/stages/_common.md'), 'utf8');
+  const section = (commonMd.split(/^## /m).find((s) => s.startsWith('Определение задачи')) || '').replace(/\s+/g, ' ');
+  const namesExceptions = /create-specification/.test(section) && /intent/.test(section);
+  const marksThem = /(исключени|не примен|задачи ещё нет|задачу ЗАВОДИТ)/i.test(section);
+  if (section && namesExceptions && marksThem)
+    ok('_common.md: «Определение задачи» называет intent и create-specification исключениями');
+  else
+    bad(
+      '_common.md: «Определение задачи» — ' +
+        (!section
+          ? 'раздел не найден'
+          : !namesExceptions
+            ? 'в разделе не названы этапы-исключения (intent, create-specification)'
+            : 'этапы названы, но не помечены как исключения'),
+    );
+}
+
 // 2f) Валидатор возвращает не только ok: непустой `placeholders` — это
 // оставшийся в артефакте каркас шаблона, причём ok при этом true. intent —
 // единственный производящий этап без цикла ревью, и шаг валидации,

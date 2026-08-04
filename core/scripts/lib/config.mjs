@@ -28,6 +28,11 @@ export function readJsonFile(file) {
   return parseJsonText(fs.readFileSync(file, 'utf8'));
 }
 
+// settings.json приходит из чужого рабочего репозитория и мог быть правлен
+// руками — прежде чем читать или писать поля записи, надо убедиться, что это
+// вообще запись (тот же критерий, что в migrate-workspace.mjs).
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
 // The four repositories, in the order they appear in settings.json.
 export const REPO_KEYS = ['systemsAnalysis', 'frontend', 'backend', 'autoTest'];
 
@@ -255,15 +260,22 @@ export function readConfig(startDir = process.cwd()) {
   const missingLinks = [];
   const urlLinks = [];
   for (const key of REPO_KEYS) {
-    const value = (((config.repos && config.repos[key] && config.repos[key].link) || '') + '').trim();
-    const mainBranch =
-      (((config.repos && config.repos[key] && config.repos[key].mainBranch) || '') + '').trim() || 'main';
+    // settings.json версии 1.x правили руками, и repos.<ключ> в нём бывает
+    // примитивом (`"frontend": "repos/frontend"`) — эту форму разбирает
+    // предупреждением migrate-workspace. Читать и ТЕМ БОЛЕЕ писать поля у
+    // примитива нельзя: присваивание в ESM (strict mode) бросает TypeError, и
+    // чтение конфигурации падает целиком — repos-status остаётся без stdout,
+    // а SessionStart-хук (fail-open) молчит вместо предупреждения. Непонятную
+    // запись считаем незаполненной ссылкой: ключ уходит в missingLinks.
+    const entry = isPlainObject(config.repos) && isPlainObject(config.repos[key]) ? config.repos[key] : null;
+    const value = (((entry && entry.link) || '') + '').trim();
+    const mainBranch = (((entry && entry.mainBranch) || '') + '').trim() || 'main';
     // Нормализованные значения пишем обратно в config: stage-файлы отсылают
     // модель к config.repos.<ключ>.link, ядро считает по links[key].value —
     // два написания одного значения расходились бы на пробелах.
-    if (config.repos && config.repos[key]) {
-      config.repos[key].link = value;
-      config.repos[key].mainBranch = mainBranch;
+    if (entry) {
+      entry.link = value;
+      entry.mainBranch = mainBranch;
     }
 
     const url = isGitUrl(value);

@@ -1377,6 +1377,76 @@ try {
     fs.rmSync(tmpLinks, { recursive: true, force: true });
   }
 
+  // settings.json 1.x правили руками, и repos.<ключ> в нём бывает примитивом
+  // (`"systemsAnalysis": "repos/system-analysis"`) — ровно ту форму разбирает
+  // предупреждением migrate-workspace. Ядро на ней падало TypeError ещё до
+  // возврата: у repos-status stdout оставался ПУСТ (контракт «всегда JSON
+  // {ok:false,error}» не работал), а SessionStart-хук глотал ошибку и молчал.
+  const tmpPrim = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-prim-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmpPrim, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: 'repos/system-analysis',
+          frontend: 42,
+          backend: { link: 'repos/backend', mainBranch: 'main' },
+          autoTest: { link: '', mainBranch: 'main' },
+        },
+      }),
+    );
+    const rcPrim = runScriptFull('core/scripts/resolve-config.mjs', [tmpPrim]);
+    let rcPrimJson = null;
+    try {
+      rcPrimJson = JSON.parse(rcPrim.stdout);
+    } catch {
+      rcPrimJson = null;
+    }
+    if (
+      rcPrim.status === 0 &&
+      rcPrimJson &&
+      rcPrimJson.found === true &&
+      (rcPrimJson.missingLinks || []).includes('systemsAnalysis') &&
+      (rcPrimJson.missingLinks || []).includes('frontend') &&
+      !(rcPrimJson.missingLinks || []).includes('backend')
+    )
+      ok('readConfig: repos.<ключ> примитивом не роняет чтение — ключ в missingLinks');
+    else
+      bad(
+        'readConfig: repos.<ключ> примитивом ломает чтение: ' +
+          JSON.stringify({
+            status: rcPrim.status,
+            stderr: rcPrim.stderr.split('\n')[0],
+            error: rcPrimJson && rcPrimJson.error,
+            missingLinks: rcPrimJson && rcPrimJson.missingLinks,
+          }),
+      );
+    const rsPrim = runScriptFull('core/scripts/repos-status.mjs', [tmpPrim]);
+    let rsPrimJson = null;
+    try {
+      rsPrimJson = JSON.parse(rsPrim.stdout);
+    } catch {
+      rsPrimJson = null;
+    }
+    const rsPrimSA = rsPrimJson && (rsPrimJson.repos || []).find((r) => r.key === 'systemsAnalysis');
+    if (rsPrimJson && rsPrimSA && rsPrimSA.state === 'link-empty')
+      ok('repos-status: repos.<ключ> примитивом — JSON с состоянием, а не стек Node');
+    else bad('repos-status: на примитиве нет JSON: ' + JSON.stringify({ status: rsPrim.status, stdout: rsPrim.stdout.slice(0, 200) }));
+    const vcPrim = runScriptFull('core/scripts/validate-config.mjs', [], JSON.stringify({ cwd: tmpPrim }));
+    let vcPrimCtx = '';
+    try {
+      vcPrimCtx = JSON.parse(vcPrim.stdout).hookSpecificOutput.additionalContext || '';
+    } catch {
+      vcPrimCtx = '';
+    }
+    if (vcPrim.status === 0 && vcPrimCtx.includes('systemsAnalysis') && vcPrimCtx.includes('frontend'))
+      ok('validate-config: repos.<ключ> примитивом — ключи названы, хук не молчит');
+    else bad('validate-config: на примитиве хук молчит: ' + JSON.stringify({ status: vcPrim.status, ctx: vcPrimCtx }));
+  } finally {
+    fs.rmSync(tmpPrim, { recursive: true, force: true });
+  }
+
   // Свежий рабочий репозиторий: settings.json взят ИЗ ШАБЛОНА (ссылки заполнены
   // дефолтами repos/*), но ничего ещё не склонировано. Пустых ссылок нет,
   // git-URL нет, inside=true — и по трём «ссылочным» критериям хук молчит,

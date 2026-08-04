@@ -1561,6 +1561,31 @@ console.log('Следующий шаг этапов — по порядку STAG
     );
 }
 
+// Границы markdown-раздела: от заголовка до следующего заголовка того же или
+// более высокого уровня. Нужны двум проверкам ниже — 2s исключает из зачистки
+// раздел README про миграцию, 2s2 читает разделы README по отдельности (факт,
+// уехавший в соседний раздел, читателю не помогает).
+function mdSectionRange(lines, heading) {
+  const start = lines.findIndex((l) => l.trim().startsWith(heading));
+  if (start < 0) return null;
+  const level = (lines[start].match(/^#+/) || ['#'])[0].length;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(#+)\s/);
+    if (m && m[1].length <= level) {
+      end = i;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+function mdSection(text, heading) {
+  const lines = text.split(/\r?\n/);
+  const range = mdSectionRange(lines, heading);
+  return range ? lines.slice(range.start, range.end).join('\n') : null;
+}
+
 // 2s) Сквозная зачистка: имена удалённых этапов, артефактов и полей конфигурации
 // живут ещё и в шапках скриптов и в «кратко» скиллов — тех текстах, которые
 // модель читает раньше стейджа. Один общий проход по репозиторию дешевле
@@ -1569,14 +1594,13 @@ console.log('Сквозная зачистка удалённых имён:');
 {
   // Файлы, где старые имена ЗАКОННЫ: миграция 1.x переименовывает старое (и
   // потому обязана его называть), а check.mjs это переименование проверяет.
-  // README.md и INSTALL.md — не законны, а ещё не переписаны (Task 25); их
-  // строки исключаются вместе с задачей.
-  const allowed = new Set([
-    'core/scripts/migrate-workspace.mjs',
-    'scripts/check.mjs',
-    'README.md',
-    'INSTALL.md',
-  ]);
+  const allowed = new Set(['core/scripts/migrate-workspace.mjs', 'scripts/check.mjs']);
+  // README.md документирует ту же миграцию — и обязан назвать, ЧТО именно
+  // переименовано (иначе человек не узнает свой репозиторий 1.x). Поэтому
+  // законен не файл целиком, а ровно один его раздел: остальной README
+  // проверяется наравне со всеми, и возврат старого имени в шапку или в
+  // таблицу команд гейт поймает.
+  const legacySection = { 'README.md': '## Обновление с 1.x' };
   // `.cache/repos` в список не входит: каталог 1.x упоминается законно —
   // setup.md его ищет как признак старого репозитория, scope.mjs и
   // validate-config.mjs подчищают. Проверяются имена, которых больше НЕТ.
@@ -1618,15 +1642,132 @@ console.log('Сквозная зачистка удалённых имён:');
     const abs = path.join(root, rel);
     // Файл может числиться в индексе, но быть удалён из рабочего дерева.
     if (!fs.existsSync(abs)) continue;
-    fs.readFileSync(abs, 'utf8')
-      .split(/\r?\n/)
-      .forEach((line, i) => {
-        const m = line.match(gone);
-        if (m) hits.push(`${rel}:${i + 1} (${m[0]})`);
-      });
+    const lines = fs.readFileSync(abs, 'utf8').split(/\r?\n/);
+    const legacy = legacySection[rel] ? mdSectionRange(lines, legacySection[rel]) : null;
+    lines.forEach((line, i) => {
+      if (legacy && i >= legacy.start && i < legacy.end) return;
+      const m = line.match(gone);
+      if (m) hits.push(`${rel}:${i + 1} (${m[0]})`);
+    });
   }
   if (!hits.length) ok('удалённых имён этапов, артефактов и полей конфигурации в репозитории нет');
   else bad('остатки старых имён — ' + hits.join('; '));
+}
+
+// 2s2) README.md и INSTALL.md — единственное, что человек читает ДО того, как
+// взяться за плагин: по ним он заводит рабочий репозиторий и ведёт задачу.
+// Ошибка здесь не падает прогоном, а тихо уводит человека не туда (заполнить
+// переменную, которой нет; ждать, что плагин склонирует репозиторий). Поэтому
+// проверяем не стиль, а факты, и берём их из ядра, а не списком в проверке.
+console.log('README и INSTALL — соответствие коду:');
+{
+  const docs = [
+    ['README.md', fs.readFileSync(path.join(root, 'README.md'), 'utf8')],
+    ['INSTALL.md', fs.readFileSync(path.join(root, 'INSTALL.md'), 'utf8')],
+  ];
+  const problems = [];
+
+  // (1) Команды: перечень этапов — из ядра. Не названный этап человек не
+  // запустит, а названный лишний он наберёт и получит «нет такой команды».
+  for (const [name, txt] of docs) {
+    const missing = STAGE_NAMES.filter((s) => !txt.includes(`/conveyor:${s}`));
+    if (missing.length) problems.push(`${name}: не названы команды ${missing.join(', ')}`);
+    const invented = [...new Set([...txt.matchAll(/\/conveyor:([a-z][a-z-]*)/g)].map((m) => m[1]))].filter(
+      (s) => !STAGE_NAMES.includes(s),
+    );
+    if (invented.length) problems.push(`${name}: таких команд нет — ${invented.join(', ')}`);
+  }
+
+  // (2) Переменные окружения: состав задаёт шаблон env.example. Документ,
+  // зовущий заполнить переменную, которой больше нет, — тупик для читателя.
+  const envKeys = fs
+    .readFileSync(path.join(root, 'core/templates/env.example'), 'utf8')
+    .split(/\r?\n/)
+    .map((l) => (l.match(/^([A-Z][A-Z0-9_]*)=/) || [])[1])
+    .filter(Boolean);
+  for (const [name, txt] of docs) {
+    const used = [
+      ...new Set(
+        [...txt.matchAll(/\b(CONVEYOR_[A-Z0-9_]+|[A-Z][A-Z0-9_]*_(?:REPO|MAIN_BRANCH))\b/g)].map((m) => m[1]),
+      ),
+    ];
+    const unknown = used.filter((v) => !envKeys.includes(v));
+    if (unknown.length) problems.push(`${name}: переменных нет в env.example — ${unknown.join(', ')}`);
+  }
+
+  // (3) Куда клонировать: дефолтные пути рабочих копий — из ядра (REPO_DIRS),
+  // и INSTALL обязан показать сам шаг клонирования: плагин НЕ клонирует.
+  for (const [name, txt] of docs) {
+    const missingDirs = Object.values(REPO_DIRS).filter((d) => !txt.includes(d));
+    if (missingDirs.length) problems.push(`${name}: не показаны пути рабочих копий ${missingDirs.join(', ')}`);
+    if (!/не клонирует/.test(txt)) problems.push(`${name}: не сказано, что плагин ничего не клонирует`);
+  }
+  if (!/git clone/.test(docs[1][1])) problems.push('INSTALL.md: нет шага «склонируйте репозитории» (git clone)');
+
+  const readme = docs[0][1];
+  // (4) Цикл ревью: производящие этапы — те, чей стейдж ПОДКЛЮЧАЕТ
+  // _review-loop.md (у intent и create-autotest-plan он назван, чтобы сказать
+  // «не запускается»). Названный лишний этап — обещание ревью, которого нет.
+  const producing = STAGE_NAMES.filter((s) => {
+    const p = path.join(root, `core/stages/${s}.md`);
+    return fs.existsSync(p) && fs.readFileSync(p, 'utf8').includes('stages/_review-loop.md');
+  });
+  const reviewSec = mdSection(readme, '## Цикл ревью');
+  if (!reviewSec) problems.push('README.md: нет раздела «## Цикл ревью»');
+  else {
+    const missing = producing.filter((s) => !reviewSec.includes(s));
+    const extra = STAGE_NAMES.filter((s) => !producing.includes(s) && s !== 'setup' && reviewSec.includes(s));
+    if (missing.length) problems.push(`README.md, цикл ревью: не названы этапы ${missing.join(', ')}`);
+    if (extra.length) problems.push(`README.md, цикл ревью: ревью там не запускается — ${extra.join(', ')}`);
+  }
+
+  // (5) SessionStart-хук: он предупреждает и о непригодной ссылке, и о
+  // НЕсклонированной рабочей копии (repos-status). Читатель, которому обещали
+  // предупреждение только про ссылки, молчание хука понимает как «всё готово».
+  const guardSec = mdSection(readme, '## Защита');
+  if (!guardSec || !/SessionStart/.test(guardSec)) problems.push('README.md: нет описания SessionStart-хука');
+  else if (!/склонирован/.test(guardSec))
+    problems.push('README.md: про SessionStart не сказано, что он предупреждает о несклонированных рабочих копиях');
+
+  // (6) Миграция 1.x: сухой прогон ПЕРЕД --apply и продолжение мигрированных
+  // задач. Без этого раздела владелец репозитория 1.x остаётся один на один
+  // со сломанным settings.json.
+  const migSec = mdSection(readme, '## Обновление с 1.x');
+  if (!migSec) problems.push('README.md: нет раздела «## Обновление с 1.x»');
+  else {
+    if (!migSec.includes('migrate-workspace.mjs')) problems.push('README.md, миграция: не назван migrate-workspace.mjs');
+    if (!/--apply/.test(migSec)) problems.push('README.md, миграция: не назван --apply');
+    if (!/без\s+`?--apply`?|сух/i.test(migSec)) problems.push('README.md, миграция: не сказано про сухой прогон ПЕРЕД --apply');
+    if (!/create-specification/.test(migSec))
+      problems.push('README.md, миграция: не сказано, с какого этапа продолжаются задачи с пройденным feature');
+  }
+
+  // (7) Конфигурация команды: settings.json коммитится, .env не обязателен.
+  const cfgSec = mdSection(readme, '## Конфигурация');
+  if (!cfgSec) problems.push('README.md: нет раздела «## Конфигурация»');
+  else {
+    if (!/коммит/.test(cfgSec)) problems.push('README.md, конфигурация: не сказано, что settings.json коммитится');
+    if (!/не обязател/.test(cfgSec)) problems.push('README.md, конфигурация: не сказано, что .env не обязателен');
+  }
+
+  // (8) Структура рабочего репозитория: папки артефактов — из ядра.
+  const treeSec = mdSection(readme, '## Структура рабочего репозитория');
+  if (!treeSec) problems.push('README.md: нет раздела «## Структура рабочего репозитория»');
+  else {
+    const missingDirs = [...ARTIFACT_DIRS, 'repos'].filter((d) => !treeSec.includes(`${d}/`));
+    if (missingDirs.length) problems.push(`README.md, структура: нет каталогов ${missingDirs.join(', ')}`);
+    if (!/gitignore/.test(treeSec)) problems.push('README.md, структура: не сказано, что repos/ в .gitignore');
+  }
+
+  // (9) Роли: карточки агентов лежат в core/prompts — README обязан назвать
+  // каждую, иначе непонятно, кто запускает этап.
+  const roles = fs.readdirSync(path.join(root, 'core/prompts')).map((f) => f.replace(/\.md$/, ''));
+  const missingRoles = roles.filter((r) => !readme.includes(r));
+  if (missingRoles.length) problems.push(`README.md: не названы роли ${missingRoles.join(', ')}`);
+
+  if (!problems.length)
+    ok('README и INSTALL: команды, переменные, рабочие копии, ревью, миграция и роли совпадают с ядром');
+  else bad('README/INSTALL — ' + problems.join('; '));
 }
 
 // 2t) QWEN.md — это ВЕСЬ системный промпт GigaCode: хуков там нет, стейджи

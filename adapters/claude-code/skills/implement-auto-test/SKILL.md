@@ -1,10 +1,10 @@
 ---
 name: implement-auto-test
-description: Реализует автотесты в репозитории автотестов по требованиям (requirements-auto-test.md). Запускать после /create-requirements-auto-test, когда тестировщик готов писать автотесты. Создаёт ветку автотестов, реализует кейсы, запускает тесты, пишет отчёт. Аргумент TASK-ID.
+description: Реализует автотесты в репозитории автотестов по плану автотестов (autotest-plan.md). Запускать после /conveyor:create-autotest-plan, когда тестировщик готов писать автотесты. Создаёт ветку автотестов, реализует кейсы, запускает тесты, пишет отчёт. Аргумент TASK-ID.
 ---
 
 Этап конвейера conveyor: реализация автотестов.
-**Агент:** qa-autotest-engineer. **Предусловие:** есть requirements-auto-test.md.
+**Агент:** qa-autotest-engineer. **Предусловие:** есть autotest-plan.md.
 
 **Плагин-корень:** `${CONVEYOR_ROOT}` = `${CLAUDE_PLUGIN_ROOT}`. Прочитай и
 выполни точно: `${CONVEYOR_ROOT}/core/stages/_common.md` и
@@ -17,7 +17,7 @@ description: Реализует автотесты в репозитории а�
    Проверь чистоту working tree репозитория автотестов.
 2. Обнови копию автотестов (`update --mode write`); создай ветку
    `<TASK-ID>-autotests` (`git-ops branch`), запиши autotestBranch.
-3. Запусти qa-autotest-engineer: вход — ТОЛЬКО requirements-auto-test.md,
+3. Запусти qa-autotest-engineer: вход — ТОЛЬКО autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (кодовая база FE/BE
    не открывается, дифф реализации не готовится); реализация кейсов по
    соглашениям репозитория автотестов; запуск тестов; report-auto-test.md

@@ -978,7 +978,12 @@ console.log('Стейдж setup — инициализация и диагнос
   const preamble = raw.split(/^## /m)[0].replace(/\s+/g, ' ');
   const roles = /перв\S* инициализаци/i.test(preamble) && /диагностик/i.test(preamble);
   const firstStep = stepWith('settings.json');
-  const keeps = /(не трога|не перезапис|не пересозда)/i.test(firstStep) && /диагностик/i.test(firstStep);
+  // Запрет обязан стоять в ВЕТКЕ «settings.json есть», а не где-нибудь в шаге:
+  // рядом живёт фраза про шаги 4-6 («ничего не пересоздают»), и проверка по
+  // всему шагу проходила бы, даже если саму гарантию удалить.
+  const existsBranch = (firstStep.match(/-\s*\*\*есть\*\*[\s\S]*?(?=-\s*\*\*|$)/) || [''])[0];
+  const keeps =
+    /(не трога|не перезапис|не пересозда)/i.test(existsBranch) && /диагностик/i.test(existsBranch);
   if (roles && keeps) ok('stage setup: обе роли названы, готовый settings.json не пересоздаётся — сразу диагностика');
   else
     bad(

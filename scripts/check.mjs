@@ -219,6 +219,53 @@ for (const rel of [
   else bad('config: stageWriteRepoKeys расходится на этапах: ' + writeDiff.join(', '));
 }
 
+// 1d) Версия и описание манифестов. Версия — единственный признак, по которому
+// человек понимает, что у него на машине: разъехавшиеся манифесты (плагин
+// 2.0.0, расширение 1.0.0) означают, что половина команды поставила старый
+// конвейер и не узнает об этом. Описание — то, что видно в каталоге плагинов и
+// в `gigacode extensions list`: список этапов там обязан быть нынешним, иначе
+// человек ищет несуществующие «фичу» и «требования к автотестам».
+{
+  const manifests = [
+    'package.json',
+    'adapters/claude-code/.claude-plugin/plugin.json',
+    'adapters/gigacode/gigacode-extension.json',
+  ].map((rel) => [rel, JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'))]);
+
+  const versions = manifests.map(([rel, m]) => `${rel}=${m.version}`);
+  const uniq = new Set(manifests.map(([, m]) => m.version));
+  if (uniq.size === 1) ok('манифесты: версия одна во всех трёх (' + [...uniq][0] + ')');
+  else bad('манифесты: версии разошлись — ' + versions.join(', '));
+  // Мажорную требуем ровно 2: конвейер 2.x несовместим с рабочими
+  // репозиториями 1.x (schemaVersion, состав этапов, settings.json), и версия
+  // — то, по чему человек решает, нужна ли ему migrate-workspace.
+  const wrongMajor = manifests.filter(([, m]) => !/^2\.\d+\.\d+$/.test(String(m.version)));
+  if (!wrongMajor.length) ok('манифесты: версия мажорная 2 (конвейер 2.x)');
+  else bad('манифесты: не 2.x — ' + wrongMajor.map(([rel, m]) => `${rel}=${m.version}`).join(', '));
+
+  // Описание проверяем у двух манифестов, которые платформа показывает
+  // человеку. package.json — служебный (private), его описание никуда не идёт.
+  for (const rel of ['adapters/claude-code/.claude-plugin/plugin.json', 'adapters/gigacode/gigacode-extension.json']) {
+    const desc = String((manifests.find(([r]) => r === rel) || [, {}])[1].description || '');
+    // Ключевые слова, а не точный текст: проверка обязана ловить старый список
+    // этапов, а не запрещать переписать формулировку.
+    const needWords = ['намерени', 'спецификац', 'план', 'реализац', 'автотест'];
+    const missWords = needWords.filter((w) => !desc.toLowerCase().includes(w));
+    const legacyWords = [/фич/i, /требовани\w* к автотест/i, /анализ\s*→/i].filter((re) => re.test(desc));
+    if (!missWords.length && !legacyWords.length) ok(`${rel}: описание — этапы конвейера 2.0`);
+    else
+      bad(
+        `${rel}: описание не описывает нынешний конвейер: ` +
+          [
+            missWords.length ? 'нет слов: ' + missWords.join(', ') : null,
+            legacyWords.length ? 'остались удалённые этапы: ' + legacyWords.map((re) => String(re)).join(', ') : null,
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+}
+
 // 2) Every skill has a matching stage; every agent has a matching prompt
 console.log('Соответствие скиллов/агентов ядру:');
 const skills = fs.readdirSync(path.join(root, 'adapters/claude-code/skills'));
@@ -1652,6 +1699,114 @@ console.log('Сквозная зачистка удалённых имён:');
   }
   if (!hits.length) ok('удалённых имён этапов, артефактов и полей конфигурации в репозитории нет');
   else bad('остатки старых имён — ' + hits.join('; '));
+}
+
+// 2s1) Состав собранного дистрибутива. Ставится и запускается у человека НЕ
+// репозиторий, а dist/: удалённый этап, оставшийся в сборке, — это скилл,
+// который платформа покажет и выполнит, сколько бы его ни вычистили из
+// исходников. Проверять каталог dist/ как он есть нельзя: он в .gitignore и
+// остаётся от прошлых прогонов — набор стал бы зависеть от того, кто и когда
+// запускал build. Поэтому собираем СВЕЖИЙ дистрибутив во временный каталог
+// тем же scripts/build.mjs (проверять копию его логики бессмысленно — расходиться
+// будут именно они) и смотрим в получившееся дерево.
+console.log('Собранный дистрибутив:');
+{
+  const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-dist-'));
+  try {
+    const b = spawnSync('node', [path.join(root, 'scripts/build.mjs'), '--out', outRoot], { encoding: 'utf8' });
+    const targets = ['claude-code', 'gigacode'];
+    const built = b.status === 0 && targets.every((t) => fs.existsSync(path.join(outRoot, t)));
+    if (built) ok('build.mjs --out: собраны ' + targets.join(' и '));
+    else
+      bad(
+        'build.mjs --out: сборка не удалась — ' +
+          JSON.stringify({ status: b.status, err: String(b.stderr || '').slice(0, 200), out: String(b.stdout || '').slice(0, 200) }),
+      );
+
+    if (built) {
+      const listFiles = (dir) => {
+        const acc = [];
+        (function walk(d, prefix) {
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const rel = prefix ? `${prefix}/${e.name}` : e.name;
+            if (e.isDirectory()) walk(path.join(d, e.name), rel);
+            else acc.push(rel);
+          }
+        })(dir, '');
+        return acc.sort();
+      };
+
+      // Удалённые этапы: и как каталог/файл адаптера, и внутри вложенной core/
+      // каждого дистрибутива.
+      const goneCore = [
+        'core/stages/create-feature.md',
+        'core/stages/create-requirements-auto-test.md',
+        'core/templates/feature.md',
+        'core/templates/requirements-auto-test.md',
+      ];
+      const gone = [
+        'claude-code/skills/create-feature',
+        'claude-code/skills/create-requirements-auto-test',
+        'gigacode/commands/conveyor/create-feature.md',
+        'gigacode/commands/conveyor/create-requirements-auto-test.md',
+        ...targets.flatMap((t) => goneCore.map((p) => `${t}/${p}`)),
+      ];
+      const left = gone.filter((p) => fs.existsSync(path.join(outRoot, ...p.split('/'))));
+      if (!left.length) ok('в сборке нет удалённых этапов и шаблонов (' + gone.length + ' путей проверено)');
+      else bad('в сборке остались удалённые файлы: ' + left.join(', '));
+
+      // Новое ядра 2.0 обязано доехать до сборки: без этого установка выглядит
+      // успешной, а этапа intent у человека нет.
+      const needCore = [
+        'core/templates/intent.md',
+        'core/templates/autotest-plan.md',
+        'core/scripts/repos-status.mjs',
+        'core/scripts/migrate-workspace.mjs',
+      ];
+      const need = [
+        'claude-code/.claude-plugin/plugin.json',
+        'claude-code/hooks/hooks.json',
+        'claude-code/skills/intent/SKILL.md',
+        'claude-code/skills/create-autotest-plan/SKILL.md',
+        'claude-code/agents/business-analyst.md',
+        'gigacode/gigacode-extension.json',
+        'gigacode/commands/conveyor/intent.md',
+        'gigacode/commands/conveyor/create-autotest-plan.md',
+        ...targets.flatMap((t) => needCore.map((p) => `${t}/${p}`)),
+      ];
+      const absent = need.filter((p) => !fs.existsSync(path.join(outRoot, ...p.split('/'))));
+      if (!absent.length) ok('в сборке есть всё новое 2.0 (' + need.length + ' путей проверено)');
+      else bad('в сборке не хватает: ' + absent.join(', '));
+
+      // Список выше именной и стареет вместе с рефакторингом. Обобщение:
+      // дистрибутив обязан быть РОВНО adapters/<цель> + core/ — тогда любой
+      // новый мусор (или потерянный файл) виден без правки проверки.
+      const coreFiles = listFiles(path.join(root, 'core')).map((p) => `core/${p}`);
+      for (const t of targets) {
+        const want = [...listFiles(path.join(root, 'adapters', t)), ...coreFiles].sort();
+        const got = listFiles(path.join(outRoot, t));
+        const extra = got.filter((p) => !want.includes(p));
+        const lost = want.filter((p) => !got.includes(p));
+        if (!extra.length && !lost.length) ok(`dist/${t} = adapters/${t} + core/ (${got.length} файлов)`);
+        else
+          bad(
+            `dist/${t} разошёлся с исходниками: ` +
+              [extra.length ? 'лишние: ' + extra.join(', ') : null, lost.length ? 'потеряны: ' + lost.join(', ') : null]
+                .filter(Boolean)
+                .join('; '),
+          );
+      }
+
+      // Имена удалённых этапов не должны встречаться в ПУТЯХ сборки вообще —
+      // ни как скилл, ни как команда, ни как шаблон, как бы их ни назвали.
+      const badName = /create-feature|requirements-auto-test|(^|\/)feature\.md$/;
+      const named = targets.flatMap((t) => listFiles(path.join(outRoot, t)).filter((p) => badName.test(p)).map((p) => `${t}/${p}`));
+      if (!named.length) ok('в путях сборки нет имён удалённых этапов');
+      else bad('в путях сборки остались удалённые имена: ' + named.join(', '));
+    }
+  } finally {
+    fs.rmSync(outRoot, { recursive: true, force: true });
+  }
 }
 
 // 2s2) README.md и INSTALL.md — единственное, что человек читает ДО того, как

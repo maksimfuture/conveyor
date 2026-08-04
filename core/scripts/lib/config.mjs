@@ -133,6 +133,71 @@ export function isUsableLink(value, workspaceRoot) {
   return isInside(path.resolve(workspaceRoot, val), workspaceRoot);
 }
 
+// Состояние рабочей копии репозитория — ОДИН источник и для /setup
+// (repos-status), и для SessionStart (validate-config). Пригодность ССЫЛКИ
+// считает isUsableLink (links[key].inside); здесь к ней добавляется
+// единственное, чего ссылка не знает, — есть ли по этому пути git-репозиторий.
+// Третьего критерия рядом заводить нельзя: разъехавшись, они дают либо
+// молчание хука при неработающем конвейере, либо предупреждение, которое не
+// гаснет после того, как человек всё сделал.
+//
+//   ok | missing | not-a-repo | link-empty | link-is-url | outside
+//
+// hint пишется как ГОТОВАЯ инструкция пользователю: и /setup, и SessionStart
+// показывают его без переформулирования.
+export function repoState(cfg, key) {
+  const l = (cfg && cfg.links && cfg.links[key]) || { value: '', isGitUrl: false, path: null, inside: false };
+
+  // Порядок ветвлений — от причины к следствию. Границу проекта проверяем ДО
+  // существования каталога: ссылка наружу непригодна независимо от того, лежит
+  // там что-нибудь или нет. Отложи её за `!existsSync`, и несуществующий путь
+  // наружу получит state `missing` с подсказкой «склонируйте сюда» — туда,
+  // куда клонировать нельзя вовсе: guard-writes такую копию не примет.
+  if (!l.value) {
+    return {
+      state: 'link-empty',
+      hint: `заполните repos.${key}.link в settings.json (обычно ${REPO_DIRS[key]}) и склонируйте туда репозиторий`,
+    };
+  }
+  if (l.isGitUrl) {
+    return {
+      state: 'link-is-url',
+      hint:
+        `в repos.${key}.link нужен путь, а не git-URL: плагин не клонирует — ` +
+        `склонируйте репозиторий в ${REPO_DIRS[key]} и укажите этот путь`,
+    };
+  }
+  if (!l.inside) {
+    return {
+      state: 'outside',
+      hint:
+        `путь repos.${key}.link ведёт за пределы рабочего репозитория (${l.path}); ` +
+        `он резолвится от корня рабочего репозитория и обязан остаться внутри него — укажите ${REPO_DIRS[key]}`,
+    };
+  }
+  if (!fs.existsSync(l.path)) {
+    return { state: 'missing', hint: `рабочей копии нет — склонируйте репозиторий в ${l.path}` };
+  }
+  if (!fs.existsSync(path.join(l.path, '.git'))) {
+    // `git clone` в СУЩЕСТВУЮЩИЙ непустой каталог не выполняется — одного
+    // «склонируйте сюда» мало: человек упрётся в ошибку git и вернётся сюда же.
+    return {
+      state: 'not-a-repo',
+      hint:
+        `каталог ${l.value} существует, но это не git-репозиторий: склонируйте репозиторий в ${l.path}; ` +
+        `клонировать в непустой каталог git не станет — очистите его или переименуйте, если он лишний`,
+    };
+  }
+  return { state: 'ok', hint: null };
+}
+
+// Состояния всех репозиториев разом: { key: { state, hint } }.
+export function repoStates(cfg) {
+  const out = {};
+  for (const key of REPO_KEYS) out[key] = repoState(cfg, key);
+  return out;
+}
+
 // Read + resolve. Returns a rich object; never throws for the common cases.
 //   { found:false }                              — no settings.json
 //   { found:true, error:'...' }                  — settings.json unparseable

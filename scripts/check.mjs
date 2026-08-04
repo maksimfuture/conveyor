@@ -1123,11 +1123,19 @@ console.log('Стейдж setup — инициализация и диагнос
   // Диагностика — это repos-status.mjs, и стейдж обязан называть его поля и
   // состояния ТАК ЖЕ, как их отдаёт скрипт: по чужому имени состояния модель
   // ветку не найдёт и покажет пользователю таблицу собственного сочинения.
-  // Ожидаемое берём из самого скрипта, чтобы проверка не разошлась с ним.
+  // Ожидаемое берём из исходников, чтобы проверка не разошлась с ними: поля —
+  // из ответа repos-status.mjs, состояния — из ядра (config.repoState), где
+  // лежит единственный критерий пригодности рабочей копии. Ищем состояния там,
+  // где они объявлены, иначе перенос логики в ядро оставит стейдж сверяться с
+  // пустым списком.
   const rsSrc = fs.readFileSync(path.join(root, 'core/scripts/repos-status.mjs'), 'utf8');
+  const cfgSrc = fs.readFileSync(path.join(root, 'core/scripts/lib/config.mjs'), 'utf8');
   const entryLiteral = (rsSrc.match(/const entry = \{([^}]*)\}/) || [, ''])[1];
   const rsFields = [...entryLiteral.matchAll(/(?:^|,)\s*([a-zA-Z]+)\s*[,:]/g)].map((m) => m[1]);
-  const rsStates = [...new Set([...rsSrc.matchAll(/(?:entry\.)?state:? ?=? ?'([a-z-]+)'/g)].map((m) => m[1]))];
+  // Только тело repoState: в config.mjs есть и состояния рабочей ОБЛАСТИ
+  // (none/stale/corrupt/active) — к таблице /setup они отношения не имеют.
+  const repoStateSrc = (cfgSrc.match(/export function repoState\(([\s\S]*?)\n\}/) || [''])[0];
+  const rsStates = [...new Set([...repoStateSrc.matchAll(/state: '([a-z-]+)'/g)].map((m) => m[1]))];
   // Смотрим шаг диагностики, а не весь файл: часть состояний разбирается ещё
   // и в «Ошибках», и по всему файлу проверка проходит для таблицы, в которой
   // состояния уже нет.

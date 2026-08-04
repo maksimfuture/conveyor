@@ -104,9 +104,31 @@ for (const rel of [
   else bad('settings.example.json: нет ключей: ' + miss.join(', '));
   if (!('repoCache' in st)) ok('settings.example.json: repoCache удалён');
   else bad('settings.example.json: repoCache ещё есть');
-  const linksOk = Object.values(st.repos).every((r) => typeof r.link === 'string' && r.link.startsWith('repos/'));
-  if (linksOk) ok('settings.example.json: ссылки — пути repos/*');
-  else bad('settings.example.json: ссылки не пути: ' + JSON.stringify(st.repos));
+  // `repos` разбираем только убедившись, что это объект: голый
+  // Object.values(undefined) бросает TypeError на верхнем уровне модуля и
+  // уносит ВЕСЬ прогон — вместо списка проблем человек видит стек, а двести
+  // оставшихся проверок не выполняются.
+  if (!st.repos || typeof st.repos !== 'object' || Array.isArray(st.repos)) {
+    bad('settings.example.json: repos не объект: ' + JSON.stringify(st.repos));
+  } else {
+    // Критерий один: ссылка обязана быть РОВНО дефолтом из REPO_DIRS. Префикс
+    // «repos/» пропускал опечатку (repos/frontend-typo), а такой шаблон даёт
+    // свежему рабочему репозиторию каталог, куда никто ничего не склонирует.
+    const linkDiff = REPO_KEYS.filter((k) => !st.repos[k] || st.repos[k].link !== REPO_DIRS[k]);
+    const extraKeys = Object.keys(st.repos).filter((k) => !REPO_KEYS.includes(k));
+    if (!linkDiff.length && !extraKeys.length) ok('settings.example.json: ссылки — дефолты REPO_DIRS по всем ключам');
+    else
+      bad(
+        'settings.example.json: ссылки разошлись с REPO_DIRS: ' +
+          [
+            linkDiff.map((k) => `${k}→${JSON.stringify(st.repos[k] && st.repos[k].link)} (ждали ${REPO_DIRS[k]})`).join(', ') ||
+              null,
+            extraKeys.length ? `лишние ключи: ${extraKeys.join(', ')}` : null,
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
 }
 
 // 1c) Константы ядра: каталоги репозиториев и имена этапов

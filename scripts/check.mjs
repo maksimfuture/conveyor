@@ -1561,14 +1561,23 @@ console.log('Сквозная зачистка удалённых имён:');
   // Список файлов берём из git, а не обходом каталога. Рядом с исходниками
   // .gitignore разрешает временные workspace `ws*/`, и они по назначению
   // содержат фикстуры 1.x: обход красил гейт по файлам, которых в репозитории
-  // нет. Проверяем ровно то, что версионируется. Без git (распакованный архив)
+  // нет. `--cached --others --exclude-standard` = отслеживаемые ПЛЮС ещё не
+  // добавленные в индекс, минус игнорируемые: `ws*/` остаётся за бортом, а
+  // только что созданный файл проверяется сразу — до `git add`, то есть в тот
+  // самый момент, когда гейт и прогоняют. Без git (распакованный архив)
   // остаётся обход, но `ws*` пропускается наравне с node_modules.
   const skipTop = ['node_modules', '.git', 'dist', 'docs'];
-  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
+  const listed = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
   const files = [];
   if (listed.status === 0 && listed.stdout) {
+    const seen = new Set();
     for (const rel of listed.stdout.split('\0')) {
-      if (rel && !skipTop.includes(rel.split('/')[0])) files.push(rel);
+      if (!rel || seen.has(rel) || skipTop.includes(rel.split('/')[0])) continue;
+      seen.add(rel);
+      files.push(rel);
     }
   } else {
     (function walk(dir) {

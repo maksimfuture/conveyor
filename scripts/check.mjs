@@ -951,6 +951,161 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
     );
 }
 
+// 2n) Стейдж /setup создаёт то, из чего потом читает ВЕСЬ плагин, и выполняет
+// его основная сессия без агента. Ролей у него две, и они противоположны по
+// правам: первичная инициализация (тимлид, один раз) создаёт структуру, а
+// диагностика окружения (каждый разработчик после клонирования фасадного
+// репозитория) не создаёт ничего — она чаще на порядок. Проверяем то, чего
+// пользователь не может исправить постфактум дешёво: пересозданный поверх
+// готового settings.json, `git status`, затянувший чужие рабочие деревья,
+// шаблон, набранный по памяти (потерянные ключи всплывают этапом позже), и
+// таблицу диагностики, разошедшуюся с фактическим ответом repos-status.mjs.
+console.log('Стейдж setup — инициализация и диагностика:');
+{
+  const raw = fs.readFileSync(path.join(root, 'core/stages/setup.md'), 'utf8');
+  const flat = raw.replace(/\s+/g, ' ');
+  const section = (name) => raw.split(/^## /m).find((s) => s.startsWith(name)) || '';
+  const algo = section('Алгоритм');
+  const steps = algo.split(/\n(?=\d+\. )/);
+  const stepWith = (marker) => (steps.find((s) => s.includes(marker)) || '').replace(/\s+/g, ' ');
+
+  // Роль разработчика — основная по частоте, и её единственная защита в тексте:
+  // при существующем settings.json ничего не создаётся и не переписывается.
+  // Пересозданный settings.json — это чужие ссылки и taskPrefix команды,
+  // затёртые молча, причём заметит это следующий этап, а не /setup.
+  const roles = /перв\S* инициализаци/i.test(flat) && /диагностик/i.test(flat);
+  const firstStep = stepWith('settings.json');
+  const keeps = /(не трога|не перезапис|не пересозда)/i.test(firstStep) && /диагностик/i.test(firstStep);
+  if (roles && keeps) ok('stage setup: обе роли названы, готовый settings.json не пересоздаётся — сразу диагностика');
+  else
+    bad(
+      'stage setup: две роли — ' +
+        [
+          roles ? null : 'в тексте нет обеих ролей (первичная инициализация / диагностика)',
+          firstStep ? null : 'нет шага, проверяющего наличие settings.json',
+          !firstStep || keeps ? null : 'шаг не запрещает трогать существующий settings.json и не уводит в диагностику',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Шаблоны — копированием ФАЙЛОВ: набранный по памяти settings.json теряет
+  // ключи, добавленные в шаблон (их отсутствие вскроется на другом этапе), а
+  // самопроверка состава ключей — единственное, что ловит это на месте.
+  const dirs = ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'].filter((d) => !flat.includes(d));
+  const copies = /copyFileSync/.test(flat) && /settings\.example\.json/.test(flat) && /env\.example/.test(flat);
+  const byHand = /(НЕ набирай|не набирай)[^.]{0,80}памяти/i.test(flat);
+  const selfCheck = /Object\.keys/.test(flat) && /missing/.test(flat);
+  if (!dirs.length && copies && byHand && selfCheck)
+    ok('stage setup: структура каталогов создаётся, шаблоны копируются файлами, состав ключей сверяется');
+  else
+    bad(
+      'stage setup: инициализация — ' +
+        [
+          dirs.length ? `не названы каталоги: ${dirs.join(', ')}` : null,
+          copies ? null : 'шаблоны не копируются через copyFileSync (settings.example.json, env.example)',
+          byHand ? null : 'нет запрета набирать шаблон по памяти',
+          selfCheck ? null : 'нет самопроверки состава ключей скопированного settings.json',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // `.gitignore` обязан появиться ДО того, как в `repos/` окажутся рабочие
+  // копии: иначе первый же `git status` в фасадном репозитории покажет чужие
+  // рабочие деревья целиком, а разработчик их закоммитит. `.cache/` — строка
+  // версии 1.x: область этапа давно живёт в системном temp, а каталог кэша
+  // клонов удалён вместе с клонированием.
+  const giStep = algo.indexOf('.gitignore');
+  const diagStep = algo.indexOf('repos-status');
+  const giLines = ['repos/', '.env'].filter((l) => !stepWith('.gitignore').includes(l));
+  const staleCache = /\.cache\//.test(stepWith('.gitignore'));
+  if (giStep > -1 && diagStep > giStep && !giLines.length && !staleCache)
+    ok('stage setup: .gitignore (repos/, .env) записывается до диагностики рабочих копий');
+  else
+    bad(
+      'stage setup: .gitignore — ' +
+        [
+          giStep > -1 ? null : 'нет шага, записывающего .gitignore',
+          giStep > -1 && diagStep > giStep ? null : 'шаг .gitignore стоит не раньше диагностики рабочих копий',
+          giLines.length ? `в шаге нет строк: ${giLines.join(', ')}` : null,
+          staleCache ? 'предписан .cache/ от версии 1.x' : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Диагностика — это repos-status.mjs, и стейдж обязан называть его поля и
+  // состояния ТАК ЖЕ, как их отдаёт скрипт: по чужому имени состояния модель
+  // ветку не найдёт и покажет пользователю таблицу собственного сочинения.
+  // Ожидаемое берём из самого скрипта, чтобы проверка не разошлась с ним.
+  const rsSrc = fs.readFileSync(path.join(root, 'core/scripts/repos-status.mjs'), 'utf8');
+  const entryLiteral = (rsSrc.match(/const entry = \{([^}]*)\}/) || [, ''])[1];
+  const rsFields = [...entryLiteral.matchAll(/(?:^|,)\s*([a-zA-Z]+)\s*[,:]/g)].map((m) => m[1]);
+  const rsStates = [...new Set([...rsSrc.matchAll(/(?:entry\.)?state:? ?=? ?'([a-z-]+)'/g)].map((m) => m[1]))];
+  const noField = rsFields.filter((f) => !flat.includes('`' + f + '`'));
+  const noState = rsStates.filter((s) => !flat.includes('`' + s + '`'));
+  const calls = /repos-status\.mjs/.test(flat);
+  if (calls && rsFields.length && rsStates.length && !noField.length && !noState.length)
+    ok('stage setup: диагностика — repos-status.mjs, поля и состояния названы как в скрипте (' + rsStates.join(', ') + ')');
+  else
+    bad(
+      'stage setup: диагностика — ' +
+        [
+          calls ? null : 'не вызывается repos-status.mjs',
+          rsFields.length && rsStates.length ? null : 'ответ repos-status.mjs не разобран',
+          noField.length ? `не названы поля: ${noField.join(', ')}` : null,
+          noState.length ? `не названы состояния: ${noState.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Плагин не клонирует — это решение всей версии 2.0. Стейдж, предлагающий
+  // `git clone` за пользователя, кладёт чужой репозиторий не туда и не тем
+  // способом (ssh-ключи, подмодули, LFS — всё это дело разработчика).
+  const clones = /git clone/.test(flat);
+  const handover = /клонирует\s+(сам\s+)?разработчик|склонир\S+ (его )?сами|разработчик клонирует/i.test(flat);
+  const errs = section('Ошибки').replace(/\s+/g, ' ');
+  const namedStates = ['missing', 'link-is-url'].filter((s) => !errs.includes(s));
+  if (!clones && handover && !namedStates.length)
+    ok('stage setup: плагин не клонирует — рабочую копию разработчик заводит сам');
+  else
+    bad(
+      'stage setup: клонирование — ' +
+        [
+          clones ? 'в тексте есть git clone' : null,
+          handover ? null : 'не сказано, что репозиторий клонирует сам разработчик',
+          namedStates.length ? `в «Ошибках» не разобраны состояния: ${namedStates.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  // Миграция 1.x правит ЧУЖОЙ рабочий репозиторий с реальными задачами, и её
+  // сухой прогон — режим по умолчанию не случайно: `--apply`, предложенный
+  // первым, переписывает settings.json и meta.json всех задач до того, как
+  // пользователь увидел план.
+  const mig = stepWith('migrate-workspace');
+  const dryFirst = /(сначала|сухой|без)[^.]{0,140}--apply/i.test(mig);
+  const next = /\/conveyor:intent/.test(section('Вывод').replace(/\s+/g, ' '));
+  const commits = /(закоммит|коммит)[^.]{0,120}settings\.json|settings\.json[^.]{0,120}(закоммит|коммит)/i.test(flat);
+  if (mig && dryFirst && next && commits)
+    ok('stage setup: миграция 1.x предлагается сухим прогоном, settings.json коммитится, следующий шаг — /conveyor:intent');
+  else
+    bad(
+      'stage setup: хвост этапа — ' +
+        [
+          mig ? null : 'нет шага с migrate-workspace.mjs',
+          !mig || dryFirst ? null : 'миграция предложена сразу с --apply',
+          commits ? null : 'не сказано, что settings.json коммитится',
+          next ? null : 'в «Выводе» не назван следующий шаг /conveyor:intent',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

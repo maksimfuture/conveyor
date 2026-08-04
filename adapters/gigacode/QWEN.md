@@ -16,8 +16,8 @@
 1. Первым делом получает конфигурацию:
    `node "${CONVEYOR_ROOT}/core/scripts/resolve-config.mjs"`. В ответе поля
    `found`, `workspaceRoot`, `config`, `links`, `missingLinks`, `urlLinks`,
-   `fastMode`; `links.<ключ>` = `{ value, isGitUrl, resolved, path, inside,
-   mainBranch }`. Реакция:
+   `fastMode`; `links.<ключ>` = `{ value, isGitUrl, path, inside, mainBranch }`.
+   Реакция:
    - `found:false` — останови этап: «здесь не инициализирован рабочий
      репозиторий conveyor, запустите /conveyor:setup»;
    - останови этап, если репозиторий, нужный ЭТОМУ этапу (таблица «Какая

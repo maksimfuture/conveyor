@@ -1650,16 +1650,32 @@ console.log('QWEN.md — протокол GigaCode:');
       .filter((c) => c && !/^Этап$|^Команда$/.test(c));
   const problems = [];
 
-  // 1. Три причины останова resolve-config — те же, что в _common.md.
-  const proto = flat(section('Общий протокол'));
-  const missingReasons = [
-    ['missingLinks', /missingLinks/],
-    ['urlLinks', /urlLinks/],
-    ['inside', /inside/],
-  ]
-    .filter(([, re]) => !re.test(proto))
-    .map(([n]) => n);
-  if (missingReasons.length) problems.push('в протоколе не названы причины останова: ' + missingReasons.join(', '));
+  // 1. Три причины останова resolve-config — те же, что в _common.md. Искать
+  // их по ВСЕЙ секции нельзя: слова `missingLinks`, `urlLinks` и `inside` есть
+  // и в перечне полей ответа, поэтому удаление самого правила останова такую
+  // проверку не роняет — ровно тот fail-open, ради которого она написана.
+  // Смотрим в БУЛЛЕТ реакции: от «- » до следующего буллета, обрезанный по
+  // первой строке с нулевым отступом (следующий пункт протокола).
+  const protoSection = section('Общий протокол');
+  const proto = flat(protoSection);
+  const stopRule = flat(
+    protoSection
+      .split(/\n(?=\s*- )/)
+      .map((b) => b.split(/\n(?=\S)/)[0])
+      .filter((b) => /^\s*- /.test(b) && /останови этап/.test(b) && !/found/.test(b))
+      .join(' '),
+  );
+  if (!stopRule) problems.push('в протоколе нет правила «останови этап», когда репозиторий этапа непригоден');
+  else {
+    const missingReasons = [
+      ['missingLinks', /missingLinks/],
+      ['urlLinks', /urlLinks/],
+      ['inside', /inside/],
+    ]
+      .filter(([, re]) => !re.test(stopRule))
+      .map(([n]) => n);
+    if (missingReasons.length) problems.push('в правиле останова не названы причины: ' + missingReasons.join(', '));
+  }
   // Путь рабочей копии — только из конфигурации: угаданный путь уводит агента
   // писать мимо рабочего репозитория, и guard об этом не спросит.
   if (!/links\S*\.path/.test(proto)) problems.push('в протоколе не сказано, что пути рабочих копий берутся из links[<ключ>].path');
@@ -1806,6 +1822,28 @@ try {
       bad(
         '_common.md: контракт resolve-config разошёлся со скриптом — ' +
           (section ? `нет в ответе: ${ghosts.join(', ') || '(нет)'}; названо: ${mentioned.join(', ')}` : 'секция «Первый шаг» не найдена'),
+      );
+  }
+
+  // То же для QWEN.md: это ВЕСЬ системный промпт GigaCode, и перечисленные в
+  // нём поля `links.<ключ>` модель считает существующими. Поле, которого
+  // resolve-config не отдаёт, — обещание пустоты: правило, написанное по нему,
+  // не сработает никогда. Сверяем перечень с ключами реального ответа.
+  {
+    const qwenMd = fs.readFileSync(path.join(root, 'adapters/gigacode/QWEN.md'), 'utf8');
+    const listed = (qwenMd.replace(/\s+/g, ' ').match(/`links\.<ключ>`\s*=\s*`?\{([^}]*)\}/) || [])[1];
+    const fields = (listed || '').split(',').map((s) => s.replace(/[`\s]/g, '')).filter(Boolean);
+    const real = Object.keys(rc.links.systemsAnalysis);
+    const ghosts = fields.filter((f) => !real.includes(f));
+    const forgotten = real.filter((f) => !fields.includes(f));
+    if (fields.length && !ghosts.length && !forgotten.length)
+      ok('QWEN.md: поля links.<ключ> — те, что resolve-config действительно отдаёт');
+    else
+      bad(
+        'QWEN.md: перечень полей links.<ключ> разошёлся со скриптом — ' +
+          (listed === undefined
+            ? 'перечень не найден'
+            : `нет в ответе: ${ghosts.join(', ') || '(нет)'}; не названы: ${forgotten.join(', ') || '(нет)'}`),
       );
   }
 

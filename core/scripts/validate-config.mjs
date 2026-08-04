@@ -4,9 +4,13 @@
 //
 // Behaviour:
 //   - No settings.json in cwd            -> silent, exit 0 (fail-open).
-//   - settings.json present, но ссылка   -> emit additionalContext warning
-//     на репозиторий пустая / git-URL /      naming the repos + blocked stages.
-//     ведёт за пределы проекта
+//   - settings.json present, но рабочая  -> emit additionalContext warning
+//     копия непригодна: ссылка пустая /      naming the repos + blocked stages.
+//     git-URL / ведёт за пределы проекта
+//     ЛИБО копии просто нет на диске
+//     (шаблон приходит с заполненными
+//     ссылками — «ссылка есть» ещё не
+//     значит «репозиторий склонирован»)
 //   - Also lists active tasks (some stage done, some not) as a nudge.
 //
 // Reads the hook JSON from stdin (SessionStart passes { cwd, ... }); falls
@@ -19,6 +23,7 @@ import {
   readConfig,
   readJsonFile,
   readScopeState,
+  repoStates,
   requiredRepoKeys,
   STAGE_NAMES,
   scopeFilePath,
@@ -95,14 +100,20 @@ function main() {
   if (cfg.error) {
     lines.push(`⚠ conveyor: ${cfg.error}`);
   } else {
-    // Ссылка непригодна в трёх случаях: она пустая, задана git-URL (плагин не
-    // клонирует) ИЛИ ведёт за пределы рабочего репозитория. Третью категорию
-    // берём из уже посчитанного resolve-config поля inside — второго критерия
-    // границы проекта не заводим.
-    const outsideLinks = Object.entries(cfg.links)
-      .filter(([, l]) => l.value && !l.isGitUrl && !l.inside)
-      .map(([key]) => key);
-    const unusable = new Set([...cfg.missingLinks, ...cfg.urlLinks, ...outsideLinks]);
+    // Пригодность считает ядро — repoState, тот же критерий, что у /setup
+    // (repos-status). Заполненная ссылка ещё не значит рабочую копию: шаблон
+    // settings.json приходит с дефолтами repos/*, и в свежем репозитории, где
+    // ничего не склонировано, «ссылочных» претензий нет вовсе. Проверяли бы
+    // только ссылки — хук молчал бы, а первым сигналом человеку служила бы
+    // ошибка git-ops locate глубоко внутри этапа.
+    const states = repoStates(cfg);
+    const keysWith = (...want) => Object.keys(states).filter((k) => want.includes(states[k].state));
+    const emptyLinks = keysWith('link-empty');
+    const urlLinks = keysWith('link-is-url');
+    const outsideLinks = keysWith('outside');
+    const missingCopies = keysWith('missing');
+    const notRepoCopies = keysWith('not-a-repo');
+    const unusable = new Set(keysWith('link-empty', 'link-is-url', 'outside', 'missing', 'not-a-repo'));
     if (unusable.size) {
       // Map each unusable link to the stages it blocks.
       const blocked = new Set();
@@ -112,12 +123,15 @@ function main() {
           if (unusable.has(key)) blocked.add(stage);
         }
       }
-      if (cfg.missingLinks.length) {
-        lines.push(`⚠ conveyor: не заданы пути к рабочим копиям (repos.*.link): ${cfg.missingLinks.join(', ')}.`);
+      // Ключ вместе с путём: без пути человек не знает, куда клонировать, а
+      // без ключа — что править в settings.json.
+      const withPath = (keys) => keys.map((k) => `${k} (${cfg.links[k].value})`).join(', ');
+      if (emptyLinks.length) {
+        lines.push(`⚠ conveyor: не заданы пути к рабочим копиям (repos.*.link): ${emptyLinks.join(', ')}.`);
       }
-      if (cfg.urlLinks.length) {
+      if (urlLinks.length) {
         lines.push(
-          `⚠ conveyor: ссылки заданы git-URL: ${cfg.urlLinks.join(', ')} — плагин не клонирует. ` +
+          `⚠ conveyor: ссылки заданы git-URL: ${urlLinks.join(', ')} — плагин не клонирует. ` +
             'Склонируйте репозитории сами и укажите пути в settings.json.',
         );
       }
@@ -126,6 +140,20 @@ function main() {
           `⚠ conveyor: рабочие копии вне рабочего репозитория: ${outsideLinks.join(', ')}. ` +
             'Путь в repos.*.link резолвится от корня рабочего репозитория и обязан остаться ' +
             'внутри него (например repos/backend).',
+        );
+      }
+      if (missingCopies.length) {
+        lines.push(
+          `⚠ conveyor: рабочие копии не склонированы: ${withPath(missingCopies)}. ` +
+            'Плагин не клонирует — склонируйте репозитории в эти каталоги сами.',
+        );
+      }
+      if (notRepoCopies.length) {
+        // Состояние отдельное, потому что лечится иначе: git не станет
+        // клонировать в существующий непустой каталог.
+        lines.push(
+          `⚠ conveyor: каталог есть, но это не git-репозиторий: ${withPath(notRepoCopies)}. ` +
+            'Склонируйте репозиторий заново, а лишний каталог перед этим очистите или переименуйте.',
         );
       }
       lines.push(

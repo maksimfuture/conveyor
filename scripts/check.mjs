@@ -1727,14 +1727,26 @@ console.log('Скилл setup — «Кратко» против стейджа:'
   const flat = skill.replace(/\s+/g, ' ');
   const problems = [];
 
-  // Структура — ровно та, что создаёт стейдж (ARTIFACT_DIRS + repos/).
-  for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
-    if (!flat.includes(d)) problems.push('не названа часть структуры: ' + d);
+  // Дальше проверяем ШАГИ «Кратко» — то, что модель реально исполняет.
+  // Проверка по всему файлу удовлетворялась бы описанием во frontmatter
+  // (оно перечисляет и структуру, и .gitignore): каталог мог бы пропасть из
+  // шага, а гейт остался бы зелёным.
+  const steps = flat.split(/(?=\d+\. )/).filter((s) => /^\d+\. /.test(s));
+
+  // Структура — ровно та, что создаёт стейдж (ARTIFACT_DIRS + repos/), и
+  // названа она должна быть в шаге СОЗДАНИЯ (он же копирует шаблоны
+  // конфигурации): `repos/` встречается и в шаге про .gitignore, а каталог
+  // нужно завести, а не только спрятать от git.
+  const mkStep = steps.find((s) => s.includes('.env.example')) || '';
+  if (!mkStep) problems.push('нет шага создания структуры (копирования шаблонов конфигурации)');
+  else
+    for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
+      if (!mkStep.includes(d)) problems.push('шаг создания структуры не называет: ' + d);
 
   // .gitignore: repos/ и .env. `.cache/` — строка 1.x, в новом репозитории
   // она прячет не тот каталог и оставляет чужие рабочие деревья в git status.
   // Ищем именно ШАГ (описание в frontmatter .gitignore тоже упоминает).
-  const giStep = flat.split(/(?=\d+\. )/).find((s) => /^\d+\. /.test(s) && s.includes('.gitignore')) || '';
+  const giStep = steps.find((s) => s.includes('.gitignore')) || '';
   if (!giStep) problems.push('нет шага про .gitignore');
   else {
     if (!/`repos\/`/.test(giStep) || !/`\.env`/.test(giStep)) problems.push('в .gitignore не названы строки repos/ и .env');

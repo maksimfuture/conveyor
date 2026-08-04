@@ -1569,12 +1569,11 @@ console.log('Сквозная зачистка удалённых имён:');
 {
   // Файлы, где старые имена ЗАКОННЫ: миграция 1.x переименовывает старое (и
   // потому обязана его называть), а check.mjs это переименование проверяет.
-  // QWEN.md, README.md и INSTALL.md — не законны, а ещё не переписаны
-  // (Task 24 и Task 25); их строки исключаются вместе с задачами.
+  // README.md и INSTALL.md — не законны, а ещё не переписаны (Task 25); их
+  // строки исключаются вместе с задачей.
   const allowed = new Set([
     'core/scripts/migrate-workspace.mjs',
     'scripts/check.mjs',
-    'adapters/gigacode/QWEN.md',
     'README.md',
     'INSTALL.md',
   ]);
@@ -1628,6 +1627,115 @@ console.log('Сквозная зачистка удалённых имён:');
   }
   if (!hits.length) ok('удалённых имён этапов, артефактов и полей конфигурации в репозитории нет');
   else bad('остатки старых имён — ' + hits.join('; '));
+}
+
+// 2t) QWEN.md — это ВЕСЬ системный промпт GigaCode: хуков там нет, стейджи
+// модель читает уже после него, и всё, что здесь написано, она исполняет
+// буквально. Поэтому проверяем не стиль, а то, что тихо ломает прогон:
+// пропущенную причину останова на первом шаге (правило по несуществующему
+// полю не сработает НИКОГДА — этап пойдёт дальше на несуществующей рабочей
+// копии), состав таблиц (этап, которого нет в таблице команд, модель не
+// предложит) и каталоги записи в «Защите».
+console.log('QWEN.md — протокол GigaCode:');
+{
+  const qwen = fs.readFileSync(path.join(root, 'adapters/gigacode/QWEN.md'), 'utf8');
+  const flat = (s) => s.replace(/\s+/g, ' ');
+  const section = (name) => qwen.split(/^## /m).find((s) => s.startsWith(name)) || '';
+  // Первая ячейка каждой строки таблицы (без шапки и разделителя).
+  const firstCells = (text) =>
+    text
+      .split('\n')
+      .filter((l) => l.trim().startsWith('|') && !/^\s*\|[\s-]*\|/.test(l))
+      .map((l) => l.split('|')[1].trim())
+      .filter((c) => c && !/^Этап$|^Команда$/.test(c));
+  const problems = [];
+
+  // 1. Три причины останова resolve-config — те же, что в _common.md.
+  const proto = flat(section('Общий протокол'));
+  const missingReasons = [
+    ['missingLinks', /missingLinks/],
+    ['urlLinks', /urlLinks/],
+    ['inside', /inside/],
+  ]
+    .filter(([, re]) => !re.test(proto))
+    .map(([n]) => n);
+  if (missingReasons.length) problems.push('в протоколе не названы причины останова: ' + missingReasons.join(', '));
+  // Путь рабочей копии — только из конфигурации: угаданный путь уводит агента
+  // писать мимо рабочего репозитория, и guard об этом не спросит.
+  if (!/links\S*\.path/.test(proto)) problems.push('в протоколе не сказано, что пути рабочих копий берутся из links[<ключ>].path');
+
+  // 2. Таблица рабочих областей — этапы конвейера, кроме setup/task-status,
+  // с разбивкой create-specification на фазы (права на анализ у них разные).
+  const wantAreas = STAGE_NAMES.filter((s) => s !== 'setup' && s !== 'task-status').flatMap((s) =>
+    s === 'create-specification' ? ['create-specification (фаза A)', 'create-specification (фаза B)'] : [s],
+  );
+  const gotAreas = firstCells(section('Рабочая область'));
+  if (gotAreas.join(' | ') !== wantAreas.join(' | '))
+    problems.push(`таблица рабочих областей: [${gotAreas.join(', ')}] вместо [${wantAreas.join(', ')}]`);
+
+  // 3. Таблица команд и строка «естественный язык → команда» — обе по
+  // STAGE_NAMES: команда без строки в таблице для пользователя не существует.
+  const cmdSection = section('Команды');
+  const tableCmds = firstCells(cmdSection).map((c) => (c.match(/\/conveyor:([a-z][a-z-]*)/) || [])[1] || c);
+  if (tableCmds.join(' | ') !== STAGE_NAMES.join(' | '))
+    problems.push(`таблица команд: [${tableCmds.join(', ')}] вместо [${STAGE_NAMES.join(', ')}]`);
+  const nlText = flat(cmdSection.split('\n').filter((l) => !l.trim().startsWith('|')).join(' '));
+  const mapped = new Set([...nlText.matchAll(/→\s*([a-z][a-z-]*)/g)].map((m) => m[1]));
+  const nlMissing = STAGE_NAMES.filter((s) => !mapped.has(s));
+  if (nlMissing.length) problems.push('«естественный язык → команда» не покрывает: ' + nlMissing.join(', '));
+
+  // 4. Каталоги записи в «Защите» — по checkWrite: рабочий репозиторий
+  // (tasks/, intents/), рабочие копии области этапа (repos/*), системный temp.
+  const guardSection = section('Защита');
+  const dirsBullet = flat(guardSection.split(/\n(?=- )/).find((b) => /пиши только внутри/.test(b)) || '');
+  if (!dirsBullet) problems.push('в «Защите» нет пункта о разрешённых каталогах записи');
+  else {
+    const missDirs = ['tasks/', 'intents/', 'repos/'].filter((d) => !dirsBullet.includes(d));
+    if (missDirs.length) problems.push('каталоги записи не названы: ' + missDirs.join(', '));
+  }
+  // `.cache/` — каталог 1.x: в протоколе GigaCode его быть не может (признаком
+  // старого репозитория он остаётся только в setup.md и migrate-workspace).
+  if (/\.cache/.test(qwen)) problems.push('упомянут .cache/ (каталог 1.x)');
+
+  if (!problems.length) ok('QWEN.md: протокол, таблицы этапов/команд и каталоги записи — по ядру');
+  else bad('QWEN.md — ' + problems.join('; '));
+}
+
+// 2u) Скилл setup слабая модель читает ПЕРВЫМ и часто вместо стейджа: его
+// «Кратко» — это то, что реально будет исполнено. Расхождение со стейджем
+// здесь дороже прочих: этап создаёт структуру рабочего репозитория, и
+// пропущенный каталог или лишний файл достаются всей команде через git.
+console.log('Скилл setup — «Кратко» против стейджа:');
+{
+  const skill = fs.readFileSync(path.join(root, 'adapters/claude-code/skills/setup/SKILL.md'), 'utf8');
+  const flat = skill.replace(/\s+/g, ' ');
+  const problems = [];
+
+  // Структура — ровно та, что создаёт стейдж (ARTIFACT_DIRS + repos/).
+  for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
+    if (!flat.includes(d)) problems.push('не названа часть структуры: ' + d);
+
+  // .gitignore: repos/ и .env. `.cache/` — строка 1.x, в новом репозитории
+  // она прячет не тот каталог и оставляет чужие рабочие деревья в git status.
+  // Ищем именно ШАГ (описание в frontmatter .gitignore тоже упоминает).
+  const giStep = flat.split(/(?=\d+\. )/).find((s) => /^\d+\. /.test(s) && s.includes('.gitignore')) || '';
+  if (!giStep) problems.push('нет шага про .gitignore');
+  else {
+    if (!/`repos\/`/.test(giStep) || !/`\.env`/.test(giStep)) problems.push('в .gitignore не названы строки repos/ и .env');
+    if (/\.cache/.test(giStep)) problems.push('в .gitignore предписан .cache/');
+  }
+
+  // .env не обязателен, и стейдж прямо запрещает его создавать.
+  if (!/\.env не создавай/.test(flat)) problems.push('не сказано, что .env создавать не нужно');
+  if (/заполнить[^.]{0,40}\.env/.test(flat)) problems.push('в выводе обещано «что осталось заполнить в .env»');
+
+  // Диагностика — repos-status.mjs (git-ops locate ищет ОДНУ ссылку и молчит
+  // про состояние рабочей копии).
+  if (!flat.includes('repos-status.mjs')) problems.push('диагностика не через repos-status.mjs');
+  if (/git-ops\S*\s+locate/.test(flat)) problems.push('диагностика через git-ops locate');
+
+  if (!problems.length) ok('skill setup: структура, .gitignore, .env и диагностика — по core/stages/setup.md');
+  else bad('skill setup — ' + problems.join('; '));
 }
 
 // 3) Scripts run against a temp workspace

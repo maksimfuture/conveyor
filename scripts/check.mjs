@@ -854,6 +854,98 @@ console.log('Этап create-autotest-plan — план по специфика�
   }
 }
 
+// 2m) qa-autotest-engineer работает на двух этапах подряд, и промпт роли —
+// всё, что он о них знает: стейджи субагент не читает никогда. Первый этап
+// сменил и имя, и предмет — план строится по СПЕЦИФИКАЦИИ, репозиторий
+// автотестов на нём только читается, диффа нет. Промпт, зовущий удалённый
+// /create-requirements-auto-test и требующий дифф реализации, отправляет
+// агента либо за диффом в закрытую для него кодовую базу, либо писать код
+// тестов этапом раньше — в репозиторий, куда на этом этапе запрещена запись.
+// Стейдж implement-auto-test — второй конец той же пары: он обязан звать
+// артефакт текущим именем, иначе и агент, и ревьюер получат ссылку на файл,
+// которого в папке задачи нет.
+console.log('qa-autotest-engineer и implement-auto-test — артефакт autotest-plan.md:');
+{
+  const flatten = (s) => s.replace(/\s+/g, ' ');
+  const promptRaw = fs.readFileSync(path.join(root, 'core/prompts/qa-autotest-engineer.md'), 'utf8');
+  const stageRaw = fs.readFileSync(path.join(root, 'core/stages/implement-auto-test.md'), 'utf8');
+  const prompt = flatten(promptRaw);
+  const stage = flatten(stageRaw);
+  const sect = (raw, name) => flatten(raw.split(/^## /m).find((s) => s.startsWith(name)) || '');
+
+  const stale = [
+    ['core/prompts/qa-autotest-engineer.md', prompt],
+    ['core/stages/implement-auto-test.md', stage],
+  ]
+    .filter(([, t]) => t.includes('requirements-auto-test'))
+    .map(([rel]) => rel);
+  const named = prompt.includes('/conveyor:create-autotest-plan') && prompt.includes('/conveyor:implement-auto-test');
+  if (!stale.length && named) ok('qa-autotest-engineer: этапы названы актуально, удалённого артефакта нет');
+  else
+    bad(
+      'qa-autotest-engineer: маршрут роли — ' +
+        [
+          stale.length ? `старое имя requirements-auto-test в ${stale.join(', ')}` : null,
+          named ? null : 'промпт не называет оба этапа (/conveyor:create-autotest-plan, /conveyor:implement-auto-test)',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const planSect = sect(promptRaw, 'На этапе /conveyor:create-autotest-plan');
+  const input = /specification\.md/.test(planSect) && /plan\.md/.test(planSect) && /ТОЛЬКО ДЛЯ ЧТЕНИЯ/i.test(planSect);
+  const noDiff = !/дифф/i.test(planSect) && /кодов\S*[^.]{0,140}не открыва/i.test(planSect);
+  const noWrite = /(писать|запис\S*)[^.]{0,60}репозитори\S* автотестов[^.]{0,60}(НЕЛЬЗЯ|запрещ)/i.test(planSect);
+  if (planSect && input && noDiff && noWrite) ok('qa-autotest-engineer: вход этапа плана — спецификация и план, автотесты read-only, записи нет');
+  else
+    bad(
+      'qa-autotest-engineer: этап плана — ' +
+        (planSect
+          ? [
+              input ? null : 'вход не назван полностью (specification.md, plan.md, путь к автотестам ТОЛЬКО ДЛЯ ЧТЕНИЯ)',
+              noDiff ? null : 'дифф реализации не исключён либо не сказано, что кодовая база не открывается',
+              noWrite ? null : 'не запрещена запись в репозиторий автотестов на этом этапе',
+            ]
+              .filter(Boolean)
+              .join('; ')
+          : 'нет раздела «На этапе /conveyor:create-autotest-plan»'),
+    );
+
+  const byCriteria = /критери\S* приёмки/i.test(planSect) && /не автоматизируется/i.test(planSect);
+  const traced = /TC-/.test(planSect) && /REQ-/.test(planSect);
+  const reuse = /(переиспольз|фикстур)/i.test(planSect) && /дубл/i.test(planSect);
+  if (byCriteria && traced && reuse) ok('qa-autotest-engineer: кейсы по критериям приёмки, TC-N → REQ-N, без дублей');
+  else
+    bad(
+      'qa-autotest-engineer: правила кейсов — ' +
+        [
+          byCriteria ? null : 'кейсы не привязаны к критериям приёмки («не автоматизируется» с причиной)',
+          traced ? null : 'нет ID TC-N и трассировки на REQ-N',
+          reuse ? null : 'не предписано переиспользовать существующие фикстуры и не дублировать покрытые сценарии',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const pre = /Предусловие:\*\* [^.]{0,40}autotest-plan\.md/.test(stage);
+  const agentIn = /qa-autotest-engineer:? вход[^.]{0,80}autotest-plan\.md/i.test(stage);
+  const revIn = /reviewer:[^.]{0,120}autotest-plan\.md/i.test(stage);
+  const dod = /autotest-plan\.md/.test(sect(stageRaw, 'DoD'));
+  if (pre && agentIn && revIn && dod) ok('implement-auto-test: autotest-plan.md в предусловии, входе агента, входе ревьюера и DoD');
+  else
+    bad(
+      'implement-auto-test: имя артефакта — ' +
+        [
+          pre ? null : 'предусловие не ссылается на autotest-plan.md',
+          agentIn ? null : 'во входе qa-autotest-engineer нет autotest-plan.md',
+          revIn ? null : 'во входе reviewer нет autotest-plan.md',
+          dod ? null : 'DoD не ссылается на autotest-plan.md',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
 // 3) Scripts run against a temp workspace
 console.log('Поведение скриптов (временный workspace):');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));

@@ -1215,6 +1215,69 @@ try {
     fs.rmSync(outsideCopy, { recursive: true, force: true });
   }
 
+  // repos-status: состояние рабочих копий. Плагин НЕ клонирует, поэтому скрипт —
+  // единственный источник «что настроено» для /setup и validate-config, и
+  // разница между «ссылки нет», «путь не туда» и «каталог есть, но это не
+  // репозиторий» решает, что пользователю делать руками.
+  const rs = JSON.parse(runScript('core/scripts/repos-status.mjs', [tmp]));
+  const byKey = Object.fromEntries((rs.repos || []).map((r) => [r.key, r]));
+  if (byKey.systemsAnalysis && byKey.systemsAnalysis.state === 'ok') ok('repos-status: существующая копия → ok');
+  else bad('repos-status: systemsAnalysis: ' + JSON.stringify(byKey.systemsAnalysis));
+  if (byKey.frontend && byKey.frontend.state === 'link-empty') ok('repos-status: пустая ссылка → link-empty');
+  else bad('repos-status: frontend: ' + JSON.stringify(byKey.frontend));
+  if (rs.summary && rs.summary.ok === 2 && rs.summary.problems === 2) ok('repos-status: сводка посчитана');
+  else bad('repos-status: сводка: ' + JSON.stringify(rs.summary));
+
+  // Остальные четыре состояния — на отдельном мини-workspace: у основной
+  // фикстуры четыре ключа, а состояний шесть. Ключевой случай — `outside` при
+  // НЕсуществующем каталоге: проверка границы проекта, отложенная до проверок
+  // существования, даёт `missing` и подсказку «склонируйте сюда» на путь, куда
+  // клонировать нельзя вовсе (guard-writes такую копию не примет).
+  // hint проверяем отдельно: /setup и validate-config показывают его КАК ЕСТЬ.
+  const tmpStatus = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-status-'));
+  try {
+    // Как и в проверках ссылок выше, «наружу» уводим ВЫШЕ системного temp:
+    // сосед во временном каталоге сам по себе лежит в разрешённом корне.
+    const outsideRepo = path.join(path.parse(tmpStatus).root, 'conveyor-outside-frontend');
+    const outsideValue = path.relative(tmpStatus, outsideRepo).split(path.sep).join('/');
+    fs.mkdirSync(path.join(tmpStatus, 'repos', 'autotests'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpStatus, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'TASK',
+        repos: {
+          systemsAnalysis: { link: 'git@git.example.com:group/system-analysis.git', mainBranch: 'main' },
+          frontend: { link: outsideValue, mainBranch: 'main' },
+          backend: { link: 'repos/backend', mainBranch: 'main' },
+          autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+        },
+      }),
+    );
+    const rs2 = JSON.parse(runScript('core/scripts/repos-status.mjs', [tmpStatus]));
+    const st = Object.fromEntries((rs2.repos || []).map((r) => [r.key, r]));
+    const want = {
+      systemsAnalysis: 'link-is-url',
+      frontend: 'outside',
+      backend: 'missing',
+      autoTest: 'not-a-repo',
+    };
+    const stateDiff = Object.keys(want).filter((k) => !st[k] || st[k].state !== want[k]);
+    if (!stateDiff.length) ok('repos-status: состояния link-is-url / outside / missing / not-a-repo различаются');
+    else
+      bad(
+        'repos-status: состояния разошлись: ' +
+          stateDiff.map((k) => `${k}→${st[k] ? st[k].state : '(нет)'} (ждали ${want[k]})`).join(', '),
+      );
+    const noHint = Object.keys(want).filter((k) => !(st[k] && typeof st[k].hint === 'string' && st[k].hint.trim()));
+    if (!noHint.length) ok('repos-status: у каждой проблемы есть готовая к показу подсказка');
+    else bad('repos-status: подсказки нет у: ' + noHint.join(', '));
+    if (rs2.summary && rs2.summary.ok === 0 && rs2.summary.problems === 4)
+      ok('repos-status: сводка при четырёх непригодных ссылках');
+    else bad('repos-status: сводка мини-workspace: ' + JSON.stringify(rs2.summary));
+  } finally {
+    fs.rmSync(tmpStatus, { recursive: true, force: true });
+  }
+
   // git-ops update: рабочая копия принадлежит разработчику, и его ветку этап
   // не переключает НИ ПРИ КАКИХ условиях. Фикстура — настоящий git-репозиторий:
   // проверяется наблюдаемое состояние (на какой ветке осталась копия), а не

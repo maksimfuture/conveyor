@@ -1745,6 +1745,26 @@ console.log('Собранный дистрибутив:');
           JSON.stringify({ status: b.status, err: String(b.stderr || '').slice(0, 200), out: String(b.stdout || '').slice(0, 200) }),
       );
 
+    // Форму «--out=<путь>» когда-то не разбирали: сборка молча уходила в dist/,
+    // а человек получал код 0 и был уверен, что собрал в указанный каталог.
+    const eqRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-dist-eq-'));
+    const eqTarget = path.join(eqRoot, 'out');
+    const bEq = spawnSync('node', [path.join(root, 'scripts/build.mjs'), '--out=' + eqTarget], { encoding: 'utf8' });
+    if (bEq.status === 0 && targets.every((t) => fs.existsSync(path.join(eqTarget, t))))
+      ok('build.mjs: форма --out=<путь> собирает в указанный каталог');
+    else bad('build.mjs: --out=<путь> не собрал в указанный каталог (status ' + bEq.status + ')');
+
+    // Непустой чужой каталог сборка затирает целиком, поэтому опечатка вида
+    // «--out .» стоила бы всего, что в нём лежит: такой каталог отвергаем.
+    const guarded = path.join(eqRoot, 'precious');
+    fs.mkdirSync(guarded);
+    fs.writeFileSync(path.join(guarded, 'data.txt'), 'важное');
+    const bGuard = spawnSync('node', [path.join(root, 'scripts/build.mjs'), '--out', guarded], { encoding: 'utf8' });
+    if (bGuard.status !== 0 && fs.existsSync(path.join(guarded, 'data.txt')))
+      ok('build.mjs: непустой чужой каталог не затирается');
+    else bad('build.mjs: непустой каталог затёрт сборкой (status ' + bGuard.status + ')');
+    fs.rmSync(eqRoot, { recursive: true, force: true });
+
     if (built) {
       const listFiles = (dir) => {
         const acc = [];

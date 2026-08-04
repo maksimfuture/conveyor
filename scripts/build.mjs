@@ -8,7 +8,7 @@
 //
 // The adapters/ split keeps platform-specific bits isolated; core/ is shared.
 //
-// Usage: node scripts/build.mjs [--out <каталог>]
+// Usage: node scripts/build.mjs [--out <каталог> | --out=<каталог>]
 //
 // `--out` собирает в указанный каталог вместо dist/. Нужен scripts/check.mjs:
 // он сверяет СОСТАВ дистрибутива и обязан собирать свежий во временном
@@ -20,14 +20,40 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outFlag = process.argv.indexOf('--out');
-if (outFlag !== -1 && !process.argv[outFlag + 1]) {
-  console.error('build: --out требует путь к каталогу.');
-  process.exit(1);
+
+// --out принимаем в обеих формах: «--out <путь>» и «--out=<путь>». Раньше вторая
+// молча игнорировалась — сборка уходила в dist/, а человек получал код 0 и был
+// уверен, что собрал в указанный каталог.
+let outArg = null;
+{
+  const argv = process.argv.slice(2);
+  const i = argv.findIndex((a) => a === '--out' || a.startsWith('--out='));
+  if (i !== -1) {
+    outArg = argv[i] === '--out' ? argv[i + 1] : argv[i].slice('--out='.length);
+    if (!outArg) {
+      console.error('build: --out требует путь к каталогу.');
+      process.exit(1);
+    }
+  }
 }
+
 // Каталог сборки затирается целиком (rmrf ниже), поэтому путь резолвим сразу и
 // от текущего каталога вызова — так видно, что именно будет затёрто.
-const dist = outFlag !== -1 ? path.resolve(process.argv[outFlag + 1]) : path.join(root, 'dist');
+const dist = outArg !== null ? path.resolve(outArg) : path.join(root, 'dist');
+
+// Чужой непустой каталог не затираем: опечатка вида «--out .» стоила бы всего,
+// что в нём лежит. Исключение одно — собственный dist/, он для того и заведён.
+// Проверки собирают во ВНОВЬ созданные каталоги, поэтому запрет их не задевает.
+if (outArg !== null && fs.existsSync(dist)) {
+  const own = dist === path.join(root, 'dist');
+  if (!own && fs.readdirSync(dist).length) {
+    console.error(
+      `build: каталог ${dist} не пуст — сборка затёрла бы его содержимое.\n` +
+        'Укажите пустой или несуществующий каталог.',
+    );
+    process.exit(1);
+  }
+}
 const core = path.join(root, 'core');
 
 function rmrf(p) {

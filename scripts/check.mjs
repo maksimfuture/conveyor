@@ -1525,6 +1525,13 @@ try {
     const noHint = Object.keys(want).filter((k) => !(st[k] && typeof st[k].hint === 'string' && st[k].hint.trim()));
     if (!noHint.length) ok('repos-status: у каждой проблемы есть готовая к показу подсказка');
     else bad('repos-status: подсказки нет у: ' + noHint.join(', '));
+    // not-a-repo — каталог СУЩЕСТВУЕТ и не пуст, а `git clone` в непустой
+    // каталог не выполняется вовсе. Подсказка «склонируйте сюда» без слова о
+    // том, что делать с каталогом, отправляет человека на ошибку git.
+    const naHint = String((st['autoTest'] || {}).hint || '');
+    if (/очист/i.test(naHint) && /переимен/i.test(naHint))
+      ok('repos-status: подсказка not-a-repo говорит очистить или переименовать каталог');
+    else bad('repos-status: подсказка not-a-repo не решает непустой каталог: ' + JSON.stringify(naHint));
     if (rs2.summary && rs2.summary.ok === 0 && rs2.summary.problems === 4)
       ok('repos-status: сводка при четырёх непригодных ссылках');
     else bad('repos-status: сводка мини-workspace: ' + JSON.stringify(rs2.summary));

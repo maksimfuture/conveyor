@@ -2,12 +2,12 @@
 
 **Кто запускает:** тестировщик. **Агент:** qa-autotest-engineer.
 **Аргументы:** `TASK-ID`.
-**Предусловие:** существует `requirements-auto-test.md`.
+**Предусловие:** существует `autotest-plan.md`.
 
-**Рабочая область:** агент работает СТРОГО по requirements-auto-test.md и
+**Рабочая область:** агент работает СТРОГО по autotest-plan.md и
 пишет ТОЛЬКО в репозиторий автотестов (путь — из settings.json:
 repos.autoTest.link, через resolve-config). Контекст реализации продукта —
-ТОЛЬКО requirements-auto-test.md и specification.md; кодовая база (FE/BE)
+ТОЛЬКО autotest-plan.md и specification.md; кодовая база (FE/BE)
 на этом этапе не открывается и дифф реализации не готовится — ни агентом,
 ни командой. Репозиторий анализа агент тоже не открывает.
 
@@ -20,7 +20,7 @@ repos.autoTest.link, через resolve-config). Контекст реализа
    `update --mode write`). Создай ветку `<TASK-ID>-autotests` от mainBranch
    (`git-ops branch`); имя → meta.json (`autotestBranch`). Если ветка уже
    есть — продолжай в ней (как в implement-plan, шаг 2).
-3. Запусти qa-autotest-engineer: вход — requirements-auto-test.md,
+3. Запусти qa-autotest-engineer: вход — autotest-plan.md,
    specification.md, путь к рабочей копии автотестов; изучить соглашения
    репозитория автотестов; реализовать тест-кейсы (в коде — ссылки на ID
    кейсов). Не хватает данных о реализации — агент возвращает запрос на
@@ -28,7 +28,7 @@ repos.autoTest.link, через resolve-config). Контекст реализа
 4. Запусти написанные тесты; результаты — в `report-auto-test.md` по
    `core/templates/report-auto-test.md` (пройдено/упало/пропущено, причины).
 5. **Цикл ревью** (`${CONVEYOR_ROOT}/core/stages/_review-loop.md`), домен
-   `autotests`. Передай reviewer: requirements-auto-test.md,
+   `autotests`. Передай reviewer: autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (для реального
    запуска тестов); путь к кодовой базе НЕ передаётся. reviewer проверяет
    покрытие критериев приёмки, осмысленность кейсов, соответствие
@@ -46,6 +46,7 @@ repos.autoTest.link, через resolve-config). Контекст реализа
 заблокированный, указать, что нужно для запуска.
 
 ## DoD
-Все кейсы P1 реализованы; тесты запущены (или блокировка описана);
+Все кейсы P1 из `autotest-plan.md` реализованы; тесты запущены (или
+блокировка описана);
 report-auto-test.md создан; цикл ревью пройден (коммит — после ревью;
 нерешённые blocker|major вынесены пользователю). Конвейер задачи завершён.

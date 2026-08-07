@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   scopeFilePath,
   ARTIFACT_DIRS,
+  STAGE_ARTIFACTS,
   REPO_KEYS,
   REPO_DIRS,
   STAGE_NAMES,
@@ -2849,12 +2850,15 @@ try {
   if (denyBE && JSON.parse(denyBE).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: запись в backend (вне области) ЗАБЛОКИРОВАНА');
   else bad('scope: запись в backend вне области не заблокирована');
-  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/feature.md')) === '') ok('scope: артефакты задачи всегда разрешены');
-  else bad('scope: артефакты задачи заблокированы при активном scope');
-  // intents/ — артефакты БА, писать можно при активном этапе
-  if (writeTo(path.join(tmp, 'intents/INTENT-1/intent.md')) === '')
-    ok('scope: intents/ разрешён при активном этапе');
-  else bad('scope: intents/ заблокирован');
+  // Активен create-specification: свой артефакт разрешён, чужие — нет.
+  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/specification.md')) === '')
+    ok('scope: артефакт своего этапа в папке задачи разрешён');
+  else bad('scope: артефакт своего этапа заблокирован при активном scope');
+  // intents/ пишет ТОЛЬКО этап intent; спецификация намерение лишь читает.
+  const denyIntentWrite = writeTo(path.join(tmp, 'intents/INTENT-1/intent.md'));
+  if (denyIntentWrite && JSON.parse(denyIntentWrite).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: intent.md на этапе спецификации ЗАБЛОКИРОВАН (его пишет этап intent)');
+  else bad('scope: чужой этап смог написать intent.md');
   // repos/<незаконфигуренный> при активном этапе — deny (это чужая рабочая копия)
   const denyUnknownRepo = writeTo(path.join(tmp, 'repos/unknown/x.js'));
   if (denyUnknownRepo && JSON.parse(denyUnknownRepo).hookSpecificOutput.permissionDecision === 'deny')
@@ -2871,6 +2875,52 @@ try {
   if (denyNested && JSON.parse(denyNested).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник во вложенной папке задачи заблокирован');
   else bad('scope: вложенный исходник в папке задачи прошёл');
+
+  // Артефакт ЧУЖОГО этапа в папке задачи — та же ошибка, что исходник, и
+  // отличается только расширением: разрешение «любой *.md» её не ловит.
+  // Так в 1.x один запуск первого этапа заводил артефакты сразу трёх этапов.
+  // Проверяем КАЖДЫЙ производящий этап: свой артефакт проходит, чужой
+  // отбивается, meta.json разрешён всем (его обновляет каждый этап).
+  {
+    const artefactCases = [
+      { stage: 'intent', task: 'INTENT-9', own: 'intents/INTENT-9/intent.md', foreign: 'tasks/FE/TASK-1/plan.md' },
+      { stage: 'create-specification', type: 'FE', own: 'tasks/FE/TASK-1/specification.md', foreign: 'tasks/FE/TASK-1/plan.md' },
+      { stage: 'create-plan', type: 'FE', own: 'tasks/FE/TASK-1/plan.md', foreign: 'tasks/FE/TASK-1/specification.md' },
+      { stage: 'implement-plan', type: 'FE', own: 'tasks/FE/TASK-1/plan.md', foreign: 'tasks/FE/TASK-1/autotest-plan.md' },
+      { stage: 'create-autotest-plan', type: 'FE', own: 'tasks/FE/TASK-1/autotest-plan.md', foreign: 'tasks/FE/TASK-1/report-auto-test.md' },
+      { stage: 'implement-auto-test', type: 'FE', own: 'tasks/FE/TASK-1/report-auto-test.md', foreign: 'tasks/FE/TASK-1/plan.md' },
+    ];
+    const broken = [];
+    for (const c of artefactCases) {
+      const setArgs = ['set', '--stage', c.stage, '--task', c.task || 'TASK-1'];
+      if (c.type) setArgs.push('--type', c.type);
+      runScript('core/scripts/scope.mjs', setArgs, '', tmp);
+      const ownOut = writeTo(path.join(tmp, c.own));
+      if (ownOut !== '') broken.push(`${c.stage}: свой ${path.basename(c.own)} заблокирован`);
+      const foreignOut = writeTo(path.join(tmp, c.foreign));
+      const denied = foreignOut && JSON.parse(foreignOut).hookSpecificOutput.permissionDecision === 'deny';
+      if (!denied) broken.push(`${c.stage}: чужой ${path.basename(c.foreign)} ПРОШЁЛ`);
+      if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/meta.json')) !== '')
+        broken.push(`${c.stage}: meta.json заблокирован`);
+    }
+    // Возвращаем область, которая была активна до блока: следующие проверки
+    // (исходники в папке интента, пробный файл в корне) рассчитывают на неё.
+    runScript(
+      'core/scripts/scope.mjs',
+      ['set', '--stage', 'create-specification', '--type', 'BE', '--task', 'TASK-1'],
+      '',
+      tmp,
+    );
+    if (!broken.length)
+      ok(`scope: на каждом из ${artefactCases.length} этапов пишется только свой артефакт (+ meta.json)`);
+    else bad('scope: артефакты этапов — ' + broken.join('; '));
+
+    // Новый этап без записи в таблице получил бы дыру молча: правило
+    // применяется только к известным этапам.
+    const noEntry = STAGE_NAMES.filter((s) => !(s in STAGE_ARTIFACTS));
+    if (!noEntry.length) ok('config: у каждого этапа из STAGE_NAMES объявлен свой артефакт');
+    else bad('config: этапы без записи в STAGE_ARTIFACTS: ' + noEntry.join(', '));
+  }
   // то же правило в intents/: интент — документ, исходникам в нём не место
   const denyIntentTsx = writeTo(path.join(tmp, 'intents/INTENT-1/hack.tsx'));
   if (denyIntentTsx && JSON.parse(denyIntentTsx).hookSpecificOutput.permissionDecision === 'deny')

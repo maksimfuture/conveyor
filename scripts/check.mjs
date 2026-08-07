@@ -1700,7 +1700,14 @@ console.log('Сквозная зачистка удалённых имён:');
   // `.cache/repos` в список не входит: каталог 1.x упоминается законно —
   // setup.md его ищет как признак старого репозитория, scope.mjs и
   // validate-config.mjs подчищают. Проверяются имена, которых больше НЕТ.
-  const gone = /create-feature|create-requirements-auto-test|requirements-auto-test|missingVars|repoCache|CONVEYOR_REPO_CACHE|repoCacheEnabled/;
+  // Помимо удалённых имён этапов и полей конфигурации ловим два класса,
+  // которые пережили всю миграцию именно потому, что их никто не искал:
+  // выдуманные ключи настроек (linkFrontendCodeBase — такого ключа нет ни в
+  // 1.x, ни в 2.0, а стейдж посылал модель его читать) и ссылки на номера
+  // разделов спецификации, которой не существует («см. 4.3», «таблица 4.4»).
+  // Модель по такому указателю уходит гадать.
+  const gone =
+    /create-feature|create-requirements-auto-test|requirements-auto-test|missingVars|repoCache|CONVEYOR_REPO_CACHE|repoCacheEnabled|link(Frontend|Backend|SystemsAnalysis|AutoTest)CodeBase|(?:спец\.|см\.|таблица)\s*\d+\.\d+|§\s*\d+\.\d+/;
   const hits = [];
   // Список файлов берём из git, а не обходом каталога. Рядом с исходниками
   // .gitignore разрешает временные workspace `ws*/`, и они по назначению

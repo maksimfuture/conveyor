@@ -104,7 +104,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
   устаревшая область безопасна: следующий `set` её перезаписывает, а через
   8 часов она игнорируется (TTL) и снимается на старте сессии.
 
-## Работа с внешними репозиториями (спец. 4.3)
+## Работа с внешними репозиториями
 - Найти рабочую копию:
   `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <key>`
   (`link` — путь ОТ корня рабочего репозитория, поэтому `--workspace` обязателен)

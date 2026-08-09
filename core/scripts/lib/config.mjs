@@ -505,8 +505,13 @@ export function checkWrite(targetPath, cfg) {
   const target = realResolve(targetPath);
 
   const scopeState = readScopeState(cfg.workspaceRoot);
-  const scope = scopeState.state === 'active' ? scopeState.scope : null;
-  const scopedKeys = scope ? scope.writeRepos : null; // null = no scope
+  // Устаревшая область (>TTL) для ЗАПРЕТОВ равна активной. Иначе длинная
+  // сессия молча теряет защиту посреди работы: этап продолжается, а правила
+  // уже не действуют. TTL нужен, чтобы забытая область не заперла каталог
+  // навсегда, — эту роль выполняет SessionStart, он её снимает и говорит об
+  // этом вслух. Внутри сессии «протухла» не должно значить «можно всё».
+  const scope = scopeState.state === 'active' || scopeState.state === 'stale' ? scopeState.scope : null;
+  const scopedKeys = scope ? scope.writeRepos : null; // null = области нет
   const corrupt = scopeState.state === 'corrupt';
 
   const wsRoot = realResolve(cfg.workspaceRoot);
@@ -542,7 +547,20 @@ export function checkWrite(targetPath, cfg) {
           reason: `файл рабочей области повреждён — запись в репозитории заблокирована (${CLEAR_HINT})`,
         };
       }
-      if (!scopedKeys || scopedKeys.includes(hit.key)) return { allowed: true };
+      // Области нет — значит этап не запущен, и писать в рабочие копии команды
+      // плагину незачем. Раньше здесь было разрешение, и оно делало все
+      // остальные правила условными: скилл забыл поставить область — гарантии
+      // молча исчезли, а прогон выглядел успешным. Теперь та же ошибка
+      // упирается в отказ на первой же записи и становится видимой.
+      if (!scopedKeys) {
+        return {
+          allowed: false,
+          reason:
+            `рабочая копия «${hit.key}»: вне этапа конвейера плагин в неё не пишет. ` +
+            'Запустите нужный этап (он поставит рабочую область) либо правьте репозиторий вручную',
+        };
+      }
+      if (scopedKeys.includes(hit.key)) return { allowed: true };
       return {
         allowed: false,
         reason:
@@ -553,14 +571,29 @@ export function checkWrite(targetPath, cfg) {
       };
     }
 
-    // При активном этапе workspace — только артефакты: tasks/, intents/ и
-    // файлы конфигурации. Пробные/временные файлы в корне (test-write.txt
-    // и т.п.) запрещены — временное пишите в системный temp. `repos` в списке
-    // намеренно нет: настроенная рабочая копия сюда не доходит (она матчится
-    // выше как kind:'repo'), а всё прочее в repos/ — чужой клон.
+    const rel = path.relative(wsRoot, target);
+    const top = rel.split(path.sep)[0];
+
+    // В tasks/ и intents/ — только артефакты (*.md, meta.json). Правило по ТИПУ
+    // файла действует ВСЕГДА, в том числе без активного этапа: исходник в папке
+    // артефактов не бывает правильным ни при каких обстоятельствах. Раньше это
+    // правило висело на области, и без неё `.tsx` в папку задачи проходил.
+    if (ARTIFACT_DIRS.includes(top) && rel !== top && !isTaskArtifactFile(rel)) {
+      const hint =
+        top === 'tasks'
+          ? 'в папке задачи разрешены только артефакты (*.md, meta.json); ' +
+            'исходники пиши в рабочую копию кодовой базы'
+          : 'в папке интента разрешены только артефакты (*.md, meta.json); ' +
+            'интент — документ, исходникам в нём не место';
+      return { allowed: false, reason: `${hint} (запрошено: ${rel})` };
+    }
+
+    // Остальные ограничения рабочего репозитория — только при активном этапе:
+    // вне конвейера человек вправе попросить модель поправить что угодно в
+    // фасадном репозитории. `repos` в allowedTop намеренно нет: настроенная
+    // рабочая копия сюда не доходит (матчится выше как kind:'repo'), а всё
+    // прочее в repos/ — чужой клон.
     if (scopedKeys || corrupt) {
-      const rel = path.relative(wsRoot, target);
-      const top = rel.split(path.sep)[0];
       const allowedTop = [...ARTIFACT_DIRS, 'settings.json', '.env', '.env.example', '.gitignore'];
       if (rel !== '' && !allowedTop.includes(top)) {
         return {
@@ -571,18 +604,6 @@ export function checkWrite(targetPath, cfg) {
             `(запрошено: ${rel}); рабочие копии — только те, что в области этапа; ` +
             `временные файлы — в системный temp`,
         };
-      }
-      // В tasks/ и intents/ — только артефакты (*.md, meta.json). Исходники
-      // кладутся в рабочую копию кодовой базы, а не в папку артефактов
-      // фасадного репо.
-      if (ARTIFACT_DIRS.includes(top) && rel !== top && !isTaskArtifactFile(rel)) {
-        const hint =
-          top === 'tasks'
-            ? 'в папке задачи разрешены только артефакты (*.md, meta.json); ' +
-              'исходники пиши в рабочую копию кодовой базы'
-            : 'в папке интента разрешены только артефакты (*.md, meta.json); ' +
-              'интент — документ, исходникам в нём не место';
-        return { allowed: false, reason: `${hint} (запрошено: ${rel})` };
       }
       // …и только артефакт СВОЕГО этапа: иначе один этап заводит артефакты
       // будущих — так в 1.x первый этап заводил ещё и артефакты плана и

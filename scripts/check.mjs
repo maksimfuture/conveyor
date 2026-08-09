@@ -2831,10 +2831,17 @@ try {
   const writeTo = (p) =>
     runScript('core/scripts/guard-writes.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { file_path: p } })).trim();
 
-  // Без scope: запись в оба репозитория разрешена
-  if (writeTo(path.join(repoSA, 'doc.md')) === '' && writeTo(path.join(repoBE, 'src.js')) === '')
-    ok('scope: без scope запись в оба репо разрешена');
-  else bad('scope: без scope запись в репо ошибочно заблокирована');
+  // Без области в рабочие копии не пишем ВООБЩЕ: этап не запущен, значит
+  // плагину там делать нечего. Раньше здесь было разрешение, и оно делало
+  // условными все остальные правила — скилл забыл поставить область, гарантии
+  // молча исчезли, а прогон выглядел успешным. Теперь ошибка видна сразу.
+  const noScopeSA = writeTo(path.join(repoSA, 'doc.md'));
+  const noScopeBE = writeTo(path.join(repoBE, 'src.js'));
+  const bothDenied = [noScopeSA, noScopeBE].every(
+    (o) => o && JSON.parse(o).hookSpecificOutput.permissionDecision === 'deny',
+  );
+  if (bothDenied && /вне этапа/.test(noScopeSA)) ok('scope: без области запись в рабочие копии запрещена');
+  else bad('scope: без области запись в репо прошла: ' + JSON.stringify([noScopeSA, noScopeBE]).slice(0, 200));
 
   // scope: create-specification (фаза A) → писать можно только в SA
   const setOut = JSON.parse(
@@ -3015,16 +3022,20 @@ try {
   if (apOut.ok && apOut.scope.writeRepos.length === 0) ok('scope: create-autotest-plan → writeRepos=[]');
   else bad('scope: create-autotest-plan: ' + JSON.stringify(apOut));
 
-  // clear → снова всё разрешено
+  // clear снимает привязку к ЭТАПУ, но не открывает всё: артефакты остаются
+  // артефактами, а рабочие копии — закрытыми до следующего этапа.
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
-  if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: clear снимает ограничения');
-  else bad('scope: clear не снял ограничения');
-  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.tsx')) === '')
-    ok('scope: без scope whitelist папки задачи не применяется');
-  else bad('scope: whitelist папки задачи ошибочно активен без scope');
-  if (writeTo(path.join(tmp, 'intents/INTENT-1/manual.tsx')) === '')
-    ok('scope: без scope whitelist папки интента не применяется');
-  else bad('scope: whitelist папки интента ошибочно активен без scope');
+  const afterClearMd = writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.md'));
+  if (afterClearMd === '') ok('scope: после clear артефакт (*.md) в папке задачи разрешён');
+  else bad('scope: после clear артефакт заблокирован: ' + afterClearMd.slice(0, 160));
+  const noScopeSrcTask = writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.tsx'));
+  if (noScopeSrcTask && JSON.parse(noScopeSrcTask).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник в папке задачи запрещён и БЕЗ области');
+  else bad('scope: исходник в папке задачи прошёл без области');
+  const noScopeSrcIntent = writeTo(path.join(tmp, 'intents/INTENT-1/manual.tsx'));
+  if (noScopeSrcIntent && JSON.parse(noScopeSrcIntent).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: исходник в папке интента запрещён и БЕЗ области');
+  else bad('scope: исходник в папке интента прошёл без области');
   if (!fs.existsSync(scopeFilePath(tmp))) ok('scope: clear удаляет файл области из temp');
   else bad('scope: clear не удалил файл области');
 
@@ -3087,8 +3098,12 @@ try {
     scopeFilePath(tmp),
     JSON.stringify({ stage: 'create-plan', writeRepos: [], setAt: new Date(Date.now() - 9 * 3600 * 1000).toISOString() }),
   );
-  if (writeTo(path.join(repoBE, 'src.js')) === '') ok('scope: устаревшая область (TTL) игнорируется');
-  else bad('scope: устаревшая область всё ещё блокирует');
+  // Протухшая область для ЗАПРЕТОВ равна активной: иначе длинная сессия молча
+  // теряет защиту посреди работы. Снимает её SessionStart — и говорит об этом.
+  const staleWrite = writeTo(path.join(repoBE, 'src.js'));
+  if (staleWrite && JSON.parse(staleWrite).hookSpecificOutput.permissionDecision === 'deny')
+    ok('scope: устаревшая область продолжает запрещать (защита не исчезает по TTL)');
+  else bad('scope: устаревшая область открыла запись в репо');
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
 
   // scope.mjs валидация аргументов. Отказ должен быть заметен и вызывающему

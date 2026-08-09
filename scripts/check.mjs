@@ -98,6 +98,30 @@ for (const rel of [
   }
 }
 
+// 1a) hooks.json — то, чем защита ВКЛЮЧАЕТСЯ. Две вещи, каждая из которых
+// молча выключает её целиком:
+//   - незакавыченный путь: на Windows-каталоге с пробелом (`C:\Users\John Doe`)
+//     команда хука падает, а упавший PreToolUse у Claude Code — fail-open;
+//   - неполный матчер: инструмент правки, которого в нём нет, проходит мимо
+//     guard-writes. Лишний альтернант ничего не стоит, пропущенный — стоит всего.
+console.log('hooks.json — включение защиты:');
+{
+  const hooksRaw = fs.readFileSync(path.join(root, 'adapters/claude-code/hooks/hooks.json'), 'utf8');
+  const hooks = JSON.parse(hooksRaw);
+  const cmds = [];
+  for (const group of Object.values(hooks.hooks || {}))
+    for (const entry of group) for (const h of entry.hooks || []) cmds.push(h.command || '');
+  const unquoted = cmds.filter((c) => /\$\{CLAUDE_PLUGIN_ROOT\}/.test(c) && !/"[^"]*\$\{CLAUDE_PLUGIN_ROOT\}[^"]*"/.test(c));
+  if (cmds.length && !unquoted.length) ok(`hooks.json: путь плагина закавычен во всех ${cmds.length} командах`);
+  else bad('hooks.json: путь без кавычек — ' + JSON.stringify(unquoted));
+
+  const writeMatcher = (hooks.hooks.PreToolUse || []).map((e) => e.matcher || '').find((m) => /Write/.test(m)) || '';
+  const needTools = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
+  const missTools = needTools.filter((t) => !new RegExp(`(^|\\|)${t}(\\||$)`).test(writeMatcher));
+  if (!missTools.length) ok('hooks.json: матчер записи покрывает ' + needTools.join(', '));
+  else bad('hooks.json: в матчере записи нет инструментов: ' + missTools.join(', '));
+}
+
 // 1b) settings-шаблон содержит ожидаемые ключи и НЕ содержит удалённых
 {
   const st = JSON.parse(fs.readFileSync(path.join(root, 'core/templates/settings.example.json'), 'utf8'));
@@ -3340,6 +3364,32 @@ try {
     if (required.length && !bare.length)
       ok(`validate-artifact: каждая из ${required.length} обязательных секций шаблона ${type} несёт заглушку`);
     else bad(`validate-artifact: секции шаблона ${type} без заглушки: ` + JSON.stringify(bare));
+  }
+
+  // Обратная сторона того же инварианта: раздел, который производящий этап
+  // заполнить НЕ МОЖЕТ, не должен нести заглушек. Иначе этап обязан вернуть
+  // артефакт агенту («остался каркас»), а заполнить нечем — и корректный
+  // артефакт получает бесконечный возврат на доработку. Ровно так и вышло
+  // с планом: «Ревью» пишется на /implement-plan, а требует непустой
+  // placeholders — /create-plan.
+  {
+    const reviewStages = ['create-specification', 'implement-plan', 'implement-auto-test'];
+    const offenders = [];
+    for (const [stage, arts] of Object.entries(STAGE_ARTIFACTS)) {
+      if (reviewStages.includes(stage)) continue; // этап сам гоняет ревью — заполнит
+      for (const art of arts) {
+        const tplPath = path.join(root, 'core/templates', art);
+        if (!fs.existsSync(tplPath)) continue;
+        const body = sectionBody(fs.readFileSync(tplPath, 'utf8'), '## Ревью');
+        if (!body) continue; // раздела нет — вопрос снят
+        const seen = (tplChecked[art.replace(/\.md$/, '')] || {}).placeholders || [];
+        const left = seen.filter((ph) => body.includes(ph));
+        if (left.length) offenders.push(`${art} (${stage}): ${left.join(', ')}`);
+      }
+    }
+    if (!offenders.length)
+      ok('validate-artifact: в разделе «Ревью» нет заглушек там, где производящий этап ревью не запускает');
+    else bad('validate-artifact: неисполнимый возврат на доработку — ' + offenders.join('; '));
   }
 
   const intentPath = path.join(tmp, 'intent-test.md');

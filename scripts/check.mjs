@@ -3609,6 +3609,59 @@ try {
         ok('migrate: этапы в meta.json пересобраны в каноническом порядке');
       else bad('migrate: порядок этапов: ' + stageOrder);
 
+      // Миграция трогает ТОЛЬКО задачи 1.x (у них нет schemaVersion). Прежнее
+      // условие `!== 2` захватывало и 2.0-задачу с забытым полем, и будущую
+      // v3: analysisDone сбрасывался в false, и фаза A спецификации повторно
+      // правила репозиторий анализа. Это порча чужих данных, а не миграция.
+      {
+        const mkTask = (meta) => {
+          const w = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-mg-'));
+          fs.writeFileSync(
+            path.join(w, 'settings.json'),
+            JSON.stringify({ taskPrefix: 'TASK', repos: Object.fromEntries(REPO_KEYS.map((k) => [k, { link: REPO_DIRS[k] }])) }),
+          );
+          const td = path.join(w, 'tasks', 'FE', 'TASK-9');
+          fs.mkdirSync(td, { recursive: true });
+          fs.writeFileSync(path.join(td, 'meta.json'), JSON.stringify(meta, null, 2));
+          return { w, metaPath: path.join(td, 'meta.json') };
+        };
+        const migrated = (w) => {
+          const r = runScriptFull('core/scripts/migrate-workspace.mjs', [w, '--apply']);
+          let out = {};
+          try {
+            out = JSON.parse(r.stdout);
+          } catch {
+            /* проверка ниже сообщит */
+          }
+          return out;
+        };
+        const problems = [];
+
+        const future = mkTask({ taskId: 'TASK-9', type: 'FE', schemaVersion: 3, stages: { specification: { done: true, analysisDone: true } } });
+        const futureOut = migrated(future.w);
+        const futureMeta = JSON.parse(fs.readFileSync(future.metaPath, 'utf8'));
+        if (futureMeta.schemaVersion !== 3 || futureMeta.stages.specification.analysisDone !== true)
+          problems.push('v3-задача изменена: ' + JSON.stringify(futureMeta.stages.specification));
+        if (!(futureOut.warnings || []).some((w) => /новее/.test(w))) problems.push('v3 без предупреждения');
+        fs.rmSync(future.w, { recursive: true, force: true });
+
+        const noVer = mkTask({ taskId: 'TASK-9', type: 'FE', stages: { specification: { done: false, analysisDone: true } } });
+        migrated(noVer.w);
+        if (JSON.parse(fs.readFileSync(noVer.metaPath, 'utf8')).stages.specification.analysisDone !== true)
+          problems.push('уже проставленный analysisDone сброшен');
+        fs.rmSync(noVer.w, { recursive: true, force: true });
+
+        const both = mkTask({ taskId: 'TASK-9', type: 'FE', stages: { 'requirements-auto-test': { done: false }, 'autotest-plan': { done: true } } });
+        const bothOut = migrated(both.w);
+        const bothMeta = JSON.parse(fs.readFileSync(both.metaPath, 'utf8'));
+        if (bothMeta.stages['autotest-plan'].done !== true) problems.push('прогресс autotest-plan затёрт старым ключом');
+        if (!(bothOut.warnings || []).some((w) => /отброшен/.test(w))) problems.push('затирание ключа без предупреждения');
+        fs.rmSync(both.w, { recursive: true, force: true });
+
+        if (!problems.length) ok('migrate: 2.0-задачи не портятся (v3, забытый schemaVersion, оба ключа этапа)');
+        else bad('migrate: порча данных — ' + problems.join('; '));
+      }
+
       // Задача с BOM в meta.json мигрирована, а не отброшена как «не
       // разбирается».
       const bomMeta = JSON.parse(fs.readFileSync(path.join(bomDir, 'meta.json'), 'utf8').replace(/^\uFEFF/, ''));

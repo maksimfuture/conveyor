@@ -80,6 +80,27 @@ function attempt(what, fn) {
   }
 }
 
+// Запись через временный файл рядом + rename. Работа скрипта — переписать
+// ЧУЖИЕ данные с реальными задачами команды, и обрыв на середине writeFileSync
+// оставил бы усечённый JSON поверх уже затёртого оригинала: следующий прогон
+// счёл бы задачу битой и пропустил её навсегда. rename в пределах одного
+// каталога атомарен, поэтому файл либо старый целиком, либо новый целиком.
+// Тем же приёмом уже переименовывается артефакт задачи.
+function writeFileAtomic(file, text) {
+  const tmpFile = file + '.conveyor-tmp';
+  fs.writeFileSync(tmpFile, text);
+  try {
+    fs.renameSync(tmpFile, file);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* временный файл уже убран */
+    }
+    throw e;
+  }
+}
+
 // ---- 1. settings.json -----------------------------------------------------
 const settingsPath = path.join(workspaceRoot, 'settings.json');
 let settings;
@@ -133,7 +154,7 @@ if (!isObject(settings)) {
   }
   if (
     settingsChanges.length &&
-    attempt('запись settings.json', () => fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n'))
+    attempt('запись settings.json', () => writeFileAtomic(settingsPath, JSON.stringify(settings, null, 2) + '\n'))
   ) {
     changes.push(...settingsChanges);
   }
@@ -187,7 +208,20 @@ for (const type of ['FE', 'BE']) {
         warnings.push(`${taskId}: ${problem} — пропущен`);
         meta = null;
       }
-      if (meta && meta.schemaVersion !== 2) {
+      // Мигрируем ТОЛЬКО задачи 1.x — у них поля schemaVersion нет вовсе.
+      // Прежнее условие `!== 2` захватывало и 2.0-задачу с забытым полем, и
+      // будущую v3: трансформация сбрасывала analysisDone в false, фаза A
+      // спецификации запускалась заново и ПОВТОРНО правила репозиторий
+      // анализа. Это порча чужих данных, а не миграция.
+      if (meta && meta.schemaVersion !== undefined && meta.schemaVersion !== 2) {
+        warnings.push(
+          `${taskId}: schemaVersion ${JSON.stringify(meta.schemaVersion)} — репозиторий новее скрипта, задача не тронута`,
+        );
+        meta = null;
+      } else if (meta && meta.schemaVersion === 2) {
+        meta = null; // уже мигрирована, делать нечего
+      }
+      if (meta) {
         meta.stages = meta.stages || {};
         meta.stages.specification = meta.stages.specification || { done: false };
         // Пройденный этап feature = правки анализа уже внесены: новая
@@ -196,15 +230,25 @@ for (const type of ['FE', 'BE']) {
         // существует (см. core/stages/create-specification.md,
         // «Идемпотентность»).
         const featureDone = !!(meta.stages.feature && meta.stages.feature.done);
-        meta.stages.specification.analysisDone = featureDone;
-        meta.stages.specification.specDone = !!meta.stages.specification.done;
+        // Уже проставленные подэтапы не трогаем: миграция дополняет, а не
+        // переписывает решения, принятые в 2.0.
+        if (!('analysisDone' in meta.stages.specification)) meta.stages.specification.analysisDone = featureDone;
+        if (!('specDone' in meta.stages.specification))
+          meta.stages.specification.specDone = !!meta.stages.specification.done;
         delete meta.stages.feature;
         if (meta.analysisShaAtFeature) {
-          meta.analysisBaseSha = meta.analysisShaAtFeature;
+          if (!meta.analysisBaseSha) meta.analysisBaseSha = meta.analysisShaAtFeature;
           delete meta.analysisShaAtFeature;
         }
+        // Перенос ключа этапа — только если целевого ещё нет: у переименования
+        // ФАЙЛА такой гард есть, а здесь его не было, и прогресс autotest-plan
+        // затирался старым значением.
         if (meta.stages['requirements-auto-test']) {
-          meta.stages['autotest-plan'] = meta.stages['requirements-auto-test'];
+          if (!meta.stages['autotest-plan']) {
+            meta.stages['autotest-plan'] = meta.stages['requirements-auto-test'];
+          } else {
+            warnings.push(`${taskId}: этап autotest-plan уже заполнен — старый requirements-auto-test отброшен`);
+          }
           delete meta.stages['requirements-auto-test'];
         }
         if (!('intentId' in meta)) meta.intentId = null;
@@ -212,7 +256,7 @@ for (const type of ['FE', 'BE']) {
         meta.schemaVersion = 2;
         if (
           attempt(`запись ${type}/${taskId}/meta.json`, () =>
-            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n'),
+            writeFileAtomic(metaPath, JSON.stringify(meta, null, 2) + '\n'),
           )
         ) {
           changes.push(`${type}/${taskId}/meta.json -> schemaVersion 2`);
@@ -238,7 +282,7 @@ const need = ['repos/', '.env'];
 const add = need.filter((n) => !lines.some((l) => l.trim() === n));
 if (add.length) {
   const text = (gi.endsWith('\n') || gi === '' ? gi : gi + '\n') + add.join('\n') + '\n';
-  if (attempt('запись .gitignore', () => fs.writeFileSync(giPath, text)))
+  if (attempt('запись .gitignore', () => writeFileAtomic(giPath, text)))
     changes.push(`.gitignore += ${add.join(', ')}`);
 }
 

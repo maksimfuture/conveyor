@@ -282,6 +282,19 @@ function main() {
   const command = (payload.tool_input && payload.tool_input.command) || '';
   if (!command) return;
 
+  // Нечитаемый settings.json разбираем ДО использования конфигурации. Раньше
+  // сюда доходил объект без `links`, дальше падал TypeError, внешний catch
+  // отвечал «внутренняя ошибка», и ЛЮБАЯ команда — вплоть до `echo hi` —
+  // получала deny без объяснения причины. Отказ оставляем (правила прав
+  // строятся на конфигурации), но называем причину и что делать.
+  if (cfg.error) {
+    return decide(
+      'deny',
+      `conveyor: ${cfg.error}. Правила прав строятся на этом файле, поэтому команды заблокированы. ` +
+        'Почините settings.json (JSON без комментариев и висячих запятых) или запустите /conveyor:setup.',
+    );
+  }
+
   const mains = mainBranches(cfg);
   let effCwd = payloadCwd; // null = неизвестен (cd с подстановкой)
 

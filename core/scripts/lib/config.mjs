@@ -81,7 +81,16 @@ export function findWorkspaceRoot(startDir = process.cwd()) {
 export function parseEnvFile(envPath) {
   const out = {};
   if (!fs.existsSync(envPath)) return out;
-  const text = fs.readFileSync(envPath, 'utf8');
+  // .env может оказаться каталогом или быть занят (OneDrive, антивирус,
+  // EPERM/EACCES). Без перехвата голый стек Node уходил в stdout скриптов,
+  // чей контракт — «всегда JSON»: repos-status, migrate-workspace, scope.
+  // Файл необязателен, поэтому нечитаемый .env деградирует до умолчаний.
+  let text;
+  try {
+    text = fs.readFileSync(envPath, 'utf8');
+  } catch {
+    return out;
+  }
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;

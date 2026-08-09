@@ -5,18 +5,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/core/scripts/validate-config.mjs"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/scripts/validate-config.mjs\""
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/core/scripts/guard-writes.mjs"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/scripts/guard-writes.mjs\""
           }
         ]
       },
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/core/scripts/guard-bash.mjs"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/scripts/guard-bash.mjs\""
           }
         ]
       }

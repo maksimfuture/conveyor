@@ -3122,6 +3122,37 @@ try {
     scopeFilePath(tmp),
     JSON.stringify({ stage: 'create-plan', writeRepos: [], setAt: new Date(Date.now() - 9 * 3600 * 1000).toISOString() }),
   );
+  // Обход git-гардов через глобальные опции git. Разбор аргументов — точка,
+  // от которой зависит, найдут ли запреты, к чему прицепиться: если «подкоманда»
+  // определена неверно, ни push --force, ни push в основную ветку не сработают.
+  // Прежний разбор пропускал `-`-флаг, но не съедал ЗНАЧЕНИЕ пробельных опций,
+  // и `git --git-dir <path> push --force` проходил как разрешённый.
+  {
+    const nl = String.fromCharCode(10);
+    const bs = String.fromCharCode(92);
+    const gitCases = [
+      ['git push --force origin main', 'deny', 'базлайн'],
+      ['git --git-dir /r/.git push --force origin main', 'deny', 'пробельный --git-dir'],
+      ['git --git-dir /r/.git --work-tree /r push origin main', 'deny', '--git-dir + --work-tree'],
+      ['git --namespace ns push origin main', 'deny', 'пробельный --namespace'],
+      ['git --git-dir=/r/.git push origin main', 'deny', '=-форма'],
+      ['git ' + bs + nl + 'push --force origin main', 'deny', 'продолжение строки'],
+      ['git push origin +main', 'deny', 'refspec +main = форс в main'],
+      ['git push origin HEAD:refs/heads/main', 'deny', 'полный refspec'],
+      ['git -C /r push --force origin main', 'deny', '-C (закрыто ранее)'],
+      ['git push origin feature/TASK-1', 'ask', 'обычный push — подтверждение'],
+      ['git status', 'allow', 'безобидная команда'],
+    ];
+    const wrong = [];
+    for (const [cmd, want, label] of gitCases) {
+      const out = runBash(cmd);
+      const got = out ? JSON.parse(out).hookSpecificOutput.permissionDecision : 'allow';
+      if (got !== want) wrong.push(`${label}: ${got} вместо ${want}`);
+    }
+    if (!wrong.length) ok(`guard-bash: ${gitCases.length} форм git-команд классифицированы верно`);
+    else bad('guard-bash: обход git-гардов — ' + wrong.join('; '));
+  }
+
   // Протухшая область для ЗАПРЕТОВ равна активной: иначе длинная сессия молча
   // теряет защиту посреди работы. Снимает её SessionStart — и говорит об этом.
   const staleWrite = writeTo(path.join(repoBE, 'src.js'));

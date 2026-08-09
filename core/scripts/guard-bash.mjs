@@ -37,6 +37,7 @@ import {
   isInside,
   REPO_KEYS,
 } from './lib/config.mjs';
+import { joinContinuations, gitSubcommand, gitArgs, normalizeRefspec } from './lib/git-args.mjs';
 
 function readStdin() {
   try {
@@ -59,8 +60,11 @@ function decide(decision, reason) {
 }
 
 // Split a shell line into simple sub-commands on && ; | to inspect each.
+// Продолжения строк склеиваем ДО разбиения: `git \`+перенос+`push --force` —
+// это одна команда, а не «git» и «push --force». Раньше она разъезжалась на
+// две половины, и ни одна под git-гарды не попадала.
 function subCommands(command) {
-  return command
+  return joinContinuations(command)
     .split(/&&|\|\||;|\n/g)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -171,19 +175,9 @@ const MUTATING_GIT = new Set([
   'reset', 'clean', 'commit', 'am', 'apply', 'revert', 'rm', 'mv', 'worktree',
 ]);
 
-// Определяем подкоманду git, пропуская глобальные флаги и -C <path>.
-function gitSubcommand(rest) {
-  for (let i = 0; i < rest.length; i++) {
-    const t = rest[i];
-    if (t === '-C' || t === '-c') {
-      i++;
-      continue;
-    }
-    if (t.startsWith('-')) continue;
-    return t;
-  }
-  return null;
-}
+// Разбор аргументов git — в core/scripts/lib/git-args.mjs (gitSubcommand,
+// gitArgs, normalizeRefspec). Держится отдельно: от него зависит, найдут ли
+// git-гарды, к чему прицепиться.
 
 function classifyGit(tok, mains, cfg, effCwd) {
   if (tok[0] !== 'git') return null;
@@ -197,20 +191,28 @@ function classifyGit(tok, mains, cfg, effCwd) {
     }
     const delIdx = rest.indexOf('--delete');
     if (delIdx !== -1) {
-      const br = rest[delIdx + 1];
+      const br = normalizeRefspec(rest[delIdx + 1]).branch;
       if (br && mains.has(br)) {
         return { decision: 'deny', reason: `удаление основной ветки ${br} запрещено.` };
       }
     }
-    for (const t of rest) {
-      if (mains.has(t)) {
-        return { decision: 'deny', reason: `push в основную ветку ${t} запрещён; работайте в ветке задачи.` };
+    // Цели push ищем среди аргументов ПОДКОМАНДЫ: путь из `--git-dir <path>`
+    // не должен приниматься за имя ветки. Каждую цель нормализуем — `+main`
+    // это форс в main, `HEAD:refs/heads/main` тоже main; раньше обе формы
+    // понижались до «ask».
+    for (const t of gitArgs(rest)) {
+      if (t.startsWith('-')) continue;
+      const { branch, forced } = normalizeRefspec(t);
+      if (branch && mains.has(branch)) {
+        return {
+          decision: 'deny',
+          reason: forced
+            ? `push --force в основную ветку ${branch} запрещён политикой conveyor.`
+            : `push в основную ветку ${branch} запрещён; работайте в ветке задачи.`,
+        };
       }
-      if (t.includes(':')) {
-        const dst = t.split(':').pop();
-        if (mains.has(dst)) {
-          return { decision: 'deny', reason: `push в основную ветку ${dst} запрещён.` };
-        }
+      if (forced) {
+        return { decision: 'deny', reason: `push --force (refspec «${t}») запрещён политикой conveyor.` };
       }
     }
     return { decision: 'ask', reason: 'git push — подтвердите отправку в удалённый репозиторий.' };

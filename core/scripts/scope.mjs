@@ -106,6 +106,12 @@ if (args._.length) {
 
 const cfg = readConfig(process.cwd());
 if (!cfg.found) done({ ok: false, error: 'не найден рабочий репозиторий conveyor (settings.json)' });
+// Нечитаемый settings.json — не повод молча выдать область с ПУСТЫМИ правами:
+// этап решил бы, что защита стоит, а на деле у него нет ни одного разрешённого
+// корня, и первая же запись упрётся в отказ без объяснимой причины.
+if (cfg.error) {
+  done({ ok: false, error: `${cfg.error} — почините settings.json или запустите /conveyor:setup` });
+}
 
 // Файл области — в системном temp (ключ от пути workspace): при локальных
 // ссылках рабочий репозиторий не трогается вовсе.

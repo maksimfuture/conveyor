@@ -3122,6 +3122,63 @@ try {
     scopeFilePath(tmp),
     JSON.stringify({ stage: 'create-plan', writeRepos: [], setAt: new Date(Date.now() - 9 * 3600 * 1000).toISOString() }),
   );
+  // Битый settings.json не должен «кирпичить» сессию невнятной ошибкой:
+  // раньше любая команда, вплоть до `echo hi`, получала deny с текстом
+  // «внутренняя ошибка — Cannot read property …». Отказ остаётся (правила прав
+  // строятся на конфигурации), но причина обязана быть названа. При этом
+  // guard-writes остаётся fail-open — иначе сам settings.json не починить.
+  {
+    const brokenWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-broken-'));
+    try {
+      fs.writeFileSync(path.join(brokenWs, 'settings.json'), '{broken json');
+      const bashOut = runScript(
+        'core/scripts/guard-bash.mjs',
+        [],
+        JSON.stringify({ cwd: brokenWs, tool_input: { command: 'echo hi' } }),
+      ).trim();
+      const bashDec = bashOut ? JSON.parse(bashOut).hookSpecificOutput : null;
+      const named = bashDec && /settings\.json/.test(bashDec.permissionDecisionReason || '');
+      const noStack = bashDec && !/Cannot read propert|undefined/.test(bashDec.permissionDecisionReason || '');
+      if (bashDec && bashDec.permissionDecision === 'deny' && named && noStack)
+        ok('guard-bash: битый settings.json — отказ с названной причиной, а не «внутренняя ошибка»');
+      else bad('guard-bash: битый settings.json — ' + JSON.stringify(bashDec));
+
+      const writeOut = runScript(
+        'core/scripts/guard-writes.mjs',
+        [],
+        JSON.stringify({ cwd: brokenWs, tool_input: { file_path: path.join(brokenWs, 'settings.json') } }),
+      ).trim();
+      if (writeOut === '') ok('guard-writes: битый settings.json можно починить (fail-open на запись)');
+      else bad('guard-writes: правка битого settings.json заблокирована: ' + writeOut.slice(0, 160));
+
+      const scopeOut = runScriptFull('core/scripts/scope.mjs', ['set', '--stage', 'intent', '--task', 'I-1'], '', brokenWs);
+      let scopeObj = {};
+      try {
+        scopeObj = JSON.parse(scopeOut.stdout);
+      } catch {
+        /* проверка ниже сообщит */
+      }
+      if (scopeObj.ok === false && scopeOut.status !== 0 && /settings\.json/.test(scopeObj.error || ''))
+        ok('scope.mjs: битый settings.json — отказ, а не область с пустыми правами');
+      else bad('scope.mjs: на битом конфиге вернул ' + JSON.stringify(scopeObj).slice(0, 160));
+
+      // .env-каталог: скрипты с контрактом «всегда JSON» не должны падать стеком
+      fs.writeFileSync(path.join(brokenWs, 'settings.json'), JSON.stringify({ taskPrefix: 'TASK', repos: {} }));
+      fs.mkdirSync(path.join(brokenWs, '.env'));
+      const rsOut = runScriptFull('core/scripts/repos-status.mjs', [brokenWs]);
+      let rsObj = null;
+      try {
+        rsObj = JSON.parse(rsOut.stdout);
+      } catch {
+        /* остаётся null */
+      }
+      if (rsObj) ok('lib/config: нечитаемый .env не роняет скрипты — контракт JSON сохранён');
+      else bad('lib/config: .env-каталог сломал вывод: ' + String(rsOut.stdout).slice(0, 160));
+    } finally {
+      fs.rmSync(brokenWs, { recursive: true, force: true });
+    }
+  }
+
   // Обход git-гардов через глобальные опции git. Разбор аргументов — точка,
   // от которой зависит, найдут ли запреты, к чему прицепиться: если «подкоманда»
   // определена неверно, ни push --force, ни push в основную ветку не сработают.

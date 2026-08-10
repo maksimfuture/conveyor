@@ -20,8 +20,10 @@ description: Реализует автотесты в репозитории а�
 3. Запусти qa-autotest-engineer: вход — ТОЛЬКО autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (кодовая база FE/BE
    не открывается, дифф реализации не готовится); реализация кейсов по
-   соглашениям репозитория автотестов; запуск тестов; report-auto-test.md
-   (core/templates/report-auto-test.md).
+   разделу «Шаги реализации тестов» и соглашениям репозитория автотестов,
+   с отметкой чекбокса каждого выполненного шага в autotest-plan.md
+   (`- [ ]` → `- [x]`; остальной текст плана не правится); запуск тестов;
+   report-auto-test.md (core/templates/report-auto-test.md).
 4. Цикл ревью (core/stages/_review-loop.md, домен autotests): агент reviewer
    находит замечания, qa-autotest-engineer спорит и исправляет (2 раунда по
    умолчанию; нерешённые blocker/major → эскалация).

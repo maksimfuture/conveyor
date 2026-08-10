@@ -1092,6 +1092,30 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .filter(Boolean)
           .join('; '),
     );
+
+  // Чекбоксы «Шагов реализации тестов» — единственная правка плана после его
+  // создания, и договорённость о них держится только текстом. Этап плана
+  // обязан оставить их пустыми (иначе план врёт про прогресс с первого дня),
+  // этап реализации — отмечать (иначе список работ мёртвый, и следующий
+  // читатель не отличит сделанное от запланированного). Разъехавшийся конец
+  // не виден ни валидатору, ни сборке: галочку никто не считает.
+  const implSect = sect(promptRaw, 'На этапе /conveyor:implement-auto-test');
+  const planLeaves = /(галочк|чекбокс)/i.test(planSect) && /не расставляй/i.test(planSect);
+  const promptTicks = /\[x\]/i.test(implSect) && /autotest-plan\.md/.test(implSect);
+  const stageTicks = /\[x\]/i.test(stage) && /autotest-plan\.md/.test(stage);
+  if (planLeaves && promptTicks && stageTicks)
+    ok('autotest-plan: чекбоксы шагов — этап плана оставляет пустыми, implement-auto-test отмечает');
+  else
+    bad(
+      'autotest-plan: чекбоксы шагов — ' +
+        [
+          planLeaves ? null : 'в промпте этапа плана не сказано оставить галочки нерасставленными',
+          promptTicks ? null : 'промпт этапа реализации не предписывает отмечать их в autotest-plan.md',
+          stageTicks ? null : 'стейдж implement-auto-test не предписывает отмечать их в autotest-plan.md',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
 }
 
 // 2n) Стейдж /setup создаёт то, из чего потом читает ВЕСЬ плагин, и выполняет
@@ -3478,6 +3502,61 @@ try {
     if (!offenders.length)
       ok('validate-artifact: в разделе «Ревью» нет заглушек там, где производящий этап ревью не запускает');
     else bad('validate-artifact: неисполнимый возврат на доработку — ' + offenders.join('; '));
+  }
+
+  // План автотестов читают, чтобы узнать ОБЪЁМ РАБОТ, а не только предмет
+  // проверки: ревью команды снимается именно на этом. Отвечает за это раздел
+  // «Шаги реализации тестов», и оба его конца обязаны проверяться машинно —
+  // цикла ревью на create-autotest-plan нет, других сигналов не будет.
+  // Ломаем ровно одну вещь за раз, отталкиваясь от шаблона: так падение
+  // указывает на причину, а не на «что-то в autotest-plan».
+  {
+    const tplText = fs.readFileSync(path.join(root, 'core/templates/autotest-plan.md'), 'utf8');
+    const atpPath = path.join(tmp, 'atp-test.md');
+    const va = () =>
+      JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
+
+    // 1) шагов-чекбоксов нет вовсе — план снова «что проверяем» без «что делаем»
+    fs.writeFileSync(atpPath, tplText.replace(/^- \[ \] /gm, '- '));
+    const noBox = va();
+    const noBoxCaught = noBox.ok === false && noBox.problems.some((p) => /чекбокс/i.test(p));
+
+    // 2) шаги есть, но ни один не назван кейсом: работа взялась ниоткуда и
+    //    разъедется с таблицей молча. TC-ID в самой таблице при этом остаются —
+    //    проверка обязана смотреть в РАЗДЕЛ, а не в файл целиком.
+    const head = '## Шаги реализации тестов';
+    const from = tplText.indexOf(head);
+    const to = tplText.indexOf('\n## ', from + 1);
+    const cut = tplText.slice(0, from) + tplText.slice(from, to).replace(/TC-\d+/g, 'TC-нет') + tplText.slice(to);
+    fs.writeFileSync(atpPath, cut);
+    const noLink = va();
+    const noLinkCaught =
+      noLink.ok === false && /TC-\d+/.test(cut) && noLink.problems.some((p) => /TC-ID/.test(p));
+
+    if (noBoxCaught && noLinkCaught)
+      ok('validate-artifact: план автотестов без шагов-чекбоксов и без связи шагов с кейсами не проходит');
+    else
+      bad(
+        'validate-artifact: «Шаги реализации тестов» — ' +
+          [
+            noBoxCaught ? null : 'план без единого чекбокса прошёл: ' + JSON.stringify(noBox.problems),
+            noLinkCaught ? null : 'шаги без TC-ID прошли: ' + JSON.stringify(noLink.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+
+    // Состав обязательных разделов спрашиваем у самого валидатора: переставить
+    // «Итого» наверх мало — раздел должен быть ОБЯЗАТЕЛЬНЫМ, иначе агент его
+    // просто не напишет, и ревью команды вернётся к тому же замечанию.
+    const atpRequired = JSON.parse(
+      runScript('core/scripts/validate-artifact.mjs', ['--file', emptyArtPath, '--type', 'autotest-plan']),
+    ).missingSections;
+    const needAtp = ['## Итого', '## Уровни тестирования', '## Что переиспользуем', '## Шаги реализации тестов'];
+    const missAtp = needAtp.filter((h) => !atpRequired.includes(h));
+    if (!missAtp.length)
+      ok('validate-artifact: план автотестов обязан нести «Итого», уровни, переиспользование и шаги');
+    else bad('validate-artifact: необязательные разделы плана автотестов: ' + missAtp.join(', '));
   }
 
   const intentPath = path.join(tmp, 'intent-test.md');

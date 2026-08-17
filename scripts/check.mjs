@@ -1154,7 +1154,9 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
   // Jenkins, и захардкоженное имя означало бы «работает только у автора».
   // Этап подбирает их в сессии — и обязан пережить случай, когда подбирать
   // нечего: без инструмента запуска сборки нет, но этап не падает.
-  const picksTools = /инструмент\w*[^.]{0,200}(подбер|подбир|определ|найд|выбер)/i.test(stage);
+  const picksTools =
+    /(подбер|подбир|определ|выбер)\w*[^.]{0,80}инструмент/i.test(stage) ||
+    /инструмент\w*[^.]{0,120}(подбер|подбир|определ|выбер)/i.test(stage);
   const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(stage);
   if (pushFirst && reportLast && askRun && askTags && poll && refusedStillReports && picksTools && noToolsFallback)
     ok('implement-auto-test: push → разрешение → теги → сборка (опрос раз в 3 минуты) → отчёт; отказ не отменяет отчёт');

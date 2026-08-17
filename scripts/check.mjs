@@ -3689,6 +3689,40 @@ try {
       );
   }
 
+  // Раздел «Прогон в CI» отвечает на ОДИН вопрос: сборка была или нет. Пустой
+  // раздел читается как «прогнали, всё хорошо», хотя за ним обычно отказ
+  // пользователя, незапушенная ветка или ненастроенная джоба — то есть
+  // прогон, которого не было.
+  {
+    const ciPath = path.join(tmp, 'report-ci.md');
+    const ciTpl = fs.readFileSync(path.join(root, 'core/templates/report-auto-test.md'), 'utf8');
+    const vaCi = (text) => {
+      fs.writeFileSync(ciPath, text);
+      return JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', ciPath, '--type', 'report-auto-test']));
+    };
+
+    const noCiSection = vaCi(ciTpl.replace('## Прогон в CI', '## Прочее'));
+    const noCiSectionCaught = noCiSection.ok === false && noCiSection.missingSections.includes('## Прогон в CI');
+
+    const ciFrom = ciTpl.indexOf('## Прогон в CI');
+    const ciTo = ciTpl.indexOf('\n## ', ciFrom + 1);
+    const emptyCi = vaCi(ciTpl.slice(0, ciFrom) + '## Прогон в CI\n\n' + ciTpl.slice(ciTo + 1));
+    const emptyCiCaught = emptyCi.ok === false && emptyCi.problems.some((p) => /не запускал/i.test(p));
+
+    if (noCiSectionCaught && emptyCiCaught)
+      ok('validate-artifact: отчёт обязан нести «Прогон в CI» — со сборкой либо с причиной, почему её не было');
+    else
+      bad(
+        'validate-artifact: «Прогон в CI» — ' +
+          [
+            noCiSectionCaught ? null : 'отчёт без раздела прошёл: ' + JSON.stringify(noCiSection.missingSections),
+            emptyCiCaught ? null : 'пустой раздел прошёл: ' + JSON.stringify(emptyCi.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+
   // Замечание команды по отчёту: количество тестов из плана обязано совпадать
   // с количеством в отчёте. Сверяем СОСТАВ ID, а не число из «Итога»:
   // правленое руками число расходится с таблицей молча. Потерянный автотест —

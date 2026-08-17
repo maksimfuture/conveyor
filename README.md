@@ -110,7 +110,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
     "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
     "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
     "backend":         { "link": "repos/backend",         "mainBranch": "main" },
-    "autoTest":        { "link": "repos/autotests",       "mainBranch": "main" }
+    "autoTest":        { "link": "repos/autotests",       "mainBranch": "main",
+                         "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
   },
   "reviewRounds": "${CONVEYOR_REVIEW_ROUNDS}",
   "fast": "${CONVEYOR_FAST}",
@@ -137,6 +138,17 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 - **mainBranch** — основная ветка репозитория (обычно `main`). Свою ветку в
   рабочей копии конвейер не переключает: перед работой он подтягивает только
   основную.
+- **linkPipelineAutoTest** — ссылка на джобу автотестов в Jenkins; заполняется
+  только у `autoTest` и **не обязательна**. Это единственное поле-URL в
+  `repos.*`: правило «link — путь внутри проекта» к нему не относится, поэтому
+  оно и заведено отдельным ключом. С ним `/conveyor:implement-auto-test` после
+  push спрашивает разрешение на запуск джобы, показывает теги написанных
+  тестов (их можно изменить), запускает сборку и опрашивает статус раз в 3
+  минуты; результат уходит в раздел «Прогон в CI» отчёта. Без ключа этап
+  работает как раньше и пишет в том же разделе, что джоба не запускалась.
+  Запуск идёт через MCP-сервер Jenkins — его подключает сам пользователь в
+  своём клиенте (см. INSTALL.md); плагин не хранит ни адресов, ни токенов,
+  кроме этой ссылки.
 - **taskPrefix** — префикс идентификаторов задач (`TASK-42`).
 
 `.env` — личные настройки разработчика, он в `.gitignore` и **не обязателен**:

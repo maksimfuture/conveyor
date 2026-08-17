@@ -3416,7 +3416,7 @@ try {
   // артефакта, и если он не проходит сам, этап раздаёт агенту заведомо
   // невалидный каркас. Плейсхолдеры при этом остаются предупреждением.
   const tplChecked = {};
-  for (const type of ['plan', 'intent', 'specification', 'autotest-plan']) {
+  for (const type of ['plan', 'intent', 'specification', 'autotest-plan', 'report-auto-test']) {
     const tplPath = path.join(tmp, `tpl-${type}.md`);
     fs.copyFileSync(path.join(root, `core/templates/${type}.md`), tplPath);
     const vaTpl = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', tplPath, '--type', type]));
@@ -3557,6 +3557,152 @@ try {
     if (!missAtp.length)
       ok('validate-artifact: план автотестов обязан нести «Итого», уровни, переиспользование и шаги');
     else bad('validate-artifact: необязательные разделы плана автотестов: ' + missAtp.join(', '));
+  }
+
+  // Замечание команды по плану автотестов: тест-кейсы остаются ТЕКСТОВЫМ
+  // описанием и живут ОДНОЙ таблицей (на «ручные» и «автоматизированные» их
+  // не делят — покрытие показывает колонка «Автотест»), а автотесты
+  // выделяются ОТДЕЛЬНЫМ разделом и делятся на новый функционал
+  // (сгруппированный по уровням тестирования: название, код теста, краткое
+  // описание) и регресс (уровень, список, почему выбран именно такой). Цикла
+  // ревью на create-autotest-plan нет — каждое из этих требований держится
+  // только машинной проверкой. Ломаем по одному, отталкиваясь от шаблона:
+  // падение указывает на конкретную причину.
+  {
+    const tplText = fs.readFileSync(path.join(root, 'core/templates/autotest-plan.md'), 'utf8');
+    const atpPath = path.join(tmp, 'atp-autotests.md');
+    const va = (text) => {
+      fs.writeFileSync(atpPath, text);
+      return JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
+    };
+    const caught = (res, re) => res.ok === false && res.problems.some((p) => re.test(p));
+
+    // 1) раздел «Автотесты» вообще не заведён — автотесты снова растворены в
+    //    ручных кейсах, и сверять отчёт с планом будет нечем
+    const noSection = va(tplText.replace('## Автотесты', '## Прочее'));
+    const noSectionCaught = noSection.ok === false && noSection.missingSections.includes('## Автотесты');
+
+    // 2) раздел есть, но без ID: список тестов не адресуем ни из шагов, ни из
+    //    отчёта. AT-ID в «Шагах реализации тестов» при этом остаются —
+    //    проверка обязана смотреть в РАЗДЕЛ, а не в файл целиком.
+    const secFrom = tplText.indexOf('## Автотесты');
+    const secTo = tplText.indexOf('\n## ', secFrom + 1);
+    const noIds = va(
+      tplText.slice(0, secFrom) +
+        tplText.slice(secFrom, secTo).replace(/AT-\d+/g, 'AT-нет') +
+        tplText.slice(secTo),
+    );
+    const noIdsCaught = /AT-\d+/.test(tplText) && caught(noIds, /AT-N/);
+
+    // 3) нет разбиения на новый функционал и регресс
+    const noSplit = va(tplText.replace('### Новый функционал', '### Тесты'));
+    const noSplitCaught = caught(noSplit, /Новый функционал/);
+
+    // 4) новый функционал не сгруппирован по уровням тестирования
+    const noLevels = va(tplText.replace(/#### Уровень:/g, '- Уровень:'));
+    const noLevelsCaught = caught(noLevels, /уровн/i);
+
+    // 5) регресс без обоснования выбора — «взяли весь набор» проходило бы молча
+    const noWhy = va(tplText.replace(/^- \*\*Почему выбраны эти тесты:\*\*.*$/m, '- <список>'));
+    const noWhyCaught = caught(noWhy, /Регресс/);
+
+    // 6) колонки «Автотест» в таблице кейсов нет — по плану не сказать, какие
+    //    кейсы уходят в автоматизацию, а какие остаются на руках
+    const noColumn = va(tplText.replace('| Автотест |', '| Действие |'));
+    const noColumnCaught = caught(noColumn, /колонки «Автотест»/);
+
+    // 7) колонка есть, но у кейса пустая: «неизвестно» молча выглядит как «нет»
+    const emptyCell = va(tplText.replace(/^(\| TC-1 .*?\| P1 )\| AT-1 \|/m, '$1|  |'));
+    const emptyCellCaught = caught(emptyCell, /колонка «Автотест»/);
+
+    // 8) кейс с «нет» остался без детального блока: автотеста не будет, а
+    //    шагов ручного прогона нет ни здесь, ни в «Что не автоматизируем»
+    const noManualSteps = va(tplText.replace(/### TC-4 —[\s\S]*?(?=\n## )/, ''));
+    const noManualStepsCaught = caught(noManualSteps, /### TC-N/);
+
+    if (
+      noSectionCaught &&
+      noIdsCaught &&
+      noSplitCaught &&
+      noLevelsCaught &&
+      noWhyCaught &&
+      noColumnCaught &&
+      emptyCellCaught &&
+      noManualStepsCaught
+    )
+      ok('validate-artifact: кейсы одной таблицей с колонкой «Автотест» (у «нет» — шаги ручного прогона), автотесты отдельным разделом (уровни + регресс с обоснованием)');
+    else
+      bad(
+        'validate-artifact: раздел «Автотесты» — ' +
+          [
+            noSectionCaught ? null : 'план без раздела прошёл: ' + JSON.stringify(noSection.missingSections),
+            noIdsCaught ? null : 'раздел без AT-ID прошёл: ' + JSON.stringify(noIds.problems),
+            noSplitCaught ? null : 'без «Новый функционал»/«Регресс» прошёл: ' + JSON.stringify(noSplit.problems),
+            noLevelsCaught ? null : 'без группировки по уровням прошёл: ' + JSON.stringify(noLevels.problems),
+            noWhyCaught ? null : 'регресс без обоснования прошёл: ' + JSON.stringify(noWhy.problems),
+            noColumnCaught ? null : 'таблица без колонки «Автотест» прошла: ' + JSON.stringify(noColumn.problems),
+            emptyCellCaught ? null : 'кейс с пустой колонкой «Автотест» прошёл: ' + JSON.stringify(emptyCell.problems),
+            noManualStepsCaught
+              ? null
+              : 'кейс без автотеста и без шагов прошёл: ' + JSON.stringify(noManualSteps.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+
+  // Замечание команды по отчёту: количество тестов из плана обязано совпадать
+  // с количеством в отчёте. Сверяем СОСТАВ ID, а не число из «Итога»:
+  // правленое руками число расходится с таблицей молча. Потерянный автотест —
+  // ошибка (работа исчезла), лишний — предупреждение (бывает законно, но
+  // обязан быть объяснён в «Расхождении с планом»).
+  {
+    const planPath = path.join(tmp, 'atp-for-report.md');
+    fs.copyFileSync(path.join(root, 'core/templates/autotest-plan.md'), planPath);
+    const repPath = path.join(tmp, 'report-vs-plan.md');
+    const repTpl = fs.readFileSync(path.join(root, 'core/templates/report-auto-test.md'), 'utf8');
+    const vaRep = (text, withPlan = true) => {
+      fs.writeFileSync(repPath, text);
+      return JSON.parse(
+        runScript(
+          'core/scripts/validate-artifact.mjs',
+          ['--file', repPath, '--type', 'report-auto-test', ...(withPlan ? ['--plan', planPath] : [])],
+        ),
+      );
+    };
+
+    const same = vaRep(repTpl);
+    const sameOk = same.ok === true && same.planMismatch && !same.planMismatch.missing.length && !same.planMismatch.extra.length;
+
+    // тест из плана не дошёл до отчёта
+    const dropped = vaRep(repTpl.replace(/^\| AT-2 .*$\n/m, ''));
+    const droppedCaught =
+      dropped.ok === false &&
+      dropped.planMismatch.missing.includes('AT-2') &&
+      dropped.problems.some((p) => /AT-2/.test(p));
+
+    // тест сверх плана: не роняем валидацию, но обязаны показать
+    const added = vaRep(repTpl.replace(/^\| AT-2 .*$/m, (row) => row + '\n' + row.replace('AT-2', 'AT-9')));
+    const addedCaught = added.ok === true && added.planMismatch.extra.includes('AT-9') && !added.planMismatch.missing.length;
+
+    // без --plan сверки нет: этап плана отчёта ещё не видит
+    const solo = vaRep(repTpl, false);
+    const soloOk = solo.ok === true && !('planMismatch' in solo);
+
+    if (sameOk && droppedCaught && addedCaught && soloOk)
+      ok('validate-artifact: состав автотестов отчёта сверяется с планом (потерянный — ошибка, лишний — предупреждение)');
+    else
+      bad(
+        'validate-artifact: сверка отчёта с планом — ' +
+          [
+            sameOk ? null : 'совпадающие отчёт и план не сошлись: ' + JSON.stringify(same),
+            droppedCaught ? null : 'потерянный автотест прошёл: ' + JSON.stringify(dropped),
+            addedCaught ? null : 'лишний автотест не показан: ' + JSON.stringify(added.planMismatch),
+            soloOk ? null : 'без --plan появился planMismatch: ' + JSON.stringify(solo),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
   }
 
   const intentPath = path.join(tmp, 'intent-test.md');

@@ -108,7 +108,7 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
    шире задачи.
 10. Обнови meta.json: `stages['implement-auto-test'].done = true`, объект
     `review` и — рядом с `autotestBranch` — `autoTestJob`:
-    `{ "url": "<ссылка на сборку>", "status": "<SUCCESS|FAILURE|UNSTABLE|в процессе>" }`.
+    `{ "url": "<ссылка на сборку>", "status": "<статус как вернул Jenkins: SUCCESS|UNSTABLE|FAILURE|ABORTED|… — либо «в процессе»>" }`.
     Джобу не запускали — `{ "url": null, "status": "не запускалась: <причина>" }`.
     Двух полей достаточно: остальное (джоба, ветка, теги, чем запускали)
     либо уже есть в meta.json, либо живёт в разделе «Прогон в CI» отчёта, и

@@ -19,14 +19,20 @@ description: Реализует автотесты в репозитории а�
    `<TASK-ID>-autotests` (`git-ops branch`), запиши autotestBranch.
 3. Запусти qa-autotest-engineer: вход — ТОЛЬКО autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (кодовая база FE/BE
-   не открывается, дифф реализации не готовится); реализация кейсов по
-   разделу «Шаги реализации тестов» и соглашениям репозитория автотестов,
-   с отметкой чекбокса каждого выполненного шага в autotest-plan.md
+   не открывается, дифф реализации не готовится); реализация автотестов
+   `AT-N` (раздел «Автотесты» — что писать, «Шаги реализации тестов» — где)
+   по соглашениям репозитория автотестов, с отметкой чекбокса каждого
+   выполненного шага в autotest-plan.md
    (`- [ ]` → `- [x]`; остальной текст плана не правится); запуск тестов;
    report-auto-test.md (core/templates/report-auto-test.md).
-4. Цикл ревью (core/stages/_review-loop.md, домен autotests): агент reviewer
+4. Сверь отчёт с планом:
+   `validate-artifact --file <задача>/report-auto-test.md --type
+   report-auto-test --plan <задача>/autotest-plan.md` — на каждый `AT-N`
+   плана строка в отчёте. `planMismatch.missing` → возврат агенту; `extra`
+   → должен быть объяснён в «Расхождении с планом».
+5. Цикл ревью (core/stages/_review-loop.md, домен autotests): агент reviewer
    находит замечания, qa-autotest-engineer спорит и исправляет (2 раунда по
    умолчанию; нерешённые blocker/major → эскалация).
-5. Скилл коммитит финальные изменения в ветку (push/MR — по подтверждению).
+6. Скилл коммитит финальные изменения в ветку (push/MR — по подтверждению).
    Обнови meta.json (stages.implement-auto-test.done + review). Конвейер
    задачи завершён.

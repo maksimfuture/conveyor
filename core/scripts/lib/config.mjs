@@ -218,7 +218,7 @@ export function repoStates(cfg) {
 //   { found:true, workspaceRoot, config,         — success
 //     fastMode, links, missingLinks, urlLinks }
 //
-// links[key] = { value, isGitUrl, path, inside, mainBranch }
+// links[key] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl }
 // inside — пригодна ли ссылка (см. isUsableLink); только такая даёт
 // рабочую копию (repoRootFor). missingLinks = repo keys with an empty link;
 // urlLinks = keys where the link is a git URL (a configuration error: the
@@ -279,12 +279,19 @@ export function readConfig(startDir = process.cwd()) {
     const entry = isPlainObject(config.repos) && isPlainObject(config.repos[key]) ? config.repos[key] : null;
     const value = (((entry && entry.link) || '') + '').trim();
     const mainBranch = (((entry && entry.mainBranch) || '') + '').trim() || 'main';
+    // Ссылка на джобу автотестов в CI (repos.autoTest.linkPipelineAutoTest).
+    // Это URL, а не путь к рабочей копии: проверка isUsableLink к нему НЕ
+    // применяется и применяться не должна — ради этого он и заведён отдельным
+    // ключом, а не спрятан в link. Ключ необязателен: пустая строка означает
+    // «джоба не настроена», и этап автотестов просто не пойдёт в CI.
+    const pipelineUrl = (((entry && entry.linkPipelineAutoTest) || '') + '').trim();
     // Нормализованные значения пишем обратно в config: stage-файлы отсылают
     // модель к config.repos.<ключ>.link, ядро считает по links[key].value —
     // два написания одного значения расходились бы на пробелах.
     if (entry) {
       entry.link = value;
       entry.mainBranch = mainBranch;
+      entry.linkPipelineAutoTest = pipelineUrl;
     }
 
     const url = isGitUrl(value);
@@ -298,6 +305,7 @@ export function readConfig(startDir = process.cwd()) {
       path: abs,
       inside: isUsableLink(value, workspaceRoot),
       mainBranch,
+      pipelineUrl,
     };
   }
 

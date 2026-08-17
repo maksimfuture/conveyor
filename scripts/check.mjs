@@ -3406,6 +3406,44 @@ try {
     ok('fast: по умолчанию выключен (reviewRounds=2)');
   else bad('fast: дефолт не false');
 
+  // Ссылка на джобу автотестов живёт РЯДОМ с репозиторием автотестов
+  // (repos.autoTest.linkPipelineAutoTest) и отдельным ключом, потому что это
+  // URL: правило «link — путь ВНУТРИ проекта» к джобе неприменимо. Отсюда
+  // вторая половина проверки: guard настроек не должен принять этот URL за
+  // негодный repos.*.link и заблокировать запись — иначе настроить джобу
+  // можно будет только в обход плагина.
+  {
+    const jobWs = path.join(tmp, 'ws-job');
+    fs.mkdirSync(jobWs, { recursive: true });
+    const jobUrl = 'https://jenkins.example.com/job/MAM/job/autotest-web/';
+    const settings = {
+      taskPrefix: 'TASK',
+      repos: { autoTest: { link: 'repos/autotests', mainBranch: 'main', linkPipelineAutoTest: ` ${jobUrl} ` } },
+    };
+    fs.writeFileSync(path.join(jobWs, 'settings.json'), JSON.stringify(settings, null, 2));
+    const jobCfg = JSON.parse(runScript('core/scripts/resolve-config.mjs', [jobWs]));
+    const guardOut = execFileSync('node', [path.join(root, 'core/scripts/guard-writes.mjs')], {
+      input: JSON.stringify({
+        cwd: jobWs,
+        tool_input: { file_path: path.join(jobWs, 'settings.json'), content: JSON.stringify(settings) },
+      }),
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: jobWs },
+    }).trim();
+
+    if (
+      jobCfg.links.autoTest.pipelineUrl === jobUrl &&
+      jobCfg.links.frontend.pipelineUrl === '' &&
+      !/deny/.test(guardOut)
+    )
+      ok('config: repos.autoTest.linkPipelineAutoTest — URL джобы читается и не отвергается guard настроек');
+    else
+      bad(
+        'config: linkPipelineAutoTest: ' +
+          JSON.stringify({ autoTest: jobCfg.links.autoTest.pipelineUrl, guard: guardOut.slice(0, 200) }),
+      );
+  }
+
   // validate-artifact: неполный артефакт (нет разделов) → ok:false
   const artPath = path.join(tmp, 'plan-test.md');
   fs.writeFileSync(artPath, '# План\n## Краткое резюме подхода\nчто-то\n');

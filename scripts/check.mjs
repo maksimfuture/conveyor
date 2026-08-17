@@ -1116,6 +1116,37 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .filter(Boolean)
           .join('; '),
     );
+
+  // Прогон автотестов в CI. Шесть вещей держатся только текстом стейджа, и
+  // каждая при нарушении даёт правдоподобный, но ложный результат:
+  // (1) отчёт раньше прогона — в отчёте не будет сборки; (2) сборка раньше
+  // push — Jenkins соберёт СТАРУЮ ветку из origin и отчитается зелёным;
+  // (3) запуск без разрешения — чужая сборка на общем агенте; (4) теги без
+  // права правки — гоняется не то, что нужно человеку; (5) без периода опроса
+  // «дождись результата» превращается в бесконечный цикл; (6) отказ от
+  // запуска не должен отменять отчёт — иначе этап заканчивается ничем.
+  const pushFirst = stage.indexOf('push') < stage.indexOf('джоб');
+  const reportLast = stage.lastIndexOf('report-auto-test.md') > stage.indexOf('джоб');
+  const askRun = /(разрешени|спроси)\w*[^.]{0,120}(запуск|джоб)/i.test(stage);
+  const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(stage);
+  const poll = /(3 минут|три минут)/i.test(stage);
+  const refusedStillReports = /(отказ|не запускал)\w*[^.]{0,200}отчёт/i.test(stage);
+  if (pushFirst && reportLast && askRun && askTags && poll && refusedStillReports)
+    ok('implement-auto-test: push → разрешение → теги → сборка (опрос раз в 3 минуты) → отчёт; отказ не отменяет отчёт');
+  else
+    bad(
+      'implement-auto-test: прогон в CI — ' +
+        [
+          pushFirst ? null : 'запуск джобы описан раньше push',
+          reportLast ? null : 'отчёт формируется раньше прогона',
+          askRun ? null : 'не спрашивается разрешение на запуск джобы',
+          askTags ? null : 'пользователю не предлагается изменить теги',
+          poll ? null : 'не указан опрос статуса раз в 3 минуты',
+          refusedStillReports ? null : 'не сказано, что при отказе отчёт всё равно формируется',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
 }
 
 // 2n) Стейдж /setup создаёт то, из чего потом читает ВЕСЬ плагин, и выполняет

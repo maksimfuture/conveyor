@@ -1117,6 +1117,25 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
+  // Отчёт агент пишет ПОСЛЕ прогона и по фактам, которые передал скилл: в
+  // Jenkins агенту ходить нечем (MCP-инструменты ему не переданы), а curl из
+  // Bash обошёл бы и разрешение пользователя, и выбранные им теги.
+  const promptFlat = promptRaw.replace(/\s+/g, ' ');
+  const agentNoCi = /(не ход\w+|не запускай\w*)[^.]{0,80}(CI|Jenkins)/i.test(promptFlat);
+  const factsFromSkill = /(факт\w*|данны\w*)[^.]{0,160}сборк\w*/i.test(promptFlat) && /скилл/i.test(implSect);
+  if (agentNoCi && factsFromSkill)
+    ok('qa-autotest-engineer: в CI не ходит, факты о сборке для отчёта получает от скилла');
+  else
+    bad(
+      'qa-autotest-engineer: границы CI — ' +
+        [
+          agentNoCi ? null : 'не запрещён поход в Jenkins/CI',
+          factsFromSkill ? null : 'не сказано, откуда берутся факты о сборке',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
   // Прогон автотестов в CI. Шесть вещей держатся только текстом стейджа, и
   // каждая при нарушении даёт правдоподобный, но ложный результат:
   // (1) отчёт раньше прогона — в отчёте не будет сборки; (2) сборка раньше

@@ -20,6 +20,14 @@
 
 ---
 
+## Статус
+
+- **Task 0 (discovery MCP) — не выполнена:** в сессии нет подключённого MCP-сервера Jenkins. Имена инструментов в шаге 8 стейджа намеренно не проставлены: этап определяет их в сессии.
+- **Tasks 1–5 — выполнены** (коммиты 814ad8e, ee4e525, 497b611, fffd576, 3bfbb01), `node scripts/check.mjs` зелёный, dist пересобран.
+- Отклонение от плана: понадобилась правка `adapters/gigacode/QWEN.md` — там перечислены поля `links.<ключ>`, и тестовый контур поймал рассинхрон после добавления `pipelineUrl`.
+
+---
+
 ## File Structure
 
 | Файл | Ответственность | Действие |
@@ -73,7 +81,7 @@
 - Modify: `core/templates/settings.example.json`
 - Test: `scripts/check.mjs`
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 В `scripts/check.mjs`, рядом с тестами конфигурации:
 
@@ -121,12 +129,12 @@
   }
 ```
 
-- [ ] **Шаг 2: запустить и убедиться, что падает**
+- [x] **Шаг 2: запустить и убедиться, что падает**
 
 Run: `node scripts/check.mjs`
 Expected: `FAIL config: linkPipelineAutoTest: {"autoTest":undefined,...}`
 
-- [ ] **Шаг 3: прочитать ключ в ядре**
+- [x] **Шаг 3: прочитать ключ в ядре**
 
 `core/scripts/lib/config.mjs`, в цикле `for (const key of REPO_KEYS)` — после вычисления `mainBranch`:
 
@@ -153,12 +161,12 @@ Expected: `FAIL config: linkPipelineAutoTest: {"autoTest":undefined,...}`
       pipelineUrl,
 ```
 
-- [ ] **Шаг 4: запустить тест**
+- [x] **Шаг 4: запустить тест**
 
 Run: `node scripts/check.mjs`
 Expected: `ok config: repos.autoTest.linkPipelineAutoTest — URL джобы читается и не отвергается guard настроек`
 
-- [ ] **Шаг 5: показать ключ в примере настроек**
+- [x] **Шаг 5: показать ключ в примере настроек**
 
 `core/templates/settings.example.json`:
 
@@ -167,7 +175,7 @@ Expected: `ok config: repos.autoTest.linkPipelineAutoTest — URL джобы ч�
                          "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
 ```
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add core/scripts/lib/config.mjs core/templates/settings.example.json scripts/check.mjs
@@ -183,7 +191,7 @@ git commit -m "feat(ci): repos.autoTest.linkPipelineAutoTest — ссылка н
 - Modify: `core/scripts/validate-artifact.mjs`
 - Test: `scripts/check.mjs`
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```js
   // Раздел отвечает на один вопрос: сборка была или нет. Пустой раздел
@@ -221,12 +229,12 @@ git commit -m "feat(ci): repos.autoTest.linkPipelineAutoTest — ссылка н
   }
 ```
 
-- [ ] **Шаг 2: запустить и убедиться, что падает**
+- [x] **Шаг 2: запустить и убедиться, что падает**
 
 Run: `node scripts/check.mjs`
 Expected: `FAIL validate-artifact: «Прогон в CI» — отчёт без раздела прошёл: []`
 
-- [ ] **Шаг 3: добавить раздел в шаблон**
+- [x] **Шаг 3: добавить раздел в шаблон**
 
 `core/templates/report-auto-test.md`, после таблицы `## Реализованные автотесты`:
 
@@ -246,7 +254,7 @@ Expected: `FAIL validate-artifact: «Прогон в CI» — отчёт без 
 - **Тесты в этом прогоне:** <по данным Jenkins: всего N, упало N, пропущено N>
 ```
 
-- [ ] **Шаг 4: сделать раздел обязательным**
+- [x] **Шаг 4: сделать раздел обязательным**
 
 `core/scripts/validate-artifact.mjs` — в `REQUIRED`:
 
@@ -268,12 +276,12 @@ Expected: `FAIL validate-artifact: «Прогон в CI» — отчёт без 
     },
 ```
 
-- [ ] **Шаг 5: запустить тесты**
+- [x] **Шаг 5: запустить тесты**
 
 Run: `node scripts/check.mjs`
 Expected: `ok validate-artifact: отчёт обязан нести «Прогон в CI»…`; шаблон отчёта по-прежнему проходит валидацию своего типа.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add core/templates/report-auto-test.md core/scripts/validate-artifact.mjs scripts/check.mjs
@@ -288,7 +296,7 @@ git commit -m "feat(ci): раздел «Прогон в CI» в отчёте п�
 - Modify: `core/stages/implement-auto-test.md` (шаги 3–6 → 3–10, «Ошибки», «DoD»)
 - Test: `scripts/check.mjs`
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```js
   // Четыре вещи, которые держатся только текстом стейджа и потому проверяются
@@ -325,12 +333,12 @@ git commit -m "feat(ci): раздел «Прогон в CI» в отчёте п�
   }
 ```
 
-- [ ] **Шаг 2: запустить и убедиться, что падает**
+- [x] **Шаг 2: запустить и убедиться, что падает**
 
 Run: `node scripts/check.mjs`
 Expected: `FAIL implement-auto-test: порядок прогона в CI — отчёт формируется раньше прогона; не спрашивается разрешение…`
 
-- [ ] **Шаг 3: переписать шаги стейджа**
+- [x] **Шаг 3: переписать шаги стейджа**
 
 `core/stages/implement-auto-test.md` — заменить шаги 3–6 (имена MCP-инструментов подставить из Task 0):
 
@@ -384,7 +392,7 @@ Expected: `FAIL implement-auto-test: порядок прогона в CI — о�
     `{ skipped: "<причина>" }`). Сними рабочую область (`scope.mjs clear`).
 ```
 
-- [ ] **Шаг 4: дополнить «Ошибки»**
+- [x] **Шаг 4: дополнить «Ошибки»**
 
 ```markdown
 - MCP-сервер Jenkins не отвечает, джоба недоступна, нет прав на запуск →
@@ -394,7 +402,7 @@ Expected: `FAIL implement-auto-test: порядок прогона в CI — о�
   и ссылка идут в отчёт; разбор падений — отдельная работа.
 ```
 
-- [ ] **Шаг 5: дополнить «DoD»**
+- [x] **Шаг 5: дополнить «DoD»**
 
 ```markdown
 `report-auto-test.md` сформирован ПОСЛЕ прогона и сошёлся с планом по составу
@@ -402,12 +410,12 @@ Expected: `FAIL implement-auto-test: порядок прогона в CI — о�
 почему джоба не запускалась; в meta.json записан `ciRun`;
 ```
 
-- [ ] **Шаг 6: запустить тесты**
+- [x] **Шаг 6: запустить тесты**
 
 Run: `node scripts/check.mjs`
 Expected: `ok implement-auto-test: push → разрешение → теги → сборка (опрос раз в 3 минуты) → отчёт; отказ не отменяет отчёт`
 
-- [ ] **Шаг 7: коммит**
+- [x] **Шаг 7: коммит**
 
 ```bash
 git add core/stages/implement-auto-test.md scripts/check.mjs
@@ -425,7 +433,7 @@ git commit -m "feat(ci): запуск джобы автотестов и отч�
 - Modify: `adapters/gigacode/commands/conveyor/implement-auto-test.md`
 - Test: `scripts/check.mjs`
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```js
   // Агент пишет отчёт ПОСЛЕ прогона и по фактам, которые ему передал скилл: в
@@ -447,12 +455,12 @@ git commit -m "feat(ci): запуск джобы автотестов и отч�
   }
 ```
 
-- [ ] **Шаг 2: запустить и убедиться, что падает**
+- [x] **Шаг 2: запустить и убедиться, что падает**
 
 Run: `node scripts/check.mjs`
 Expected: `FAIL qa-autotest-engineer: границы CI — не запрещён поход в Jenkins/CI; не сказано, откуда факты о сборке`
 
-- [ ] **Шаг 3: дописать промпт**
+- [x] **Шаг 3: дописать промпт**
 
 `core/prompts/qa-autotest-engineer.md`, раздел «На этапе /conveyor:implement-auto-test» — заменить пункт 4 и добавить пункт 5:
 
@@ -473,7 +481,7 @@ Expected: `FAIL qa-autotest-engineer: границы CI — не запрещё�
 
 (перенести в новый пункт 4 требование про совпадение количества автотестов, которое сейчас живёт в старом пункте 4)
 
-- [ ] **Шаг 4: дописать адаптеры**
+- [x] **Шаг 4: дописать адаптеры**
 
 `adapters/claude-code/agents/qa-autotest-engineer.md`, в пункт `/implement-auto-test`:
 
@@ -491,12 +499,12 @@ Expected: `FAIL qa-autotest-engineer: границы CI — не запрещё�
 description: Реализует автотесты по плану, проводит цикл ревью, по подтверждению пушит ветку и запускает джобу автотестов в Jenkins (теги можно изменить), дожидается результата и формирует отчёт. Запускать после create-autotest-plan. Аргумент TASK-ID.
 ```
 
-- [ ] **Шаг 5: запустить тесты**
+- [x] **Шаг 5: запустить тесты**
 
 Run: `node scripts/check.mjs`
 Expected: `ok qa-autotest-engineer: в CI не ходит, факты о сборке получает от скилла`, весь прогон зелёный.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add core/prompts/qa-autotest-engineer.md adapters scripts/check.mjs
@@ -511,15 +519,15 @@ git commit -m "feat(ci): отчёт формируется после прого
 - Modify: `README.md`, `INSTALL.md`
 - Build: `dist/`
 
-- [ ] **Шаг 1: README — описать ключ**
+- [x] **Шаг 1: README — описать ключ**
 
 В описании `settings.json` (рядом с `repos.*.link` / `mainBranch`) добавить `linkPipelineAutoTest`: ссылка на джобу автотестов в Jenkins; ключ необязателен — без него этап не запускает сборку и пишет это в отчёт. Отдельно оговорить, что это ЕДИНСТВЕННОЕ поле-URL в `repos.*` и правило «link — путь внутри проекта» к нему не относится.
 
-- [ ] **Шаг 2: INSTALL — подключение MCP-сервера Jenkins**
+- [x] **Шаг 2: INSTALL — подключение MCP-сервера Jenkins**
 
 Сервер подключает пользователь в своём клиенте; плагин его не устанавливает и токенов не хранит — в `settings.json` попадает только ссылка на джобу. Токен Jenkins живёт в конфигурации MCP-сервера, не в `settings.json` и не в `.env`. Для GigaCode — оговорка: нет MCP → ключ не заполняют, этап работает как раньше.
 
-- [ ] **Шаг 3: собрать и прогнать**
+- [x] **Шаг 3: собрать и прогнать**
 
 ```bash
 node scripts/build.mjs
@@ -527,7 +535,7 @@ node scripts/check.mjs
 ```
 Expected: `+ dist\claude-code`, `+ dist\gigacode`, «Все проверки пройдены».
 
-- [ ] **Шаг 4: коммит**
+- [x] **Шаг 4: коммит**
 
 ```bash
 git add README.md INSTALL.md

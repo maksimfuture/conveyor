@@ -16,7 +16,10 @@
 1. Первым делом получает конфигурацию:
    `node "${CONVEYOR_ROOT}/core/scripts/resolve-config.mjs"`. В ответе поля
    `found`, `workspaceRoot`, `config`, `links`, `missingLinks`, `urlLinks`,
-   `fastMode`; `links.<ключ>` = `{ value, isGitUrl, path, inside, mainBranch }`.
+   `fastMode`; `links.<ключ>` = `{ value, isGitUrl, path, inside, mainBranch,
+   pipelineUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
+   `repos.<ключ>.linkPipelineAutoTest`; заполнен только у `autoTest`, пустая
+   строка = джоба не настроена).
    Реакция:
    - `found:false` — останови этап: «здесь не инициализирован рабочий
      репозиторий conveyor, запустите /conveyor:setup»;

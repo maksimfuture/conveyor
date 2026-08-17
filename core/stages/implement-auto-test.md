@@ -34,6 +34,15 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
    в кодовую базу.
 4. Запусти написанные тесты; результаты — в `report-auto-test.md` по
    `core/templates/report-auto-test.md` (пройдено/упало/пропущено, причины).
+   Затем сверь отчёт с планом:
+   `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/report-auto-test.md --type report-auto-test --plan <папка задачи>/autotest-plan.md`
+   — количество автотестов в отчёте обязано совпадать с планом: на каждый
+   `AT-N` раздела «Автотесты» плана в таблице отчёта есть строка с тем же ID.
+   `planMismatch.missing` (тест из плана потерялся) — `ok:false`, один
+   автоматический возврат агенту, затем остаток пользователю;
+   `planMismatch.extra` (тест сверх плана) — не ошибка, но обязан быть
+   объяснён строкой «Расхождение с планом»; нет объяснения — тоже возврат.
+   План задним числом не переписывается: расхождение живёт в отчёте.
 5. **Цикл ревью** (`${CONVEYOR_ROOT}/core/stages/_review-loop.md`), домен
    `autotests`. Передай reviewer: autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (для реального
@@ -56,5 +65,8 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
 Все кейсы P1 из `autotest-plan.md` реализованы; чекбоксы выполненных шагов
 в нём отмечены (`- [x]`), незакрытые шаги объяснены в отчёте; тесты
 запущены (или блокировка описана);
-report-auto-test.md создан; цикл ревью пройден (коммит — после ревью;
+report-auto-test.md создан и сошёлся с планом по составу автотестов
+(`validate-artifact --type report-auto-test --plan <autotest-plan.md>`:
+`planMismatch.missing` пуст, `extra` объяснён в «Расхождении с планом»);
+цикл ревью пройден (коммит — после ревью;
 нерешённые blocker|major вынесены пользователю). Конвейер задачи завершён.

@@ -52,5 +52,7 @@ description: Реализует автотесты в репозитории а�
    report-auto-test --plan <задача>/autotest-plan.md` — на каждый `AT-N`
    плана строка в отчёте. `planMismatch.missing` → возврат агенту; `extra`
    → должен быть объяснён в «Расхождении с планом».
-8. Обнови meta.json (stages.implement-auto-test.done + review + ciRun, включая
-   `tools` — чем запускали и опрашивали). Конвейер задачи завершён.
+8. Обнови meta.json: stages.implement-auto-test.done + review, плюс
+   `autoTestJob: { url, status }` рядом с autotestBranch (не запускали —
+   `{ url: null, status: "не запускалась: <причина>" }`). Конвейер задачи
+   завершён.

@@ -1150,7 +1150,13 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
   const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(stage);
   const poll = /(3 минут|три минут)/i.test(stage);
   const refusedStillReports = /(отказ|не запускал)\w*[^.]{0,200}отчёт/i.test(stage);
-  if (pushFirst && reportLast && askRun && askTags && poll && refusedStillReports)
+  // Имён MCP-инструментов плагин не хранит: у каждой команды свой сервер
+  // Jenkins, и захардкоженное имя означало бы «работает только у автора».
+  // Этап подбирает их в сессии — и обязан пережить случай, когда подбирать
+  // нечего: без инструмента запуска сборки нет, но этап не падает.
+  const picksTools = /инструмент\w*[^.]{0,200}(подбер|подбир|определ|найд|выбер)/i.test(stage);
+  const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(stage);
+  if (pushFirst && reportLast && askRun && askTags && poll && refusedStillReports && picksTools && noToolsFallback)
     ok('implement-auto-test: push → разрешение → теги → сборка (опрос раз в 3 минуты) → отчёт; отказ не отменяет отчёт');
   else
     bad(
@@ -1162,6 +1168,8 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           askTags ? null : 'пользователю не предлагается изменить теги',
           poll ? null : 'не указан опрос статуса раз в 3 минуты',
           refusedStillReports ? null : 'не сказано, что при отказе отчёт всё равно формируется',
+          picksTools ? null : 'этап не подбирает MCP-инструменты сам',
+          noToolsFallback ? null : 'не описан случай «подходящих инструментов нет»',
         ]
           .filter(Boolean)
           .join('; '),

@@ -1136,16 +1136,43 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
-  // Прогон автотестов в CI. Шесть вещей держатся только текстом стейджа, и
-  // каждая при нарушении даёт правдоподобный, но ложный результат:
-  // (1) отчёт раньше прогона — в отчёте не будет сборки; (2) сборка раньше
-  // push — Jenkins соберёт СТАРУЮ ветку из origin и отчитается зелёным;
-  // (3) запуск без разрешения — чужая сборка на общем агенте; (4) теги без
-  // права правки — гоняется не то, что нужно человеку; (5) без периода опроса
-  // «дождись результата» превращается в бесконечный цикл; (6) отказ от
-  // запуска не должен отменять отчёт — иначе этап заканчивается ничем.
-  const pushFirst = stage.indexOf('push') < stage.indexOf('джоб');
-  const reportLast = stage.lastIndexOf('report-auto-test.md') > stage.indexOf('джоб');
+  // Прогон автотестов в CI. Порядок шагов держится только текстом стейджа, и
+  // каждое нарушение даёт правдоподобный, но ложный результат:
+  // (1) отчёт раньше ревью — он переписывался бы после каждого исправления;
+  // (2) отчёт позже сборки — потерянный автотест всплывает после прогона,
+  // а он же означает недостающий тег, то есть второй прогон джобы; сборка
+  // при этом идёт долго и не всегда доходит до конца — обрыв уносит отчёт
+  // целиком; (3) «Прогон в CI» дописан раньше сборки — в отчёте не будет её
+  // результата; (4) сборка раньше push — Jenkins соберёт СТАРУЮ ветку из
+  // origin и отчитается зелёным; (5) запуск без разрешения — чужая сборка на
+  // общем агенте; (6) теги без права правки — гоняется не то, что нужно
+  // человеку; (7) без периода опроса «дождись результата» превращается в
+  // бесконечный цикл; (8) отказ от запуска не должен отменять отчёт — иначе
+  // этап заканчивается ничем; (9) без ciPending:false этап закрывается по
+  // отчёту, в котором на месте сборки остался маркер ожидания.
+  //
+  // Порядок сверяем по НОМЕРАМ шагов алгоритма, а не по позиции слова в
+  // тексте: «джоба» упоминается и там, где её только записывают в отчёт.
+  const algoSteps = (stageRaw.split(/^## /m).find((s) => s.startsWith('Алгоритм')) || '').split(/\n(?=\d+\. )/);
+  const stepIdx = (re) => algoSteps.findIndex((s) => re.test(s));
+  const iReview = stepIdx(/Цикл ревью/i);
+  const iReport = stepIdx(/Отчёт \(без прогона в CI\)/i);
+  const iPush = stepIdx(/push/i);
+  const iRun = stepIdx(/Запусти сборку/i);
+  const iFinal = stepIdx(/Дописать «Прогон в CI»/i);
+  const found = [iReview, iReport, iPush, iRun, iFinal].every((i) => i !== -1);
+  const reportAfterReview = found && iReview < iReport;
+  const reportBeforeRun = found && iReport < iRun;
+  const finalAfterRun = found && iRun < iFinal;
+  const pushFirst = found && iPush < iRun;
+  // Сверка с планом обязана идти в шаге отчёта — то есть ДО сборки: в этом и
+  // смысл переноса. Уехав в финализацию, она снова ловила бы потерянный тест
+  // после прогона.
+  const reportStep = found ? algoSteps[iReport] : '';
+  const planCheckEarly = /validate-artifact/.test(reportStep) && /--plan/.test(reportStep);
+  // Маркер ожидания снимается только фактами сборки, и этап закрывается по
+  // ciPending:false. Без этого промежуточный отчёт неотличим от финального.
+  const pendingGate = /ciPending/.test(stage) && /ожидается прогон в CI/i.test(stage);
   const askRun = /(разрешени|спроси)\w*[^.]{0,120}(запуск|джоб)/i.test(stage);
   const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(stage);
   const poll = /(3 минут|три минут)/i.test(stage);
@@ -1158,14 +1185,35 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
     /(подбер|подбир|определ|выбер)\w*[^.]{0,80}инструмент/i.test(stage) ||
     /инструмент\w*[^.]{0,120}(подбер|подбир|определ|выбер)/i.test(stage);
   const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(stage);
-  if (pushFirst && reportLast && askRun && askTags && poll && refusedStillReports && picksTools && noToolsFallback)
-    ok('implement-auto-test: push → разрешение → теги → сборка (опрос раз в 3 минуты) → отчёт; отказ не отменяет отчёт');
+  if (
+    pushFirst &&
+    reportAfterReview &&
+    reportBeforeRun &&
+    finalAfterRun &&
+    planCheckEarly &&
+    pendingGate &&
+    askRun &&
+    askTags &&
+    poll &&
+    refusedStillReports &&
+    picksTools &&
+    noToolsFallback
+  )
+    ok(
+      'implement-auto-test: ревью → отчёт (сверка с планом, маркер ожидания) → push → разрешение → теги → ' +
+        'сборка (опрос раз в 3 минуты) → «Прогон в CI» дописан; отказ не отменяет отчёт',
+    );
   else
     bad(
       'implement-auto-test: прогон в CI — ' +
         [
+          found ? null : 'шаги алгоритма не опознаны (ревью / отчёт / push / запуск сборки / дописывание)',
           pushFirst ? null : 'запуск джобы описан раньше push',
-          reportLast ? null : 'отчёт формируется раньше прогона',
+          reportAfterReview ? null : 'отчёт формируется раньше цикла ревью',
+          reportBeforeRun ? null : 'отчёт формируется позже запуска сборки',
+          finalAfterRun ? null : '«Прогон в CI» дописывается раньше сборки',
+          planCheckEarly ? null : 'сверка отчёта с планом не идёт в шаге отчёта (до сборки)',
+          pendingGate ? null : 'нет маркера «ожидается прогон в CI» / проверки ciPending',
           askRun ? null : 'не спрашивается разрешение на запуск джобы',
           askTags ? null : 'пользователю не предлагается изменить теги',
           poll ? null : 'не указан опрос статуса раз в 3 минуты',
@@ -3753,6 +3801,11 @@ try {
   // раздел читается как «прогнали, всё хорошо», хотя за ним обычно отказ
   // пользователя, незапушенная ветка или ненастроенная джоба — то есть
   // прогон, которого не было.
+  //
+  // Третье состояние — ожидание: отчёт написан после ревью, сборки ещё не
+  // было. Оно законно (иначе этап не смог бы написать отчёт до прогона), но
+  // обязано быть отличимо от финального ОТДЕЛЬНЫМ полем: по одному ok:true
+  // этап закрылся бы по отчёту, в котором на месте сборки стоит маркер.
   {
     const ciPath = path.join(tmp, 'report-ci.md');
     const ciTpl = fs.readFileSync(path.join(root, 'core/templates/report-auto-test.md'), 'utf8');
@@ -3769,14 +3822,31 @@ try {
     const emptyCi = vaCi(ciTpl.slice(0, ciFrom) + '## Прогон в CI\n\n' + ciTpl.slice(ciTo + 1));
     const emptyCiCaught = emptyCi.ok === false && emptyCi.problems.some((p) => /не запускал/i.test(p));
 
-    if (noCiSectionCaught && emptyCiCaught)
-      ok('validate-artifact: отчёт обязан нести «Прогон в CI» — со сборкой либо с причиной, почему её не было');
+    // Шаблон несёт маркер ожидания: таким отчёт выходит из-под агента до сборки.
+    const pendingCi = vaCi(ciTpl);
+    const pendingCaught = pendingCi.ok === true && pendingCi.ciPending === true;
+
+    // Тот же отчёт после сборки: маркер заменён номером и статусом.
+    const finalCi = vaCi(
+      ciTpl
+        .replace('#<номер> — <ссылка на сборку> / «ожидается прогон в CI»', '#417 — https://ci.example/job/at/417')
+        .replace(/^- \*\*Статус:\*\*.*$/m, '- **Статус:** SUCCESS'),
+    );
+    const finalCaught = finalCi.ok === true && finalCi.ciPending === false;
+
+    if (noCiSectionCaught && emptyCiCaught && pendingCaught && finalCaught)
+      ok(
+        'validate-artifact: «Прогон в CI» — сборка, причина её отсутствия либо ожидание (ciPending отличает ' +
+          'промежуточный отчёт от финального)',
+      );
     else
       bad(
         'validate-artifact: «Прогон в CI» — ' +
           [
             noCiSectionCaught ? null : 'отчёт без раздела прошёл: ' + JSON.stringify(noCiSection.missingSections),
             emptyCiCaught ? null : 'пустой раздел прошёл: ' + JSON.stringify(emptyCi.problems),
+            pendingCaught ? null : 'отчёт с маркером ожидания: ' + JSON.stringify(pendingCi),
+            finalCaught ? null : 'отчёт с готовой сборкой: ' + JSON.stringify(finalCi),
           ]
             .filter(Boolean)
             .join('; '),

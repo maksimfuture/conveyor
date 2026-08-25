@@ -2,9 +2,21 @@
 description: Реализует автотесты в репозитории автотестов по плану автотестов, прогоняет их локально, проводит цикл ревью, формирует отчёт, по подтверждению пушит ветку и запускает джобу автотестов в Jenkins (теги можно изменить), дожидается результата и дописывает в отчёт итоги сборки. Запускать после create-autotest-plan. Аргумент TASK-ID.
 ---
 
+**Шаг 0. Корень расширения.** Файлы этапа и скрипты лежат в каталоге установки
+расширения — ВНЕ текущего проекта. Определи его абсолютный путь:
+`node -e "const o=require('os'),f=require('fs'),d=(o.homedir()+'/.gigacode/extensions/conveyor').split(String.fromCharCode(92)).join('/');console.log(f.existsSync(d+'/core/stages/_common.md')?d:'NOT_FOUND')"`
+Напечатанный путь — это `<CONVEYOR_ROOT>`: подставляй его БУКВАЛЬНО вместо
+плейсхолдера во всех путях и командах ниже. Переменной окружения с таким
+именем нет — `$` с фигурными скобками раскроется в пустоту. Напечатано
+`NOT_FOUND` — останови этап и спроси у пользователя каталог, куда
+`gigacode extensions install` поставил conveyor: гадать и искать по диску
+нельзя. Если файловый инструмент ограничен каталогом проекта и
+файлы этапа не читает — читай их оболочкой:
+`cat "<CONVEYOR_ROOT>/core/stages/_common.md"`.
+
 Этап конвейера conveyor: implement-auto-test. Действуй по общему протоколу из
 QWEN.md (правила защиты: git — через git-ops.mjs, push — по подтверждению),
-затем выполни ТОЧНО `${CONVEYOR_ROOT}/core/stages/implement-auto-test.md`.
+затем выполни ТОЧНО `<CONVEYOR_ROOT>/core/stages/implement-auto-test.md`.
 
 Агент: qa-autotest-engineer. Затем цикл ревью (домен autotests) с агентом
 reviewer — core/stages/_review-loop.md.

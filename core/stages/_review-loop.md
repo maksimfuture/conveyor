@@ -10,7 +10,7 @@
 - `/conveyor:implement-auto-test` — автотесты (домен `autotests`).
 
 Участники: **producer** — агент этапа; **reviewer** — агент `reviewer`
-(`${CONVEYOR_ROOT}/core/prompts/reviewer.md`) с указанным доменом. Оба —
+(`<CONVEYOR_ROOT>/core/prompts/reviewer.md`) с указанным доменом. Оба —
 субагенты: контекст сессии не видят, скилл ЗАНОВО запускает их на каждом
 раунде, реконструируя нужный контекст в промпте (см. «Оркестрация»).
 

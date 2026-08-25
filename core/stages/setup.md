@@ -32,7 +32,7 @@
    - каталоги `tasks/FE/`, `tasks/BE/`, `intents/`, `repos/`;
    - `settings.json` и `.env.example` — СКОПИРУЙ ФАЙЛЫ шаблонов МЕХАНИЧЕСКИ
      (НЕ набирай содержимое по памяти — потеряешь новые ключи):
-     `node -e "const f=require('fs'),r=process.argv[1];f.copyFileSync(r+'/core/templates/settings.example.json','settings.json');f.copyFileSync(r+'/core/templates/env.example','.env.example')" "${CONVEYOR_ROOT}"`
+     `node -e "const f=require('fs'),r=process.argv[1];f.copyFileSync(r+'/core/templates/settings.example.json','settings.json');f.copyFileSync(r+'/core/templates/env.example','.env.example')" "<CONVEYOR_ROOT>"`
      Корень плагина передавай ИМЕННО аргументом (`process.argv[1]`), а не
      подставляй внутрь JS-строки: на Windows это путь с обратными слэшами,
      и JS разберёт их как escape (`\U`, `\t`) — команда упадёт с ENOENT на
@@ -43,7 +43,7 @@
    `CONVEYOR_REVIEW_ROUNDS` и `CONVEYOR_FAST`), а без него действуют
    умолчания. Ссылки на репозитории и основные ветки живут в `settings.json`.
    Самопроверка: сверь ключи созданного settings.json с шаблоном —
-   `node -e "const r=process.argv[1];const a=Object.keys(require(r+'/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}" "${CONVEYOR_ROOT}"`
+   `node -e "const r=process.argv[1];const a=Object.keys(require(r+'/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}" "<CONVEYOR_ROOT>"`
    — при missing дополни файл недостающими ключами из шаблона.
 4. `.gitignore` — в ОБЕИХ ролях, до диагностики. Он должен появиться ДО
    того, как в `repos/` появятся рабочие копии (иначе первый же `git status`
@@ -61,7 +61,7 @@
    «Признаки версии 1.x» ниже. Нашёлся хотя бы один — репозиторий не
    мигрирован, и тогда:
    - скажи это прямо и предложи миграцию:
-     `node "${CONVEYOR_ROOT}/core/scripts/migrate-workspace.mjs"` — сначала
+     `node "<CONVEYOR_ROOT>/core/scripts/migrate-workspace.mjs"` — сначала
      БЕЗ `--apply` (сухой прогон покажет план правок), и только после того,
      как пользователь его посмотрел, повтори с `--apply`;
    - объясни, что миграция сама переведёт ссылки на пути `repos/*` и создаст
@@ -74,7 +74,7 @@
    - скажи, что после `--apply` нужно склонировать репозитории в `repos/*` и
      повторить `/conveyor:setup` — вот тогда диагностика будет осмысленной.
 6. Диагностика рабочих копий — если признаков 1.x нет:
-   `node "${CONVEYOR_ROOT}/core/scripts/repos-status.mjs"`
+   `node "<CONVEYOR_ROOT>/core/scripts/repos-status.mjs"`
    Скрипт отдаёт JSON: `repos[]` и `summary`. Покажи таблицу по каждому
    репозиторию, столбцы — поля ответа КАК ЕСТЬ: `key`, `link` (значение из
    settings.json), `path` (куда оно разрезолвилось), `state`, `branch`,

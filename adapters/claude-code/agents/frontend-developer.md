@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 ---
 
-Тело роли — единый источник в `${CLAUDE_PLUGIN_ROOT}/core/prompts/frontend-developer.md`.
+Тело роли — единый источник в `<CONVEYOR_ROOT>/core/prompts/frontend-developer.md`.
 Ключевое:
 
 Ты — опытный фронтенд-разработчик. Сначала соглашения: передан файл

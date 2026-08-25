@@ -1,7 +1,7 @@
 # Этап /conveyor:create-specification — правки анализа + спецификация
 
 **Кто запускает:** системный аналитик. **Агент:** system-analyst
-(`${CONVEYOR_ROOT}/core/prompts/system-analyst.md`).
+(`<CONVEYOR_ROOT>/core/prompts/system-analyst.md`).
 **Аргументы:** `INTENT-ID | TASK-ID [FE|BE|FE-BE] [номер]`.
 **Предусловие:** для `INTENT-ID` — существует `intents/<INTENT-ID>/intent.md`;
 для `TASK-ID` — существует `tasks/<FE|BE>/<TASK-ID>/meta.json` (так
@@ -89,7 +89,7 @@
    `analysisDone:true` фаза A на этом заканчивается). Не нашлась — первый
    запуск: доспроси тип и номер (см. «Разбор аргументов») и продолжай.
 3. Установи рабочую область:
-   `node "${CONVEYOR_ROOT}/core/scripts/scope.mjs" set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID>`
+   `node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID>`
    (для пары — `--type FE-BE --task <TASK-ID FE-задачи>`; запись разрешена в
    systemsAnalysis).
 4. Заведи задачу(и) — запиши `meta.json` со скелетом: `schemaVersion: 2`,
@@ -132,7 +132,7 @@
      переписанный целиком, — признак переформатирования, а не правки.
    При провале — верни агенту на исправление (один раз), затем эскалируй
    пользователю.
-10. **Цикл ревью** (`${CONVEYOR_ROOT}/core/stages/_review-loop.md`), домен
+10. **Цикл ревью** (`<CONVEYOR_ROOT>/core/stages/_review-loop.md`), домен
     `systems-analysis`: reviewer проверяет НЕзакоммиченные правки анализа
     (`git diff` рабочего дерева), system-analyst отвечает/спорит и
     исправляет. Пара FE-BE: ревью запускается ОДИН раз на общие правки.
@@ -150,7 +150,7 @@
 
 ## Фаза B — спецификация
 13. Смени рабочую область — запись в репозитории больше не нужна:
-    `node "${CONVEYOR_ROOT}/core/scripts/scope.mjs" set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID> --write none`
+    `node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID> --write none`
     (для пары — `--type FE-BE --task <TASK-ID FE-задачи>`, те же значения, что
     в шаге 3; повторный запуск с `analysisDone:true` начинается прямо отсюда.)
 14. Собери дифф собственных правок:
@@ -176,7 +176,7 @@
     «Границы задачи»; изменения связанной задачи не превращаются в REQ-ID
     своей — только ссылка на `relatedTaskId`.
 16. Валидация:
-    `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/specification.md --type specification`
+    `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <папка задачи>/specification.md --type specification`
     При `ok:false` — один возврат агенту со списком `missingSections`/
     `problems`, затем покажи пользователю остаток. Непустой `placeholders`
     при `ok:true` — тот же один возврат агенту: в артефакте остался каркас

@@ -36,7 +36,7 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
 4. Прогон тестов локально — тем же агентом. `report-auto-test.md` на этом
    шаге НЕ пишется: сначала цикл ревью (шаг 5), иначе отчёт переписывался бы
    после каждого исправления.
-5. **Цикл ревью** (`${CONVEYOR_ROOT}/core/stages/_review-loop.md`), домен
+5. **Цикл ревью** (`<CONVEYOR_ROOT>/core/stages/_review-loop.md`), домен
    `autotests`. Передай reviewer: autotest-plan.md,
    specification.md и путь к рабочей копии автотестов (для реального
    запуска тестов); путь к кодовой базе НЕ передаётся. reviewer проверяет
@@ -60,7 +60,7 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
    недоступный Jenkins — тесты написаны и отревьюены, терять этот результат
    из-за CI нельзя.
    Сразу сверь отчёт с планом:
-   `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/report-auto-test.md --type report-auto-test --plan <папка задачи>/autotest-plan.md`
+   `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <папка задачи>/report-auto-test.md --type report-auto-test --plan <папка задачи>/autotest-plan.md`
    — количество автотестов в отчёте обязано совпадать с планом: на каждый
    `AT-N` раздела «Автотесты» плана в таблице отчёта есть строка с тем же ID.
    `planMismatch.missing` (тест из плана потерялся) — `ok:false`, один
@@ -121,7 +121,7 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
     Числа прогона в CI в «Итог прогона» не переносятся: сборка идёт по тегам и
     шире задачи.
     Затем повтори проверку — теперь она обязана вернуть `ciPending: false`:
-    `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/report-auto-test.md --type report-auto-test --plan <папка задачи>/autotest-plan.md`
+    `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <папка задачи>/report-auto-test.md --type report-auto-test --plan <папка задачи>/autotest-plan.md`
     `ciPending: true` здесь значит, что маркер остался на месте, а раздел не
     дописан: этап не закрывай.
 11. Обнови meta.json: `stages['implement-auto-test'].done = true`, объект

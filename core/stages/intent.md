@@ -1,7 +1,7 @@
 # Этап /conveyor:intent — сформировать намерение (БА)
 
 **Кто запускает:** бизнес-аналитик. **Агент:** business-analyst
-(`${CONVEYOR_ROOT}/core/prompts/business-analyst.md`).
+(`<CONVEYOR_ROOT>/core/prompts/business-analyst.md`).
 **Аргументы:** `[INTENT-ID] [описание/пожелание]` — оба опциональны.
 
 Суть: превратить пожелание заказчика в `intents/<INTENT-ID>/intent.md`.
@@ -49,7 +49,7 @@
 6. Агент вернул запрос на уточнение — задай вопросы пользователю через
    AskUserQuestion и перезапусти его с ответами (см. `_common.md`).
 7. Валидация:
-   `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file
+   `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file
    intents/<INTENT-ID>/intent.md --type intent`
    При `ok:false` — один возврат агенту со списком `missingSections`/
    `problems`, затем покажи пользователю остаток. Непустой `placeholders`

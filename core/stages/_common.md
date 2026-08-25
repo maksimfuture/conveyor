@@ -3,9 +3,17 @@
 Эти правила действуют на каждом этапе; отдельные stage-файлы на них ссылаются.
 
 ## Пути и запуск скриптов
-- `${CONVEYOR_ROOT}` — корень установленного плагина. В Claude Code это
-  `${CLAUDE_PLUGIN_ROOT}`. SKILL.md задаёт это значение перед первым вызовом.
-- Вся исполняемая логика — в `${CONVEYOR_ROOT}/core/scripts/*.mjs`. Вызывай
+- `<CONVEYOR_ROOT>` — АБСОЛЮТНЫЙ путь к корню установленного плагина, и это
+  ПЛЕЙСХОЛДЕР, а не переменная: подставляй вместо него настоящий путь в каждую
+  команду и в каждый путь ниже. Переменной окружения `CONVEYOR_ROOT` не
+  существует ни в одной из сред — запись через `$` с фигурными скобками
+  раскроется в ПУСТУЮ строку, и `node` молча уйдёт искать файл в корне диска;
+  экспортировать её бесполезно: окружение между вызовами оболочки не живёт.
+  Настоящий путь тебе уже дан — в Claude Code в SKILL.md (Claude Code
+  подставляет туда каталог плагина при загрузке скилла), в GigaCode в шаге
+  «Корень расширения» в начале команды. Если его там нет — останови этап и
+  спроси пользователя: не угадывай и не ищи файлы плагина по диску.
+- Вся исполняемая логика — в `<CONVEYOR_ROOT>/core/scripts/*.mjs`. Вызывай
   их через `node`. Скиллы и агенты НЕ читают `.env` напрямую.
 - НИКАКИХ cmd.exe-идиом (`dir /b`, `> nul`, `del`, `copy`, `type`) — даже
   на Windows оболочка bash-подобная: `> nul` СОЗДАЁТ файл nul. Вывод
@@ -14,7 +22,7 @@
 
 ## Первый шаг любого этапа (кроме /setup и /task-status)
 1. Получи конфигурацию:
-   `node "${CONVEYOR_ROOT}/core/scripts/resolve-config.mjs"`
+   `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`
    Разбери JSON: `found`, `workspaceRoot`, `config`, `links`, `missingLinks`,
    `urlLinks`, `fastMode`.
 2. Если `found:false` — останови этап: «Здесь не инициализирован рабочий
@@ -49,7 +57,7 @@
 ## Рабочая область этапа (scope) — агенты НЕ гуляют по репозиториям
 Каждый этап работает СТРОГО со своими репозиториями. После определения
 этапа и типа задачи установи рабочую область:
-`node "${CONVEYOR_ROOT}/core/scripts/scope.mjs" set --stage <этап> --type <FE|BE> --task <TASK-ID>`
+`node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage <этап> --type <FE|BE> --task <TASK-ID>`
 — guard-скрипты будут блокировать запись в рабочие копии всех остальных
 репозиториев. При завершении этапа: `... scope.mjs clear`.
 У этапа `intent` типа задачи ещё НЕ существует, поэтому вызов другой:
@@ -112,7 +120,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
 
 ## Работа с внешними репозиториями
 - Найти рабочую копию:
-  `node "${CONVEYOR_ROOT}/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <key>`
+  `node "<CONVEYOR_ROOT>/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <key>`
   (`link` — путь ОТ корня рабочего репозитория, поэтому `--workspace` обязателен)
 - Обновить перед работой:
   `... git-ops.mjs update --path <repoPath> --main <mainBranch> --mode read|write`
@@ -131,7 +139,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
 
 ## Завершение этапа
 ПЕРЕД тем как ставить done — проверь чистоту папки задачи:
-`node "${CONVEYOR_ROOT}/core/scripts/validate-task-folder.mjs" --task <абс. путь к папке задачи>`
+`node "<CONVEYOR_ROOT>/core/scripts/validate-task-folder.mjs" --task <абс. путь к папке задачи>`
 При `ok:false` в папку задачи попали посторонние файлы (обычно исходники,
 которые агент положил не туда): перенеси правки кода в рабочую копию
 кодовой базы (если они по плану) либо удали лишнее, и повтори проверку.
@@ -144,7 +152,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
 Агент не видит контекст сессии. Передай ему в промпте: абсолютные пути к
 папке задачи и рабочим копиям, разрешённую конфигурацию (без секретов),
 подготовленные git-диффы. Тело промпта роли — в
-`${CONVEYOR_ROOT}/core/prompts/<агент>.md`.
+`<CONVEYOR_ROOT>/core/prompts/<агент>.md`.
 
 **Файлы соглашений репозитория — агенту первым делом.** Перед запуском
 агента проверь в корне его рабочей копии файлы соглашений (в порядке
@@ -159,7 +167,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
 **Шаблон артефакта — текстом, не ссылкой.** Если этап производит артефакт
 (intent.md, specification.md, plan.md, autotest-plan.md,
 report-auto-test.md), вставь в промпт агента ПОЛНЫЙ текст соответствующего
-шаблона из `${CONVEYOR_ROOT}/core/templates/<имя>.md` — агент заполняет
+шаблона из `<CONVEYOR_ROOT>/core/templates/<имя>.md` — агент заполняет
 этот каркас, не меняя структуру разделов. Не полагайся на то, что агент
 сам прочитает файл шаблона (слабая модель может «заполнить по памяти»).
 
@@ -167,7 +175,7 @@ report-auto-test.md), вставь в промпт агента ПОЛНЫЙ т�
 Для медленных/слабых моделей. Если `resolve-config` вернул `fastMode: true`:
 - цикл ревью НЕ запускается (resolve-config уже вернул reviewRounds = 0);
 - валидацию артефактов выполняй скриптом, а не повторным прогоном агента:
-  `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <путь>
+  `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <путь>
   --type <intent|specification|plan|autotest-plan|report-auto-test>`
   — при `ok:false` один возврат агенту со списком `missingSections`/`problems`;
 - git-контекст короче: `git-ops log -n 5`; дифф длиннее ~400 строк усекай:

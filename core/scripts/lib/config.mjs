@@ -33,18 +33,183 @@ export function readJsonFile(file) {
 // вообще запись (тот же критерий, что в migrate-workspace.mjs).
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
-// The four repositories, in the order they appear in settings.json.
+// Ключи ВЕРХНЕГО уровня settings.json → repos, в порядке появления.
 export const REPO_KEYS = ['systemsAnalysis', 'frontend', 'backend', 'autoTest'];
+
+// Какой ключ вправе быть ГРУППОЙ репозиториев. Бэкенд у команды разложен на
+// четыре рабочие копии (core / api / common / config), и это единственный
+// такой ключ: группа под frontend, systemsAnalysis или autoTest — не «тихо
+// заработало», а ошибка конфигурации (см. readUnits).
+export const GROUP_KEYS = ['backend'];
+
+// Известные части группы — для /setup, шаблона настроек и подсказок. Состав
+// группы берётся из settings.json (пятая часть бэкенда не должна требовать
+// правки ядра); здесь только ДЕФОЛТНЫЕ имена и порядок.
+export const DEFAULT_GROUP_PARTS = {
+  backend: ['core', 'api', 'common', 'config'],
+};
+
+// Единица работы конвейера — ЮНИТ: одна рабочая копия со своими link,
+// mainBranch и правами записи. Id юнита — либо ключ (`frontend`), либо
+// `<ключ>.<часть>` (`backend.api`). Точка, а не слэш: id повторяет путь в
+// JSON (repos.backend.api) и не путается с путём к рабочей копии.
+export const UNIT_SEP = '.';
+
+// Ключи ВНУТРИ группы, которые описывают саму группу, а не её часть. Частью
+// может быть только объект, поэтому скаляр здесь — не опечатка в имени части,
+// а метаданные: `description` документирован как поле репозитория, и написать
+// его на группе («бэкенд целиком») естественно. Без этого списка такая запись
+// давала бы вечное предупреждение, которое нечем убрать.
+export const GROUP_META_KEYS = ['description'];
 
 // Рабочие копии живут ВНУТРИ рабочего репозитория: <workspace>/repos/<dir>.
 // Это дефолты для settings.json (repos.<key>.link) и для /setup; команда
 // может указать другой путь — он всё равно резолвится от workspaceRoot.
+// Ключи — id ЮНИТОВ: у группы дефолт есть и у неё самой (одиночный бэкенд —
+// законная конфигурация), и у каждой известной части.
 export const REPO_DIRS = {
   systemsAnalysis: 'repos/system-analysis',
   frontend: 'repos/frontend',
   backend: 'repos/backend',
+  'backend.core': 'repos/backend/core',
+  'backend.api': 'repos/backend/api',
+  'backend.common': 'repos/backend/common',
+  'backend.config': 'repos/backend/config',
   autoTest: 'repos/autotests',
 };
+
+// Дефолтный каталог юнита. Для частей, которых нет в REPO_DIRS (команда
+// завела свою), путь выводится из id: backend.gateway → repos/backend/gateway.
+// Подсказка без пути бесполезна — человек не знает, куда клонировать.
+export function defaultDirFor(unitId) {
+  if (REPO_DIRS[unitId]) return REPO_DIRS[unitId];
+  return 'repos/' + String(unitId).split(UNIT_SEP).join('/');
+}
+
+// Разбор одной записи repos.<key>: 'repo' | 'group' | 'invalid'.
+// Критерий ГРУППЫ — отсутствие своего link при наличии вложенных записей с
+// link. Запись с link — всегда репозиторий, даже если рядом лежит мусор:
+// иначе заполненная ссылка молча превратилась бы в группу.
+export function reposEntryKind(entry) {
+  if (!isPlainObject(entry)) return 'invalid';
+  if (typeof entry.link === 'string') return 'repo';
+  const nested = Object.values(entry).filter(isPlainObject);
+  if (nested.some((v) => typeof v.link === 'string')) return 'group';
+  // Вложенные объекты есть, но ни у одного нет link — это НЕ репозиторий с
+  // незаполненной ссылкой, а недоделанная группа: называем её отдельно.
+  if (nested.length) return 'group-empty';
+  return 'repo';
+}
+
+// Плоский список юнитов по объекту repos + ошибки конфигурации.
+// Ошибки НЕ бросаются: конфигурацию читают guard-хуки, и падение здесь
+// отключило бы защиту целиком. Непонятная запись деградирует до юнита с
+// пустой ссылкой (он и так непригоден), а причина уходит в errors.
+export function readUnits(repos) {
+  const units = [];
+  const errors = [];
+  const src = isPlainObject(repos) ? repos : {};
+
+  const pushUnit = (id, key, part, entry) => {
+    const e = isPlainObject(entry) ? entry : {};
+    units.push({
+      id,
+      key,
+      part,
+      link: ((e.link || '') + '').trim(),
+      mainBranch: ((e.mainBranch || '') + '').trim() || 'main',
+      description: ((e.description || '') + '').trim(),
+      // Ссылка на джобу автотестов в CI (repos.autoTest.linkPipelineAutoTest).
+      // Это URL, а не путь к рабочей копии: проверка isUsableLink к нему НЕ
+      // применяется и применяться не должна — ради этого он и заведён
+      // отдельным ключом, а не спрятан в link.
+      pipelineUrl: ((e.linkPipelineAutoTest || '') + '').trim(),
+    });
+  };
+
+  for (const key of REPO_KEYS) {
+    const entry = src[key];
+    const kind = reposEntryKind(entry);
+
+    if (kind === 'invalid') {
+      // settings.json версии 1.x правили руками, и repos.<ключ> в нём бывает
+      // примитивом ("frontend": "repos/frontend") — эту форму разбирает
+      // предупреждением migrate-workspace. Читать и ТЕМ БОЛЕЕ писать поля у
+      // примитива нельзя: присваивание в ESM (strict mode) бросает TypeError.
+      if (entry !== undefined) {
+        errors.push(
+          `repos.${key} задан не объектом (${JSON.stringify(entry)}) — ` +
+            `приведите к виду {"link": "${defaultDirFor(key)}", "mainBranch": "main"}`,
+        );
+      }
+      pushUnit(key, key, null, null);
+      continue;
+    }
+
+    if (kind === 'group' || kind === 'group-empty') {
+      if (!GROUP_KEYS.includes(key)) {
+        errors.push(
+          `repos.${key} содержит вложенные записи, но группой репозиториев может быть только ` +
+            `${GROUP_KEYS.join(', ')} — приведите к виду {"link": "${defaultDirFor(key)}", "mainBranch": "main"}`,
+        );
+        pushUnit(key, key, null, null);
+        continue;
+      }
+      if (kind === 'group-empty') {
+        // Ссылок нет ни у одной части. Причины две, и лечатся они по-разному:
+        // либо части просто не заполнены, либо их «спрятали» ещё уровнем
+        // ниже. Сказать «нет ни одной записи с link» на второй случай значит
+        // отправить человека дописывать link туда, где он уже есть.
+        const deeper = Object.values(entry).some(
+          (v) => isPlainObject(v) && Object.values(v).some((w) => isPlainObject(w) && typeof w.link === 'string'),
+        );
+        errors.push(
+          deeper
+            ? `repos.${key}: вложенность глубже двух уровней не поддерживается — ` +
+              'группа состоит из репозиториев, а не из групп'
+            : `в группе repos.${key} нет ни одной записи с link — ` +
+              `добавьте части вида "core": {"link": "${defaultDirFor(key + UNIT_SEP + 'core')}", "mainBranch": "main"}`,
+        );
+        pushUnit(key, key, null, null);
+        continue;
+      }
+      for (const [part, value] of Object.entries(entry)) {
+        if (!isPlainObject(value)) {
+          // Метаданные самой группы (description) — не часть и не ошибка.
+          if (GROUP_META_KEYS.includes(part)) continue;
+          errors.push(`repos.${key}.${part} задан не объектом — часть группы пропущена`);
+          continue;
+        }
+        if (typeof value.link !== 'string') {
+          // Вложенность глубже двух уровней: части группы состоят из групп.
+          const deeper = Object.values(value).some((v) => isPlainObject(v) && typeof v.link === 'string');
+          errors.push(
+            deeper
+              ? `repos.${key}.${part}: вложенность глубже двух уровней не поддерживается — ` +
+                'группа состоит из репозиториев, а не из групп'
+              : `repos.${key}.${part}: нет ссылки link — часть группы пропущена`,
+          );
+          continue;
+        }
+        pushUnit(key + UNIT_SEP + part, key, part, value);
+      }
+      continue;
+    }
+
+    pushUnit(key, key, null, entry);
+  }
+
+  for (const key of Object.keys(src)) {
+    if (!REPO_KEYS.includes(key)) {
+      errors.push(
+        `repos.${key} — неизвестный ключ, плагин его не использует. ` +
+          `Допустимые: ${REPO_KEYS.join(', ')} (части бэкенда — внутри repos.backend)`,
+      );
+    }
+  }
+
+  return { units, errors };
+}
 
 // All pipeline stages (used by scope.mjs validation).
 export const STAGE_NAMES = [
@@ -167,26 +332,30 @@ export function repoState(cfg, key) {
   // там что-нибудь или нет. Отложи её за `!existsSync`, и несуществующий путь
   // наружу получит state `missing` с подсказкой «склонируйте сюда» — туда,
   // куда клонировать нельзя вовсе: guard-writes такую копию не примет.
+  // Путь ключа в settings.json: у части группы это repos.backend.api.link.
+  // Id юнита уже разделён точкой (UNIT_SEP), поэтому путь — просто префикс.
+  const keyPath = 'repos.' + String(key);
+  const dir = defaultDirFor(key);
   if (!l.value) {
     return {
       state: 'link-empty',
-      hint: `заполните repos.${key}.link в settings.json (обычно ${REPO_DIRS[key]}) и склонируйте туда репозиторий`,
+      hint: `заполните ${keyPath}.link в settings.json (обычно ${dir}) и склонируйте туда репозиторий`,
     };
   }
   if (l.isGitUrl) {
     return {
       state: 'link-is-url',
       hint:
-        `в repos.${key}.link нужен путь, а не git-URL: плагин не клонирует — ` +
-        `склонируйте репозиторий в ${REPO_DIRS[key]} и укажите этот путь`,
+        `в ${keyPath}.link нужен путь, а не git-URL: плагин не клонирует — ` +
+        `склонируйте репозиторий в ${dir} и укажите этот путь`,
     };
   }
   if (!l.inside) {
     return {
       state: 'outside',
       hint:
-        `путь repos.${key}.link ведёт за пределы рабочего репозитория (${l.path}); ` +
-        `он резолвится от корня рабочего репозитория и обязан остаться внутри него — укажите ${REPO_DIRS[key]}`,
+        `путь ${keyPath}.link ведёт за пределы рабочего репозитория (${l.path}); ` +
+        `он резолвится от корня рабочего репозитория и обязан остаться внутри него — укажите ${dir}`,
     };
   }
   if (!fs.existsSync(l.path)) {
@@ -205,24 +374,50 @@ export function repoState(cfg, key) {
   return { state: 'ok', hint: null };
 }
 
-// Состояния всех репозиториев разом: { key: { state, hint } }.
+// Состояния всех рабочих копий разом: { <id юнита>: { state, hint } }.
 export function repoStates(cfg) {
   const out = {};
-  for (const key of REPO_KEYS) out[key] = repoState(cfg, key);
+  for (const id of unitIds(cfg)) out[id] = repoState(cfg, id);
   return out;
+}
+
+// Id всех юнитов конфигурации (порядок — как в settings.json).
+export function unitIds(cfg) {
+  return (cfg && cfg.units ? cfg.units : []).map((u) => u.id);
+}
+
+// Ключ верхнего уровня → id его юнитов. Группа раскрывается в свои части,
+// одиночный репозиторий остаётся собой. ЕДИНСТВЕННОЕ место, где «этап
+// работает с backend» превращается в конкретные рабочие копии.
+export function expandKeys(cfg, keys) {
+  const out = [];
+  for (const key of keys) {
+    for (const u of cfg && cfg.units ? cfg.units : []) {
+      if (u.key === key) out.push(u.id);
+    }
+  }
+  return out;
+}
+
+// Кодовая база по типу задачи: FE → ['frontend'], BE → все юниты бэкенда.
+export function codebaseUnits(cfg, taskType) {
+  return expandKeys(cfg, [taskType === 'BE' ? 'backend' : 'frontend']);
 }
 
 // Read + resolve. Returns a rich object; never throws for the common cases.
 //   { found:false }                              — no settings.json
 //   { found:true, error:'...' }                  — settings.json unparseable
-//   { found:true, workspaceRoot, config,         — success
-//     fastMode, links, missingLinks, urlLinks }
+//   { found:true, workspaceRoot, config, fastMode,
+//     units, links, missingLinks, urlLinks, configErrors }
 //
-// links[key] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl }
+// units[] = { id, key, part, link, mainBranch, description, pipelineUrl }
+// links[<id юнита>] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl }
 // inside — пригодна ли ссылка (см. isUsableLink); только такая даёт
-// рабочую копию (repoRootFor). missingLinks = repo keys with an empty link;
-// urlLinks = keys where the link is a git URL (a configuration error: the
-// plugin never clones).
+// рабочую копию (repoRootFor). missingLinks = юниты с пустой ссылкой;
+// urlLinks = юниты, у которых вместо пути git-URL (ошибка конфигурации:
+// плагин не клонирует). configErrors — претензии к ФОРМЕ settings.json
+// (группа под чужим ключом, лишний ключ): они ничего не блокируют сами по
+// себе, их показывают /setup и SessionStart.
 export function readConfig(startDir = process.cwd()) {
   const workspaceRoot = findWorkspaceRoot(startDir);
   if (!workspaceRoot) return { found: false };
@@ -265,47 +460,56 @@ export function readConfig(startDir = process.cwd()) {
   // (по умолчанию repos/<dir>). Ссылку, выводящую за пределы проекта, помечаем
   // inside=false — GigaCode такое не разрешит; path при этом сохраняем, чтобы
   // /setup и repos-status могли показать, куда она указывает.
+  // Форму repos разбирает readUnits — она же решает, что здесь группа, а что
+  // репозиторий, и складывает претензии к форме в configErrors. Непонятная
+  // запись деградирует до юнита с пустой ссылкой: чтение конфигурации не
+  // должно падать целиком (repos-status остался бы без stdout, а
+  // SessionStart-хук молчал бы вместо предупреждения).
+  const { units, errors: configErrors } = readUnits(config.repos);
+
   const links = {};
   const missingLinks = [];
   const urlLinks = [];
-  for (const key of REPO_KEYS) {
-    // settings.json версии 1.x правили руками, и repos.<ключ> в нём бывает
-    // примитивом (`"frontend": "repos/frontend"`) — эту форму разбирает
-    // предупреждением migrate-workspace. Читать и ТЕМ БОЛЕЕ писать поля у
-    // примитива нельзя: присваивание в ESM (strict mode) бросает TypeError, и
-    // чтение конфигурации падает целиком — repos-status остаётся без stdout,
-    // а SessionStart-хук (fail-open) молчит вместо предупреждения. Непонятную
-    // запись считаем незаполненной ссылкой: ключ уходит в missingLinks.
-    const entry = isPlainObject(config.repos) && isPlainObject(config.repos[key]) ? config.repos[key] : null;
-    const value = (((entry && entry.link) || '') + '').trim();
-    const mainBranch = (((entry && entry.mainBranch) || '') + '').trim() || 'main';
-    // Ссылка на джобу автотестов в CI (repos.autoTest.linkPipelineAutoTest).
-    // Это URL, а не путь к рабочей копии: проверка isUsableLink к нему НЕ
-    // применяется и применяться не должна — ради этого он и заведён отдельным
-    // ключом, а не спрятан в link. Ключ необязателен: пустая строка означает
-    // «джоба не настроена», и этап автотестов просто не пойдёт в CI.
-    const pipelineUrl = (((entry && entry.linkPipelineAutoTest) || '') + '').trim();
+  for (const unit of units) {
+    const value = unit.link;
     // Нормализованные значения пишем обратно в config: stage-файлы отсылают
-    // модель к config.repos.<ключ>.link, ядро считает по links[key].value —
-    // два написания одного значения расходились бы на пробелах.
-    if (entry) {
+    // модель к config.repos.<ключ>.link, ядро считает по links[id].value —
+    // два написания одного значения расходились бы на пробелах. Запись ищем
+    // по ключу и части, а не держим ссылку на неё в юните: юниты уходят
+    // наружу (resolve-config печатает их в stdout), и живой объект
+    // конфигурации в них — приглашение править настройки мимо ядра.
+    // Юнит бывает ДЕГРАДИРОВАВШИМ: непонятную запись (примитив, группа под
+    // чужим ключом, недоделанная группа) readUnits сводит к юниту с пустой
+    // ссылкой, и своей записи-репозитория у него нет. Писать в этом случае
+    // некуда: `config.repos.backend` — это объект ГРУППЫ, и дописанный в него
+    // `link` превратил бы несколько рабочих копий в одну (а resolve-config
+    // печатает config наружу — испорченный объект пошёл бы дальше).
+    const owner = isPlainObject(config.repos) ? config.repos[unit.key] : null;
+    const entry = unit.part
+      ? isPlainObject(owner) && isPlainObject(owner[unit.part])
+        ? owner[unit.part]
+        : null
+      : reposEntryKind(owner) === 'repo'
+        ? owner
+        : null;
+    if (isPlainObject(entry)) {
       entry.link = value;
-      entry.mainBranch = mainBranch;
-      entry.linkPipelineAutoTest = pipelineUrl;
+      entry.mainBranch = unit.mainBranch;
+      entry.linkPipelineAutoTest = unit.pipelineUrl;
     }
 
     const url = isGitUrl(value);
     const abs = value && !url ? path.resolve(workspaceRoot, value) : null;
-    if (!value) missingLinks.push(key);
-    if (url) urlLinks.push(key);
+    if (!value) missingLinks.push(unit.id);
+    if (url) urlLinks.push(unit.id);
 
-    links[key] = {
+    links[unit.id] = {
       value,
       isGitUrl: url,
       path: abs,
       inside: isUsableLink(value, workspaceRoot),
-      mainBranch,
-      pipelineUrl,
+      mainBranch: unit.mainBranch,
+      pipelineUrl: unit.pipelineUrl,
     };
   }
 
@@ -314,9 +518,11 @@ export function readConfig(startDir = process.cwd()) {
     workspaceRoot,
     config,
     fastMode,
+    units,
     links,
     missingLinks,
     urlLinks,
+    configErrors,
   };
 }
 
@@ -336,6 +542,8 @@ export function readConfigForHook(payloadCwd) {
 }
 
 // Which repos a stage needs (spec 4.4). taskType is 'FE' | 'BE' | undefined.
+// Возвращает ключи ВЕРХНЕГО уровня; до конкретных рабочих копий их доводит
+// expandKeys(cfg, ...) — на BE-задаче `backend` раскроется в четыре юнита.
 export function requiredRepoKeys(stage, taskType) {
   const code = taskType === 'BE' ? 'backend' : 'frontend';
   switch (stage) {
@@ -386,6 +594,9 @@ export const SCOPE_TTL_MS = 8 * 60 * 60 * 1000; // 8 часов
 // stages get []). taskType is 'FE' | 'BE' | 'FE-BE' | undefined.
 // create-specification пишет в анализ только в фазе A; фаза B вызывает
 // scope.mjs set --write none.
+// Тоже ключи ВЕРХНЕГО уровня — это ДЕФОЛТ области записи. На /implement-plan
+// фактический список этап передаёт явно (`--write backend.api,backend.core`):
+// писать разрешено только в репозитории, которые назвал plan.md.
 export function stageWriteRepoKeys(stage, taskType) {
   const code = taskType === 'BE' ? 'backend' : 'frontend';
   switch (stage) {
@@ -402,12 +613,13 @@ export function stageWriteRepoKeys(stage, taskType) {
   }
 }
 
-// Working-copy root for a repo key: absolute path resolved from the workspace
-// root. null when the link is empty, is a (rejected) git URL or leads OUTSIDE
-// the workspace. ЕДИНСТВЕННОЕ место, где критерий inside превращается в право
-// записи: checkWrite / guard-bash / scope ходят только сюда.
-export function repoRootFor(cfg, key) {
-  const l = cfg.links && cfg.links[key];
+// Working-copy root for a UNIT id ('frontend', 'backend.api'): absolute path
+// resolved from the workspace root. null when the link is empty, is a
+// (rejected) git URL or leads OUTSIDE the workspace. ЕДИНСТВЕННОЕ место, где
+// критерий inside превращается в право записи: checkWrite / guard-bash /
+// scope ходят только сюда.
+export function repoRootFor(cfg, unitId) {
+  const l = cfg.links && cfg.links[unitId];
   if (!l || !l.inside) return null;
   return l.path;
 }
@@ -545,11 +757,11 @@ export function checkWrite(targetPath, cfg) {
   // Собираем все корни, содержащие target, и решаем по САМОМУ ГЛУБОКОМУ
   // (вложенные конфигурации: репо внутри workspace, репо внутри репо).
   const matches = [];
-  for (const key of REPO_KEYS) {
-    const root = repoRootFor(cfg, key);
+  for (const id of unitIds(cfg)) {
+    const root = repoRootFor(cfg, id);
     if (!root) continue;
     const real = realResolve(root);
-    if (isInside(target, real)) matches.push({ kind: 'repo', key, root: real });
+    if (isInside(target, real)) matches.push({ kind: 'repo', key: id, root: real });
   }
   if (isInside(target, wsRoot)) matches.push({ kind: 'ws', root: wsRoot });
 

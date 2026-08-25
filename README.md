@@ -1,8 +1,9 @@
 # conveyor
 
 Плагин командной разработки для **Claude Code** и **GigaCode CLI**.
-Проводит задачу по конвейеру через четыре репозитория (системный анализ,
-фронтенд, бэкенд, автотесты):
+Проводит задачу по конвейеру через репозитории команды — системный анализ,
+фронтенд, бэкенд и автотесты (бэкенд при этом обычно разложен на несколько
+репозиториев: `core`, `api`, `common`, `config`):
 
 ```
 намерение (БА) → спецификация (СА: правки анализа + спека) → план
@@ -16,7 +17,7 @@
 
 Работа идёт в **рабочем репозитории** (workspace) — отдельном git-репозитории
 команды: в нём лежат конфигурация, намерения и артефакты задач, а рабочие копии
-четырёх репозиториев разработчик клонирует себе сам в `repos/`.
+репозиториев разработчик клонирует себе сам в `repos/`.
 **Плагин ничего не клонирует.**
 
 ## Архитектура
@@ -109,7 +110,12 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   "repos": {
     "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
     "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
-    "backend":         { "link": "repos/backend",         "mainBranch": "main" },
+    "backend": {
+      "core":   { "link": "repos/backend/core",   "mainBranch": "main", "description": "основной код" },
+      "api":    { "link": "repos/backend/api",    "mainBranch": "main", "description": "API: контроллеры, DTO, контракты" },
+      "common": { "link": "repos/backend/common", "mainBranch": "main", "description": "общие утилиты, headers" },
+      "config": { "link": "repos/backend/config", "mainBranch": "main", "description": "конфигурации" }
+    },
     "autoTest":        { "link": "repos/autotests",       "mainBranch": "main",
                          "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
   },
@@ -122,19 +128,39 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 - **link** — путь к рабочей копии ОТНОСИТЕЛЬНО корня рабочего репозитория
   (`repos/frontend`), и он обязан остаться внутри него: путь наружу
   (`../frontend`, абсолютный путь в другом месте) и git-URL guard-скрипты не
-  принимают, а на GigaCode такая конфигурация не поедет вовсе.
+  принимают, а на GigaCode такая конфигурация не поедет вовсе. Правило одно
+  и для частей группы: `repos/backend/core`, а не `backend/core`.
+- **backend — ГРУППА репозиториев.** Кодовая база бэкенда обычно разложена
+  на `core` (основной код), `api` (API), `common` (общие утилиты, headers) и
+  `config` (конфигурации). Записи внутри `repos.backend` — обычные
+  репозитории со своими `link` и `mainBranch`; ссылаются на них по
+  идентификатору `backend.core`, `backend.api` и т.д. Группа отличается от
+  репозитория по НАЛИЧИЮ `link`: есть `link` — репозиторий, нет, а есть
+  вложенные записи — группа. Бэкенд в одном репозитории тоже законен:
+  `"backend": { "link": "repos/backend", "mainBranch": "main" }`. Группой
+  может быть ТОЛЬКО `backend` — вложенные записи под `frontend`,
+  `systemsAnalysis` или `autoTest` плагин считает ошибкой конфигурации и
+  говорит об этом в `/conveyor:setup` и при старте сессии. Состав частей
+  задаёте вы: пятый репозиторий бэкенда добавляется правкой settings.json.
+- **description** — назначение репозитория («основной код», «API»,
+  «конфигурации»). Не обязательно, но полезно: на `/create-plan` агент по
+  нему раскладывает шаги по репозиториям, не вычитывая все целиком.
 - **Репозитории клонирует сам разработчик** — своими доступами (ssh-ключи,
   подмодули, LFS). Плагин НЕ клонирует:
 
   ```
-  git clone <url-анализа>    repos/system-analysis
-  git clone <url-фронтенда>  repos/frontend
-  git clone <url-бэкенда>    repos/backend
-  git clone <url-автотестов> repos/autotests
+  git clone <url-анализа>        repos/system-analysis
+  git clone <url-фронтенда>      repos/frontend
+  git clone <url-backend-core>   repos/backend/core
+  git clone <url-backend-api>    repos/backend/api
+  git clone <url-backend-common> repos/backend/common
+  git clone <url-backend-config> repos/backend/config
+  git clone <url-автотестов>     repos/autotests
   ```
 
   Клонировать нужно только то, с чем работаете вы: аналитику хватит
-  `repos/system-analysis`, фронтендеру — `repos/frontend`.
+  `repos/system-analysis`, фронтендеру — `repos/frontend`; бэкендеру нужны
+  все части бэкенда — это отдельные репозитории.
 - **mainBranch** — основная ветка репозитория (обычно `main`). Свою ветку в
   рабочей копии конвейер не переключает: перед работой он подтягивает только
   основную.
@@ -165,7 +191,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   короче git-контекст и диффы, краткое заполнение шаблонов. Детали —
   `core/stages/_common.md` («Быстрый режим»).
 
-**Совет по скорости:** заведите в каждом из четырёх репозиториев файл
+**Совет по скорости:** заведите в каждом репозитории файл
 соглашений — `GIGACODE.md` / `.gigacode/rules/*.md` (или `CLAUDE.md` /
 `AGENTS.md`). Команды вставляют его в промпт агента, и агент следует ему
 вместо самостоятельного исследования репозитория — меньше чтений и быстрее на
@@ -177,12 +203,13 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 |---|---|
 | setup, task-status | — |
 | intent, create-specification | `repos/system-analysis` |
-| create-plan, implement-plan | `repos/frontend` или `repos/backend` (по типу задачи) |
+| create-plan, implement-plan | `repos/frontend` (FE) либо ВСЕ репозитории бэкенда (BE): `repos/backend/{core,api,common,config}` |
 | create-autotest-plan, implement-auto-test | `repos/autotests` |
 
 Если нужная этапу рабочая копия не склонирована (или ссылка ведёт наружу /
 задана git-URL), этап останавливается на первом шаге и объясняет, что сделать.
-Состояние всех четырёх копий показывает `/conveyor:setup`.
+Состояние всех копий показывает `/conveyor:setup` — строкой на копию, у
+бэкенда их несколько.
 
 ## Структура рабочего репозитория
 
@@ -197,7 +224,11 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 ├── repos/                         # рабочие копии — в .gitignore, клонируются вручную
 │   ├── system-analysis/
 │   ├── frontend/
-│   ├── backend/
+│   ├── backend/                # группа: каждая часть — отдельный репозиторий
+│   │   ├── core/
+│   │   ├── api/
+│   │   ├── common/
+│   │   └── config/
 │   └── autotests/
 └── tasks/<FE|BE>/<TASK-ID>/
     ├── meta.json                  # schemaVersion 2, intentId, этапы, ветки, ревью
@@ -269,7 +300,9 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   системного анализа (ревьюится дифф правок, а не спецификация: её собирает
   фаза B уже из отревьюенного диффа);
 - **`/conveyor:implement-plan`** — код (домен `frontend` или `backend` по типу
-  задачи);
+  задачи). У BE-задачи затронуто несколько репозиториев — ревью всё равно
+  ОДНО, на объединённом диффе с разметкой `### Репозиторий <id>`: иначе
+  рассогласование между `api`, `core` и `common` не увидит никто;
 - **`/conveyor:implement-auto-test`** — автотесты.
 
 На остальных этапах ревью нет. Участвует агент **reviewer**:

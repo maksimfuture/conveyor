@@ -3,7 +3,12 @@
   "repos": {
     "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
     "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
-    "backend":         { "link": "repos/backend",         "mainBranch": "main" },
+    "backend": {
+      "core":   { "link": "repos/backend/core",   "mainBranch": "main", "description": "основной код" },
+      "api":    { "link": "repos/backend/api",    "mainBranch": "main", "description": "API: контроллеры, DTO, контракты" },
+      "common": { "link": "repos/backend/common", "mainBranch": "main", "description": "общие утилиты, headers" },
+      "config": { "link": "repos/backend/config", "mainBranch": "main", "description": "конфигурации" }
+    },
     "autoTest":        { "link": "repos/autotests",       "mainBranch": "main",
                          "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
   },

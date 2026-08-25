@@ -16,11 +16,25 @@ import {
   STAGE_ARTIFACTS,
   REPO_KEYS,
   REPO_DIRS,
+  GROUP_KEYS,
+  DEFAULT_GROUP_PARTS,
   STAGE_NAMES,
   STAGES_WITHOUT_TASK_TYPE,
   requiredRepoKeys,
   stageWriteRepoKeys,
+  readUnits,
+  reposEntryKind,
+  defaultDirFor,
+  expandKeys,
+  codebaseUnits,
+  unitIds,
 } from '../core/scripts/lib/config.mjs';
+
+// Юниты (рабочие копии) шаблона настроек: по ним строятся фикстуры «свежего
+// рабочего репозитория». Считаем из САМОГО шаблона, а не списком по памяти —
+// иначе добавленная в группу часть тихо выпадет из проверок.
+const templateUnits = () =>
+  readUnits(JSON.parse(fs.readFileSync(path.join(root, 'core/templates/settings.example.json'), 'utf8')).repos).units;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -138,23 +152,46 @@ console.log('hooks.json — включение защиты:');
   if (!st.repos || typeof st.repos !== 'object' || Array.isArray(st.repos)) {
     bad('settings.example.json: repos не объект: ' + JSON.stringify(st.repos));
   } else {
-    // Критерий один: ссылка обязана быть РОВНО дефолтом из REPO_DIRS. Префикс
-    // «repos/» пропускал опечатку (repos/frontend-typo), а такой шаблон даёт
+    // Критерий один: ссылка обязана быть РОВНО дефолтом (defaultDirFor) — и
+    // проверяется он по ЮНИТАМ, а не по ключам верхнего уровня: у группы
+    // backend ссылки лежат в частях, и опечатка в одной из них (repos/backend/apiz)
+    // по ключу не видна вовсе. Префикс «repos/» тоже мало: такой шаблон даёт
     // свежему рабочему репозиторию каталог, куда никто ничего не склонирует.
-    const linkDiff = REPO_KEYS.filter((k) => !st.repos[k] || st.repos[k].link !== REPO_DIRS[k]);
+    const { units: exUnits, errors: exErrors } = readUnits(st.repos);
+    const linkDiff = exUnits.filter((u) => u.link !== defaultDirFor(u.id));
     const extraKeys = Object.keys(st.repos).filter((k) => !REPO_KEYS.includes(k));
-    if (!linkDiff.length && !extraKeys.length) ok('settings.example.json: ссылки — дефолты REPO_DIRS по всем ключам');
+    if (!linkDiff.length && !extraKeys.length && !exErrors.length)
+      ok('settings.example.json: ссылки — дефолты по всем рабочим копиям (' + exUnits.map((u) => u.id).join(', ') + ')');
     else
       bad(
-        'settings.example.json: ссылки разошлись с REPO_DIRS: ' +
+        'settings.example.json: ссылки разошлись с дефолтами: ' +
           [
-            linkDiff.map((k) => `${k}→${JSON.stringify(st.repos[k] && st.repos[k].link)} (ждали ${REPO_DIRS[k]})`).join(', ') ||
-              null,
+            linkDiff.map((u) => `${u.id}→${JSON.stringify(u.link)} (ждали ${defaultDirFor(u.id)})`).join(', ') || null,
             extraKeys.length ? `лишние ключи: ${extraKeys.join(', ')}` : null,
+            exErrors.length ? `ошибки формы: ${exErrors.join('; ')}` : null,
           ]
             .filter(Boolean)
             .join('; '),
       );
+
+    // Бэкенд в шаблоне — ГРУППА, и её состав обязан совпасть с дефолтным:
+    // шаблон едет в свежий рабочий репозиторий как есть, и потерянная часть
+    // означает репозиторий, о котором никто не узнает.
+    const backendParts = exUnits.filter((u) => u.key === 'backend').map((u) => u.part);
+    if (reposEntryKind(st.repos.backend) === 'group' && backendParts.join(',') === DEFAULT_GROUP_PARTS.backend.join(','))
+      ok('settings.example.json: backend — группа из частей ' + DEFAULT_GROUP_PARTS.backend.join(', '));
+    else
+      bad(
+        'settings.example.json: состав группы backend разошёлся с DEFAULT_GROUP_PARTS: ' +
+          `${backendParts.join(', ') || '(не группа)'} против ${DEFAULT_GROUP_PARTS.backend.join(', ')}`,
+      );
+
+    // description — то, по чему агент на /create-plan раскладывает шаги по
+    // репозиториям. Пустое поле у части группы возвращает его к вычитыванию
+    // всех репозиториев целиком.
+    const noDesc = exUnits.filter((u) => u.key === 'backend' && !u.description).map((u) => u.id);
+    if (!noDesc.length) ok('settings.example.json: у каждой части бэкенда заполнено description');
+    else bad('settings.example.json: нет description у частей бэкенда: ' + noDesc.join(', '));
   }
 }
 
@@ -164,13 +201,20 @@ console.log('hooks.json — включение защиты:');
     systemsAnalysis: 'repos/system-analysis',
     frontend: 'repos/frontend',
     backend: 'repos/backend',
+    'backend.core': 'repos/backend/core',
+    'backend.api': 'repos/backend/api',
+    'backend.common': 'repos/backend/common',
+    'backend.config': 'repos/backend/config',
     autoTest: 'repos/autotests',
   };
   // Сверяем целиком, а не по ожидаемым ключам: лишний или переименованный
-  // пятый ключ иначе пройдёт молча. Состав и порядок обязаны совпадать с
-  // REPO_KEYS — по нему guard-* и resolve-config обходят репозитории.
-  if (JSON.stringify(REPO_DIRS) === JSON.stringify(wantDirs) && Object.keys(REPO_DIRS).join(',') === REPO_KEYS.join(','))
-    ok('config: REPO_DIRS — каталоги repos/*, состав и порядок как у REPO_KEYS');
+  // ключ иначе пройдёт молча. Ключи — id ЮНИТОВ: у группы дефолт есть и у
+  // неё самой (бэкенд в одном репозитории — законная конфигурация), и у
+  // каждой известной части.
+  const dirsCoverKeys = REPO_KEYS.every((k) => REPO_DIRS[k]);
+  const dirsCoverParts = GROUP_KEYS.every((g) => (DEFAULT_GROUP_PARTS[g] || []).every((p) => REPO_DIRS[`${g}.${p}`]));
+  if (JSON.stringify(REPO_DIRS) === JSON.stringify(wantDirs) && dirsCoverKeys && dirsCoverParts)
+    ok('config: REPO_DIRS — каталоги repos/*, дефолт есть у каждого ключа и у каждой части группы');
   else
     bad(
       'config: REPO_DIRS не совпадает с ожидаемым: ' +
@@ -178,6 +222,12 @@ console.log('hooks.json — включение защиты:');
         ' при REPO_KEYS: ' +
         REPO_KEYS.join(', '),
     );
+
+  // Каталог части, которой нет в REPO_DIRS (команда завела свою), выводится
+  // из id: подсказка «склонируйте сюда» без пути бесполезна.
+  if (defaultDirFor('backend.gateway') === 'repos/backend/gateway' && defaultDirFor('frontend') === 'repos/frontend')
+    ok('config: defaultDirFor — путь для неизвестной части выводится из её id');
+  else bad('config: defaultDirFor: ' + defaultDirFor('backend.gateway') + ' / ' + defaultDirFor('frontend'));
 
   const wantStages = [
     'setup',
@@ -242,6 +292,114 @@ console.log('hooks.json — включение защиты:');
   }
   if (!writeDiff.length) ok('config: stageWriteRepoKeys — права записи каждого этапа для FE и BE');
   else bad('config: stageWriteRepoKeys расходится на этапах: ' + writeDiff.join(', '));
+
+  // ---- группа репозиториев (backend разложен на несколько рабочих копий) ---
+  //
+  // Разбор формы — единственное место, где решается, СКОЛЬКО у команды рабочих
+  // копий. Ошибись он в любую сторону — и защита разъезжается молча: лишний
+  // юнит открывает запись туда, куда никто не собирался, потерянный отбирает
+  // её у этапа.
+  const groupRepos = {
+    systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+    frontend: { link: 'repos/frontend', mainBranch: 'main' },
+    backend: {
+      core: { link: 'repos/backend/core', mainBranch: 'develop', description: 'основной код' },
+      api: { link: 'repos/backend/api', mainBranch: 'develop' },
+    },
+    autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+  };
+  const soloRepos = {
+    systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+    frontend: { link: 'repos/frontend', mainBranch: 'main' },
+    backend: { link: 'repos/backend', mainBranch: 'main' },
+    autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+  };
+  const gu = readUnits(groupRepos);
+  const su = readUnits(soloRepos);
+  const gIds = gu.units.map((u) => u.id).join(',');
+  const sIds = su.units.map((u) => u.id).join(',');
+  if (
+    gIds === 'systemsAnalysis,frontend,backend.core,backend.api,autoTest' &&
+    !gu.errors.length &&
+    sIds === 'systemsAnalysis,frontend,backend,autoTest' &&
+    !su.errors.length
+  )
+    ok('config: readUnits — группа раскрывается в части, одиночный репозиторий остаётся собой');
+  else
+    bad(
+      'config: readUnits — ' +
+        [`группа: [${gIds}] ${JSON.stringify(gu.errors)}`, `одиночный: [${sIds}] ${JSON.stringify(su.errors)}`].join('; '),
+    );
+
+  // Поля части читаются из НЕЁ, а не из группы: своя ветка у каждой копии —
+  // ровно то, ради чего бэкенд разложен на репозитории.
+  const gApi = gu.units.find((u) => u.id === 'backend.api');
+  const gCore = gu.units.find((u) => u.id === 'backend.core');
+  if (gApi && gApi.mainBranch === 'develop' && gApi.key === 'backend' && gApi.part === 'api' && gCore.description === 'основной код')
+    ok('config: readUnits — link/mainBranch/description части берутся из самой части');
+  else bad('config: readUnits — поля части: ' + JSON.stringify([gApi, gCore && gCore.description]));
+
+  // Группа под чужим ключом, недоделанная группа и лишний ключ — ошибки ФОРМЫ.
+  // Молчать о них нельзя: в таблице /setup их не видно (запись, которую плагин
+  // не разобрал, просто не даёт строки), и человек правит настройки вслепую.
+  const badForm = readUnits({
+    frontend: { web: { link: 'repos/frontend/web' } },
+    backend: { core: { mainBranch: 'develop' } },
+    api: { link: 'repos/backend' },
+  });
+  const errText = badForm.errors.join(' | ');
+  if (
+    /repos\.frontend содержит вложенные записи/.test(errText) &&
+    /в группе repos\.backend нет ни одной записи с link/.test(errText) &&
+    /repos\.api — неизвестный ключ/.test(errText)
+  )
+    ok('config: readUnits — группа не под backend, пустая группа и лишний ключ названы ошибками формы');
+  else bad('config: readUnits — ошибки формы не названы: ' + JSON.stringify(badForm.errors));
+
+  // Вложенность глубже двух уровней: группа состоит из репозиториев, а не из
+  // групп. Без явной ошибки такая запись просто теряет копию.
+  const deep = readUnits({ backend: { core: { sub: { link: 'repos/backend/core/sub' } } } });
+  if (deep.errors.some((e) => /глубже двух уровней/.test(e)))
+    ok('config: readUnits — вложенность глубже двух уровней отвергается');
+  else bad('config: readUnits — глубокая вложенность прошла: ' + JSON.stringify(deep));
+
+  // expandKeys/codebaseUnits — ЕДИНСТВЕННОЕ место, где «этап работает с
+  // backend» превращается в конкретные рабочие копии. Обе формы конфигурации
+  // обязаны давать осмысленный ответ.
+  const cfgGroup = { units: gu.units };
+  const cfgSolo = { units: su.units };
+  if (
+    codebaseUnits(cfgGroup, 'BE').join(',') === 'backend.core,backend.api' &&
+    codebaseUnits(cfgGroup, 'FE').join(',') === 'frontend' &&
+    codebaseUnits(cfgSolo, 'BE').join(',') === 'backend' &&
+    expandKeys(cfgGroup, ['autoTest']).join(',') === 'autoTest' &&
+    unitIds(cfgGroup).length === 5
+  )
+    ok('config: codebaseUnits/expandKeys — кодовая база BE раскрывается в части, FE остаётся одной копией');
+  else
+    bad(
+      'config: codebaseUnits/expandKeys — ' +
+        JSON.stringify([codebaseUnits(cfgGroup, 'BE'), codebaseUnits(cfgSolo, 'BE'), expandKeys(cfgGroup, ['autoTest'])]),
+    );
+
+  // requiredRepoKeys отдаёт ключ верхнего уровня — и это правильно ровно до
+  // тех пор, пока потребители доводят его до копий через expandKeys. Пара
+  // проверяется вместе: разъедься она, validate-config перестанет замечать
+  // непригодную часть бэкенда, а scope выдаст этапу пустые права.
+  if (
+    requiredRepoKeys('implement-plan', 'BE').join(',') === 'backend' &&
+    expandKeys(cfgGroup, requiredRepoKeys('implement-plan', 'BE')).join(',') === 'backend.core,backend.api' &&
+    expandKeys(cfgGroup, stageWriteRepoKeys('implement-plan', 'BE')).join(',') === 'backend.core,backend.api'
+  )
+    ok('config: ключ этапа доводится до рабочих копий через expandKeys (BE → все части бэкенда)');
+  else
+    bad(
+      'config: expandKeys над requiredRepoKeys/stageWriteRepoKeys: ' +
+        JSON.stringify([
+          expandKeys(cfgGroup, requiredRepoKeys('implement-plan', 'BE')),
+          expandKeys(cfgGroup, stageWriteRepoKeys('implement-plan', 'BE')),
+        ]),
+    );
 }
 
 // 1d) Версия и описание манифестов. Версия — единственный признак, по которому
@@ -1455,7 +1613,7 @@ console.log('Стейдж setup — инициализация и диагнос
   // скрипта, поэтому без ассерта сжатие repos-status.mjs так же незаметно
   // уменьшит и требования к стейджу — вместе с регрессией, которую эта
   // проверка ловит.
-  const RS_FIELD_COUNT = 7; // key, link, path, state, branch, clean, hint
+  const RS_FIELD_COUNT = 8; // id, description, link, path, state, branch, clean, hint
   const topLevelParts = (src) => {
     const parts = [];
     let depth = 0;
@@ -2456,19 +2614,27 @@ try {
   // не сработает никогда. Сверяем перечень с ключами реального ответа.
   {
     const qwenMd = fs.readFileSync(path.join(root, 'adapters/gigacode/QWEN.md'), 'utf8');
-    const listed = (qwenMd.replace(/\s+/g, ' ').match(/`links\.<ключ>`\s*=\s*`?\{([^}]*)\}/) || [])[1];
+    // `links` индексируется id РАБОЧЕЙ КОПИИ (`frontend`, `backend.api`), не
+    // ключом настроек, — принимаем оба написания заголовка, чтобы проверка
+    // осталась про состав полей, а не про формулировку.
+    const listed = (qwenMd.replace(/\s+/g, ' ').match(/`links\.<(?:ключ|id)>`\s*=\s*`?\{([^}]*)\}/) || [])[1];
     const fields = (listed || '').split(',').map((s) => s.replace(/[`\s]/g, '')).filter(Boolean);
     const real = Object.keys(rc.links.systemsAnalysis);
     const ghosts = fields.filter((f) => !real.includes(f));
     const forgotten = real.filter((f) => !fields.includes(f));
-    if (fields.length && !ghosts.length && !forgotten.length)
-      ok('QWEN.md: поля links.<ключ> — те, что resolve-config действительно отдаёт');
+    // `units` и `codebase` — то, ЧЕМ этап пользуется вместо разбора
+    // config.repos. Нет их в системном промпте — модель на GigaCode полезет
+    // разбирать форму настроек сама и споткнётся на группе.
+    const namesUnits = /`units\b/.test(qwenMd) && /`codebase\./.test(qwenMd);
+    if (fields.length && !ghosts.length && !forgotten.length && namesUnits)
+      ok('QWEN.md: поля links.<id> — те, что resolve-config действительно отдаёт; units/codebase названы');
     else
       bad(
-        'QWEN.md: перечень полей links.<ключ> разошёлся со скриптом — ' +
+        'QWEN.md: контракт resolve-config разошёлся со скриптом — ' +
           (listed === undefined
             ? 'перечень не найден'
-            : `нет в ответе: ${ghosts.join(', ') || '(нет)'}; не названы: ${forgotten.join(', ') || '(нет)'}`),
+            : `нет в ответе: ${ghosts.join(', ') || '(нет)'}; не названы: ${forgotten.join(', ') || '(нет)'}` +
+              (namesUnits ? '' : '; в промпте не названы units/codebase')),
       );
   }
 
@@ -2622,7 +2788,7 @@ try {
     } catch {
       rsPrimJson = null;
     }
-    const rsPrimSA = rsPrimJson && (rsPrimJson.repos || []).find((r) => r.key === 'systemsAnalysis');
+    const rsPrimSA = rsPrimJson && (rsPrimJson.repos || []).find((r) => r.id === 'systemsAnalysis');
     if (rsPrimJson && rsPrimSA && rsPrimSA.state === 'link-empty')
       ok('repos-status: repos.<ключ> примитивом — JSON с состоянием, а не стек Node');
     else bad('repos-status: на примитиве нет JSON: ' + JSON.stringify({ status: rsPrim.status, stdout: rsPrim.stdout.slice(0, 200) }));
@@ -2650,9 +2816,13 @@ try {
   try {
     fs.copyFileSync(path.join(root, 'core/templates/settings.example.json'), path.join(tmpFresh, 'settings.json'));
     const vcFresh = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
-    const namesAll = REPO_KEYS.filter((k) => vcFresh.includes(k));
-    if (namesAll.length === REPO_KEYS.length)
-      ok('validate-config: в свежем workspace названы все несклонированные рабочие копии');
+    // Названа должна быть каждая РАБОЧАЯ КОПИЯ, а не ключ настроек: у группы
+    // backend их несколько, и «backend» в тексте не говорит, какую из четырёх
+    // не склонировали.
+    const freshUnits = templateUnits().map((u) => u.id);
+    const namesAll = freshUnits.filter((id) => vcFresh.includes(id));
+    if (namesAll.length === freshUnits.length)
+      ok('validate-config: в свежем workspace названы все несклонированные рабочие копии (' + freshUnits.length + ')');
     else
       bad(
         'validate-config: несклонированные копии не названы (названы: ' +
@@ -2669,18 +2839,22 @@ try {
 
     // Каталог есть, но это не репозиторий — состояние отдельное, и лечится
     // иначе (git не клонирует в непустой каталог). Не свести его с «копии нет».
-    fs.mkdirSync(path.join(tmpFresh, 'repos', 'backend'), { recursive: true });
-    fs.writeFileSync(path.join(tmpFresh, 'repos', 'backend', 'note.txt'), 'чужой каталог\n');
+    // Каталог берём у ПЕРВОЙ рабочей копии шаблона — не у ключа настроек:
+    // при группе `repos/backend` это каталог-родитель, а не копия, и
+    // состояние not-a-repo на нём не проверяется вовсе.
+    const notRepoUnit = templateUnits()[0];
+    const notRepoDir = path.join(tmpFresh, notRepoUnit.link);
+    fs.mkdirSync(notRepoDir, { recursive: true });
+    fs.writeFileSync(path.join(notRepoDir, 'note.txt'), 'чужой каталог\n');
     const vcNotRepo = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
-    if (/не git-репозитор/i.test(vcNotRepo) && /backend/.test(vcNotRepo))
+    if (/не git-репозитор/i.test(vcNotRepo) && vcNotRepo.includes(notRepoUnit.id))
       ok('validate-config: каталог без .git назван отдельно от «копии нет»');
     else bad('validate-config: not-a-repo не отличён: ' + JSON.stringify(vcNotRepo));
 
     // Настоящая рабочая копия молчания заслуживает: предупреждение, которое
     // не гаснет после устранения причины, читают как шум и перестают замечать.
-    for (const key of REPO_KEYS) {
-      const dir = path.join(tmpFresh, REPO_DIRS[key]);
-      fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+    for (const unit of templateUnits()) {
+      fs.mkdirSync(path.join(tmpFresh, unit.link, '.git'), { recursive: true });
     }
     const vcCloned = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
     if (!/⚠ conveyor/.test(vcCloned)) ok('validate-config: при готовых рабочих копиях предупреждений нет');
@@ -2825,7 +2999,7 @@ try {
   // разница между «ссылки нет», «путь не туда» и «каталог есть, но это не
   // репозиторий» решает, что пользователю делать руками.
   const rs = JSON.parse(runScript('core/scripts/repos-status.mjs', [tmp]));
-  const byKey = Object.fromEntries((rs.repos || []).map((r) => [r.key, r]));
+  const byKey = Object.fromEntries((rs.repos || []).map((r) => [r.id, r]));
   if (byKey.systemsAnalysis && byKey.systemsAnalysis.state === 'ok') ok('repos-status: существующая копия → ok');
   else bad('repos-status: systemsAnalysis: ' + JSON.stringify(byKey.systemsAnalysis));
   if (byKey.frontend && byKey.frontend.state === 'link-empty') ok('repos-status: пустая ссылка → link-empty');
@@ -2859,7 +3033,7 @@ try {
       }),
     );
     const rs2 = JSON.parse(runScript('core/scripts/repos-status.mjs', [tmpStatus]));
-    const st = Object.fromEntries((rs2.repos || []).map((r) => [r.key, r]));
+    const st = Object.fromEntries((rs2.repos || []).map((r) => [r.id, r]));
     const want = {
       systemsAnalysis: 'link-is-url',
       frontend: 'outside',
@@ -2937,7 +3111,7 @@ try {
       // /setup печатает branch и clean в таблице «что настроено»: пустые поля
       // на исправной копии человек читает как «git недоступен».
       const liveStatus = () =>
-        ((JSON.parse(runScript('core/scripts/repos-status.mjs', [liveWs])).repos || []).find((r) => r.key === 'backend')) || {};
+        ((JSON.parse(runScript('core/scripts/repos-status.mjs', [liveWs])).repos || []).find((r) => r.id === 'backend')) || {};
       const liveClean = liveStatus();
       if (liveClean.state === 'ok' && liveClean.branch === 'TASK-1-feature' && liveClean.clean === true)
         ok('repos-status: на живой копии branch — текущая ветка, clean=true у чистого дерева');
@@ -3623,13 +3797,27 @@ try {
   // Каждый шаблон обязан проходить валидацию СВОЕГО типа: шаблон — эталон
   // артефакта, и если он не проходит сам, этап раздаёт агенту заведомо
   // невалидный каркас. Плейсхолдеры при этом остаются предупреждением.
+  // Исключение — plan: у него есть требования к ЗАПОЛНЕННОСТИ (какие
+  // репозитории правим), а не только к форме, и каркас их выполнить не может.
+  // Пойти навстречу проверке, вписав в шаблон настоящие `backend.*`, нельзя:
+  // тогда нетронутый каркас читается как готовый план, и /implement-plan
+  // открывает запись в репозитории, которых никто не выбирал. Поэтому у plan
+  // требуем не `ok`, а РОВНО ожидаемый набор претензий — состав разделов при
+  // этом проверяется так же строго (missingSections пуст у всех шаблонов).
+  const FILL_ONLY = /Затронутые репозитории|тегом «Репозиторий/;
   const tplChecked = {};
   for (const type of ['plan', 'intent', 'specification', 'autotest-plan', 'report-auto-test']) {
     const tplPath = path.join(tmp, `tpl-${type}.md`);
     fs.copyFileSync(path.join(root, `core/templates/${type}.md`), tplPath);
     const vaTpl = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', tplPath, '--type', type]));
     tplChecked[type] = vaTpl;
-    if (vaTpl.ok === true && vaTpl.placeholders.length)
+    const shapeOk = !vaTpl.missingSections.length && vaTpl.placeholders.length;
+    if (type === 'plan') {
+      const onlyFill = vaTpl.problems.length > 0 && vaTpl.problems.every((p) => FILL_ONLY.test(p));
+      if (shapeOk && vaTpl.ok === false && onlyFill && !vaTpl.planRepos.repos.length)
+        ok('validate-artifact: шаблон plan — все разделы на месте, а незаполненная раскладка по репозиториям не выдаётся за план');
+      else bad('validate-artifact: шаблон plan: ' + JSON.stringify(vaTpl));
+    } else if (vaTpl.ok === true && shapeOk)
       ok(`validate-artifact: шаблон ${type} проходит валидацию, плейсхолдеры — предупреждение`);
     else bad(`validate-artifact: шаблон ${type} не прошёл: ` + JSON.stringify(vaTpl));
   }
@@ -3938,8 +4126,11 @@ try {
     const same = vaRep(repTpl);
     const sameOk = same.ok === true && same.planMismatch && !same.planMismatch.missing.length && !same.planMismatch.extra.length;
 
-    // тест из плана не дошёл до отчёта
-    const dropped = vaRep(repTpl.replace(/^\| AT-2 .*$\n/m, ''));
+    // тест из плана не дошёл до отчёта.
+    // `.*$\n` здесь не работает: шаблоны лежат с CRLF, `$` встаёт ПЕРЕД `\r`,
+    // и замена молча не срабатывает — фикстура остаётся исходной, проверка
+    // «потерянный автотест — ошибка» проходит ни на чём. Поэтому `\r?\n`.
+    const dropped = vaRep(repTpl.replace(/^\| AT-2 .*\r?\n/m, ''));
     const droppedCaught =
       dropped.ok === false &&
       dropped.planMismatch.missing.includes('AT-2') &&
@@ -4298,6 +4489,477 @@ try {
         );
     } finally {
       fs.rmSync(bent, { recursive: true, force: true });
+    }
+  }
+  // ---- многорепозиторный бэкенд: сквозной прогон -------------------------
+  //
+  // Бэкенд разложен на несколько рабочих копий, и вся защита держится на трёх
+  // стыках: конфигурация → область записи → guard. Разъедься любой из них —
+  // и этап либо пишет туда, куда план не разрешал, либо не пишет никуда.
+  console.log('Многорепозиторный бэкенд — конфигурация, область, план:');
+  {
+    const mrWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-multirepo-'));
+    try {
+      const parts = ['core', 'api', 'common', 'config'];
+      fs.writeFileSync(
+        path.join(mrWs, 'settings.json'),
+        JSON.stringify({
+          taskPrefix: 'TASK',
+          repos: {
+            systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+            frontend: { link: 'repos/frontend', mainBranch: 'main' },
+            backend: Object.fromEntries(
+              parts.map((p) => [p, { link: `repos/backend/${p}`, mainBranch: 'develop', description: p }]),
+            ),
+            autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+          },
+        }),
+      );
+      for (const rel of ['repos/system-analysis', 'repos/frontend', 'repos/autotests', ...parts.map((p) => `repos/backend/${p}`)])
+        fs.mkdirSync(path.join(mrWs, rel, '.git'), { recursive: true });
+
+      const rcMr = JSON.parse(runScript('core/scripts/resolve-config.mjs', [mrWs]));
+      const ids = (rcMr.units || []).map((u) => u.id).join(',');
+      if (
+        ids === 'systemsAnalysis,frontend,backend.core,backend.api,backend.common,backend.config,autoTest' &&
+        (rcMr.codebase || {}).BE.join(',') === 'backend.core,backend.api,backend.common,backend.config' &&
+        (rcMr.codebase || {}).FE.join(',') === 'frontend' &&
+        (rcMr.units || []).every((u) => u.state === 'ok' && u.path)
+      )
+        ok('resolve-config: группа отдана списком units + codebase (стейджу не надо разбирать repos)');
+      else bad('resolve-config: units/codebase при группе: ' + JSON.stringify({ ids, codebase: rcMr.codebase }));
+
+      // Ветка части читается из НЕЁ: у бэкенда develop, у остальных main.
+      // Ошибись это — guard-bash перестанет защищать основную ветку бэкенда.
+      const branches = Object.fromEntries((rcMr.units || []).map((u) => [u.id, u.mainBranch]));
+      if (branches['backend.api'] === 'develop' && branches.frontend === 'main')
+        ok('resolve-config: mainBranch части группы берётся из части');
+      else bad('resolve-config: mainBranch частей: ' + JSON.stringify(branches));
+
+      // repos-status: строка на КОПИЮ, части группы идут подряд — так их и
+      // показывает /setup.
+      const rsMr = JSON.parse(runScript('core/scripts/repos-status.mjs', [mrWs]));
+      const rsIds = (rsMr.repos || []).map((r) => r.id);
+      const first = rsIds.indexOf('backend.core');
+      const consecutive = rsIds.slice(first, first + 4).join(',') === 'backend.core,backend.api,backend.common,backend.config';
+      if (rsIds.length === 7 && consecutive && rsMr.summary.ok === 7)
+        ok('repos-status: строка на рабочую копию, части группы подряд');
+      else bad('repos-status: состав строк при группе: ' + JSON.stringify({ rsIds, summary: rsMr.summary }));
+
+      // Область записи: id частей принимаются, ключ ГРУППЫ — нет. Приняв
+      // «backend», scope выдал бы этапу права, не покрывающие ни одной копии,
+      // и первая же запись упёрлась бы в отказ без объяснимой причины.
+      const scopeOk = runScriptFull(
+        'core/scripts/scope.mjs',
+        ['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-1', '--write', 'backend.api,backend.core'],
+        '',
+        mrWs,
+      );
+      const scopeGroup = runScriptFull(
+        'core/scripts/scope.mjs',
+        ['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-1', '--write', 'backend'],
+        '',
+        mrWs,
+      );
+      const scopeOkJson = JSON.parse(scopeOk.stdout);
+      if (
+        scopeOkJson.ok === true &&
+        scopeOkJson.scope.writeRepos.join(',') === 'backend.api,backend.core' &&
+        scopeOkJson.scope.writeRoots.length === 2 &&
+        scopeGroup.status !== 0 &&
+        /группа репозиториев/.test(scopeGroup.stdout)
+      )
+        ok('scope: --write принимает id частей, ключ группы отвергает с подсказкой');
+      else bad('scope: --write при группе: ' + JSON.stringify({ okRun: scopeOk.stdout.slice(0, 200), group: scopeGroup.stdout.slice(0, 200) }));
+
+      // Дефолт области (без --write) — все части группы: этап, забывший
+      // передать список, не должен молча остаться без прав.
+      const scopeDefault = JSON.parse(
+        runScriptFull('core/scripts/scope.mjs', ['set', '--stage', 'implement-plan', '--type', 'BE'], '', mrWs).stdout,
+      );
+      if (scopeDefault.ok && scopeDefault.scope.writeRepos.join(',') === 'backend.core,backend.api,backend.common,backend.config')
+        ok('scope: дефолт области BE-этапа — все части бэкенда');
+      else bad('scope: дефолт области: ' + JSON.stringify(scopeDefault.scope && scopeDefault.scope.writeRepos));
+
+      // guard-writes при активной области: запись в часть ИЗ области
+      // разрешена, в соседнюю — нет. Это и есть обещание «пишем только туда,
+      // где сказал план».
+      runScriptFull(
+        'core/scripts/scope.mjs',
+        ['set', '--stage', 'implement-plan', '--type', 'BE', '--task', 'TASK-1', '--write', 'backend.api'],
+        '',
+        mrWs,
+      );
+      // Пустой вывод хука = allow (так он и устроен): голый JSON.parse на нём
+      // падает и уносит весь набор.
+      const decisionOf = (out) => {
+        const s = String(out).trim();
+        if (!s) return 'allow';
+        try {
+          return JSON.parse(s).hookSpecificOutput.permissionDecision;
+        } catch {
+          return `(не JSON: ${s.slice(0, 80)})`;
+        }
+      };
+      const guardOn = (file) =>
+        decisionOf(
+          runScript(
+            'core/scripts/guard-writes.mjs',
+            [],
+            JSON.stringify({ cwd: mrWs, tool_name: 'Write', tool_input: { file_path: path.join(mrWs, file) } }),
+            mrWs,
+          ),
+        );
+      const allowed = guardOn('repos/backend/api/src/Dto.java');
+      const denied = guardOn('repos/backend/common/src/Util.java');
+      if (allowed === 'allow' && denied === 'deny')
+        ok('guard-writes: запись в часть из области разрешена, в соседнюю часть группы — запрещена');
+      else bad('guard-writes: решения при группе: ' + JSON.stringify({ allowed, denied }));
+
+      // guard-bash: основная ветка КАЖДОЙ копии под защитой. У частей бэкенда
+      // это develop — пропусти его, и push в основную ветку пройдёт.
+      const bashOn = (cmd) =>
+        decisionOf(
+          runScript(
+            'core/scripts/guard-bash.mjs',
+            [],
+            JSON.stringify({ cwd: mrWs, tool_name: 'Bash', tool_input: { command: cmd } }),
+            mrWs,
+          ),
+        );
+      if (bashOn('git push origin develop') === 'deny' && bashOn('git push origin main') === 'deny')
+        ok('guard-bash: основные ветки всех копий (develop у бэкенда, main у остальных) защищены');
+      else
+        bad(
+          'guard-bash: защита основных веток при группе: ' +
+            JSON.stringify([bashOn('git push origin develop'), bashOn('git push origin main')]),
+        );
+      runScriptFull('core/scripts/scope.mjs', ['clear'], '', mrWs);
+
+      // План как источник области: plan-repos читает то же, что валидатор.
+      // Разъедься они — валидатор признавал бы план годным, а этап ставил бы
+      // область по другому списку.
+      const planPath = path.join(mrWs, 'plan-mr.md');
+      // Каркас заполняем так же, как это сделал бы агент: подставляем id в
+      // строки таблицы и в теги шагов (и только в них — `<id>` из пояснения в
+      // html-комментарии трогать не надо, его всё равно вырезает разбор).
+      const fillIds = (tpl, ids) => {
+        let i = 0;
+        return tpl
+          .split('\n')
+          .map((l) => (/^\||^- \[[ xX]\]/.test(l) ? l.replace(/`<id>`/g, () => '`' + ids[i++] + '`') : l))
+          .join('\n');
+      };
+      const planText = fillIds(fs.readFileSync(path.join(root, 'core/templates/plan.md'), 'utf8'), [
+        'backend.common',
+        'backend.core',
+        'backend.common',
+        'backend.core',
+      ]);
+      fs.writeFileSync(planPath, planText);
+      const pr = JSON.parse(runScriptFull('core/scripts/plan-repos.mjs', ['--file', planPath, '--workspace', mrWs], '', mrWs).stdout);
+      const va = JSON.parse(
+        runScript('core/scripts/validate-artifact.mjs', ['--file', planPath, '--type', 'plan', '--workspace', mrWs]),
+      );
+      if (pr.ok === true && pr.repos.join(',') === 'backend.common,backend.core' && va.planRepos.repos.join(',') === pr.repos.join(','))
+        ok('plan-repos: список репозиториев плана — один и тот же у скрипта области и у валидатора');
+      else bad('plan-repos: расхождение: ' + JSON.stringify({ pr: pr.repos, va: va.planRepos, problems: pr.problems }));
+
+      // Несуществующий репозиторий в плане ловится ДО реализации: иначе этап
+      // поставит область по выдуманному id и упрётся в отказ guard'а.
+      fs.writeFileSync(planPath, planText.replace(/backend\.core/g, 'backend.gateway'));
+      const prUnknown = JSON.parse(
+        runScriptFull('core/scripts/plan-repos.mjs', ['--file', planPath, '--workspace', mrWs], '', mrWs).stdout,
+      );
+      if (prUnknown.ok === false && prUnknown.unknown.includes('backend.gateway'))
+        ok('plan-repos: репозиторий, которого нет в settings.json, — остановка с именем');
+      else bad('plan-repos: неизвестный репозиторий прошёл: ' + JSON.stringify(prUnknown));
+
+      // Расхождение таблицы и шагов роняет валидацию намеренно: план выглядит
+      // заполненным, а область записи по нему встанет неверная.
+      fs.writeFileSync(planPath, planText.replace('- [ ] **Шаг 2.** Репозиторий: `backend.core`.', '- [ ] **Шаг 2.**'));
+      const vaMismatch = JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', planPath, '--type', 'plan']));
+      if (
+        vaMismatch.ok === false &&
+        vaMismatch.problems.some((p) => /без тега «Репозиторий/.test(p)) &&
+        vaMismatch.problems.some((p) => /ни один шаг их не правит/.test(p))
+      )
+        ok('validate-artifact: шаг без тега и репозиторий без шага — ошибка плана');
+      else bad('validate-artifact: расхождение плана прошло: ' + JSON.stringify(vaMismatch.problems));
+
+      // Одиночный бэкенд остаётся законной конфигурацией: команда, у которой
+      // он в одном репозитории, ничего не меняет.
+      const soloWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-solo-'));
+      try {
+        fs.writeFileSync(
+          path.join(soloWs, 'settings.json'),
+          JSON.stringify({
+            taskPrefix: 'TASK',
+            repos: {
+              systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+              frontend: { link: 'repos/frontend', mainBranch: 'main' },
+              backend: { link: 'repos/backend', mainBranch: 'main' },
+              autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+            },
+          }),
+        );
+        const rcSolo = JSON.parse(runScript('core/scripts/resolve-config.mjs', [soloWs]));
+        const scopeSolo = JSON.parse(
+          runScriptFull('core/scripts/scope.mjs', ['set', '--stage', 'implement-plan', '--type', 'BE'], '', soloWs).stdout,
+        );
+        runScriptFull('core/scripts/scope.mjs', ['clear'], '', soloWs);
+        if (
+          rcSolo.codebase.BE.join(',') === 'backend' &&
+          rcSolo.units.length === 4 &&
+          scopeSolo.ok === true &&
+          scopeSolo.scope.writeRepos.join(',') === 'backend'
+        )
+          ok('обратная совместимость: бэкенд в одном репозитории работает как раньше');
+        else bad('обратная совместимость одиночного бэкенда: ' + JSON.stringify({ codebase: rcSolo.codebase, scope: scopeSolo.scope }));
+      } finally {
+        fs.rmSync(soloWs, { recursive: true, force: true });
+      }
+
+      // Стейджи обязаны звать plan-repos ДО постановки области: иначе список
+      // репозиториев берётся «на глаз», и обещание «пишем только по плану»
+      // держится на внимательности модели.
+      const implStage = fs.readFileSync(path.join(root, 'core/stages/implement-plan.md'), 'utf8');
+      const prPos = implStage.indexOf('plan-repos.mjs');
+      const scopePos = implStage.indexOf('scope.mjs set');
+      if (prPos !== -1 && scopePos !== -1 && prPos < scopePos && /--write/.test(implStage))
+        ok('стейдж implement-plan: область ставится по списку из plan-repos, а не по типу задачи');
+      else bad('стейдж implement-plan: plan-repos не вызывается до scope.mjs set');
+
+      // Сверка «репозиторий чужой кодовой базы» включается флагом. Забудь его
+      // стейдж — проверка есть в скрипте, но не работает ни на одном прогоне.
+      const cpStageSrc = fs.readFileSync(path.join(root, 'core/stages/create-plan.md'), 'utf8');
+      const prTyped = /plan-repos\.mjs[^\n]*--type/.test(implStage);
+      const vaTyped = /validate-artifact\.mjs[^\n]*--taskType/.test(cpStageSrc);
+      if (prTyped && vaTyped)
+        ok('стейджи передают тип задачи: план сверяется с кодовой базой СВОЕГО типа');
+      else
+        bad(
+          'тип задачи не передан в сверку: ' +
+            [prTyped ? null : 'implement-plan → plan-repos --type', vaTyped ? null : 'create-plan → validate-artifact --taskType']
+              .filter(Boolean)
+              .join(', '),
+        );
+
+      // Идентификаторы копий, названные в текстах этапов и промптов, обязаны
+      // существовать: опечатка в промпте (backend.apis) уводит агента в
+      // репозиторий, которого нет, и обнаруживается только на прогоне.
+      const knownIds = new Set(['backend', ...(DEFAULT_GROUP_PARTS.backend || []).map((p) => `backend.${p}`)]);
+      const textFiles = [
+        'core/stages/_common.md',
+        'core/stages/create-plan.md',
+        'core/stages/implement-plan.md',
+        'core/stages/_review-loop.md',
+        'core/prompts/backend-developer.md',
+        'core/prompts/reviewer.md',
+        'core/templates/plan.md',
+      ];
+      const ghostIds = [];
+      for (const rel of textFiles) {
+        const txt = fs.readFileSync(path.join(root, rel), 'utf8');
+        for (const m of txt.match(/backend\.[a-zA-Z]+/g) || []) {
+          if (!knownIds.has(m)) ghostIds.push(`${rel}: ${m}`);
+        }
+      }
+      if (!ghostIds.length) ok('тексты этапов и промптов называют только существующие рабочие копии бэкенда');
+      else bad('в текстах названы несуществующие копии: ' + ghostIds.join(', '));
+
+      // create-plan обязан обойти ВСЕ копии кодовой базы: пропустит одну —
+      // агент разложит по репозиториям задачу, не увидев части кода.
+      const cpStage = fs.readFileSync(path.join(root, 'core/stages/create-plan.md'), 'utf8');
+      const cpLoops = /КАЖДОГО юнита[\s\S]{0,200}git-ops locate/.test(cpStage.replace(/\s+/g, ' ')) ||
+        /для КАЖДОГО[\s\S]{0,160}locate/i.test(cpStage.replace(/\s+/g, ' '));
+      if (cpLoops && /codebase\.<тип>/.test(cpStage) && /Затронутые репозитории/.test(cpStage))
+        ok('стейдж create-plan: обход всех копий кодовой базы и требование заполнить «Затронутые репозитории»');
+      else bad('стейдж create-plan: нет обхода копий или требования к разделу плана');
+
+      // Промпт бэкендера — единственное место, где записано, ЧТО в каком
+      // репозитории лежит. Без правила размещения слабая модель кладёт всё в
+      // core, и раскладка в плане становится формальной.
+      const bePrompt = fs.readFileSync(path.join(root, 'core/prompts/backend-developer.md'), 'utf8');
+      const placement = ['backend.api', 'backend.core', 'backend.common', 'backend.config'].every((id) => bePrompt.includes(id));
+      if (placement && /Куда что класть|раскладк/i.test(bePrompt) && /запрос на уточнение/.test(bePrompt))
+        ok('промпт backend-developer: правило размещения по репозиториям и запрос на уточнение вместо самовольного расширения');
+      else bad('промпт backend-developer: нет правила размещения или порядка расширения области');
+
+      // Ревью одно на задачу, дифф общий: рассогласование между копиями
+      // видно только так, и промпт ревьюера обязан его искать.
+      const loopMd = fs.readFileSync(path.join(root, 'core/stages/_review-loop.md'), 'utf8');
+      const revPrompt = fs.readFileSync(path.join(root, 'core/prompts/reviewer.md'), 'utf8');
+      if (/### Репозиторий/.test(loopMd) && /### Репозиторий/.test(revPrompt) && /согласованност/i.test(revPrompt))
+        ok('цикл ревью: объединённый дифф с разметкой по репозиториям, ревьюер ищет рассогласование');
+      else bad('цикл ревью: объединённый дифф или сквозная согласованность не описаны');
+
+      // Ветки задачи теперь карта «копия → ветка». Старая строка обязана
+      // читаться: задачи в работе заведены до этой доработки.
+      const tsStage = fs.readFileSync(path.join(root, 'core/stages/task-status.md'), 'utf8');
+      const branchesOk = [implStage, tsStage].every((t) => t.includes('implementBranches') && /`implementBranch`/.test(t));
+      if (branchesOk) ok('meta.json: ветки реализации — карта implementBranches, старая строка читается');
+      else bad('meta.json: implementBranches/implementBranch описаны не везде (implement-plan, task-status)');
+
+      // Миграция не должна ломать уже настроенную группу: безусловная запись
+      // link дописала бы ей собственную ссылку и свела четыре копии к одной.
+      const migWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-mig-group-'));
+      try {
+        const groupSettings = {
+          taskPrefix: 'TASK',
+          repos: {
+            systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
+            frontend: { link: 'repos/frontend', mainBranch: 'main' },
+            backend: Object.fromEntries(parts.map((p) => [p, { link: `repos/backend/${p}`, mainBranch: 'develop' }])),
+            autoTest: { link: 'repos/autotests', mainBranch: 'main' },
+          },
+        };
+        fs.writeFileSync(path.join(migWs, 'settings.json'), JSON.stringify(groupSettings, null, 2));
+        runScriptFull('core/scripts/migrate-workspace.mjs', [migWs, '--apply']);
+        const after = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8'));
+        if (JSON.stringify(after.repos.backend) === JSON.stringify(groupSettings.repos.backend))
+          ok('migrate: настроенная группа backend не переписывается миграцией');
+        else bad('migrate: группа backend испорчена: ' + JSON.stringify(after.repos.backend));
+
+        // И собственный (не дефолтный) путь у одиночного репозитория тоже
+        // остаётся: молчаливая замена дефолтом ломает рабочую конфигурацию
+        // под видом миграции.
+        fs.writeFileSync(
+          path.join(migWs, 'settings.json'),
+          JSON.stringify({ taskPrefix: 'TASK', repos: { frontend: { link: 'repos/front-web', mainBranch: 'main' } } }, null, 2),
+        );
+        runScriptFull('core/scripts/migrate-workspace.mjs', [migWs, '--apply']);
+        const after2 = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8'));
+        if (after2.repos.frontend.link === 'repos/front-web') ok('migrate: собственный путь рабочей копии сохраняется');
+        else bad('migrate: собственный путь затёрт дефолтом: ' + after2.repos.frontend.link);
+
+        // …а ссылка формы 1.x (${VAR}) по-прежнему мигрирует в путь.
+        fs.writeFileSync(
+          path.join(migWs, 'settings.json'),
+          JSON.stringify({ taskPrefix: 'TASK', repos: { frontend: { link: '${FRONTEND_REPO}' } } }, null, 2),
+        );
+        runScriptFull('core/scripts/migrate-workspace.mjs', [migWs, '--apply']);
+        const after3 = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8'));
+        if (after3.repos.frontend.link === REPO_DIRS.frontend) ok('migrate: ссылка ${VAR} версии 1.x по-прежнему переводится в путь');
+        else bad('migrate: ссылка 1.x не мигрировала: ' + after3.repos.frontend.link);
+
+        // Группа, у частей которой ссылки ЕЩЁ НЕ заполнены, — тоже группа.
+        // Проверка «только полностью заполненная группа» пропускала её в
+        // общую ветку, и миграция дописывала группе собственный link: четыре
+        // рабочих копии команды схлопывались в одну прямо в общем
+        // settings.json.
+        const halfGroup = { backend: { core: { mainBranch: 'develop' }, api: { mainBranch: 'develop' } } };
+        fs.writeFileSync(path.join(migWs, 'settings.json'), JSON.stringify({ taskPrefix: 'TASK', repos: halfGroup }, null, 2));
+        const halfRun = runScriptFull('core/scripts/migrate-workspace.mjs', [migWs, '--apply']);
+        const after4 = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8'));
+        let halfWarned = false;
+        try {
+          halfWarned = (JSON.parse(halfRun.stdout).warnings || []).some((w) => /link/.test(w) && /backend/.test(w));
+        } catch {
+          /* сообщит проверка ниже */
+        }
+        if (JSON.stringify(after4.repos.backend) === JSON.stringify(halfGroup.backend) && halfWarned)
+          ok('migrate: группа с незаполненными ссылками частей не переписывается, а называется в warnings');
+        else bad('migrate: недозаполненная группа испорчена: ' + JSON.stringify({ after: after4.repos.backend, warned: halfWarned }));
+      } finally {
+        fs.rmSync(migWs, { recursive: true, force: true });
+      }
+
+      // ---- находки ревью: форма настроек и разбор аргументов ---------------
+
+      // Нетронутый каркас плана — НЕ план. Настоящих id в шаблоне нет
+      // намеренно: с ними пустой каркас читался бы как готовая раскладка и
+      // /implement-plan открыл бы запись в репозитории, которых никто не
+      // выбирал (на FE-задаче — прямо в бэкенд).
+      const tplPlanPath = path.join(mrWs, 'plan-untouched.md');
+      fs.copyFileSync(path.join(root, 'core/templates/plan.md'), tplPlanPath);
+      const prTpl = JSON.parse(
+        runScriptFull('core/scripts/plan-repos.mjs', ['--file', tplPlanPath, '--workspace', mrWs], '', mrWs).stdout,
+      );
+      if (prTpl.ok === false && !prTpl.repos.length)
+        ok('plan-repos: нетронутый шаблон плана не выдаётся за заполненную раскладку');
+      else bad('plan-repos: каркас шаблона прошёл как план: ' + JSON.stringify(prTpl.repos));
+
+      // Репозиторий ЧУЖОЙ кодовой базы существует — ни «неизвестный id», ни
+      // guard о нём не скажут, а область записи ставится по плану. Ловим на
+      // самом плане (--type) и, что важнее, на постановке области.
+      const fePlan = path.join(mrWs, 'plan-fe.md');
+      fs.writeFileSync(fePlan, planText);
+      const prFe = JSON.parse(
+        runScriptFull('core/scripts/plan-repos.mjs', ['--file', fePlan, '--workspace', mrWs, '--type', 'FE'], '', mrWs).stdout,
+      );
+      const scopeFe = runScriptFull(
+        'core/scripts/scope.mjs',
+        ['set', '--stage', 'implement-plan', '--type', 'FE', '--task', 'TASK-1', '--write', 'backend.core'],
+        '',
+        mrWs,
+      );
+      if (
+        prFe.ok === false &&
+        prFe.foreign.join(',') === 'backend.common,backend.core' &&
+        scopeFe.status !== 0 &&
+        /вне кодовой базы этапа/.test(scopeFe.stdout)
+      )
+        ok('план и область: FE-задача не получает запись в бэкенд ни через план, ни через --write');
+      else bad('чужая кодовая база прошла: ' + JSON.stringify({ foreign: prFe.foreign, scope: scopeFe.stdout.slice(0, 160) }));
+
+      // Деградировавший юнит (группа под чужим ключом) — записи-репозитория у
+      // него нет. Дописав в объект группы `link`, readConfig испортил бы
+      // конфигурацию, которую resolve-config печатает наружу.
+      const degWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-degraded-'));
+      try {
+        fs.writeFileSync(
+          path.join(degWs, 'settings.json'),
+          JSON.stringify({ repos: { frontend: { web: { link: 'repos/frontend/web' } } } }, null, 2),
+        );
+        const rcDeg = JSON.parse(runScript('core/scripts/resolve-config.mjs', [degWs]));
+        const fe = rcDeg.config.repos.frontend;
+        if (!('link' in fe) && !('mainBranch' in fe) && (rcDeg.configErrors || []).some((e) => /только backend/.test(e)))
+          ok('readConfig: в объект группы под чужим ключом ничего не дописывается, причина названа');
+        else bad('readConfig: объект группы испорчен: ' + JSON.stringify({ fe, errors: rcDeg.configErrors }));
+      } finally {
+        fs.rmSync(degWs, { recursive: true, force: true });
+      }
+
+      // description на уровне группы — документированное поле репозитория,
+      // написать его на группе естественно. Ошибкой это быть не должно: убрать
+      // такое предупреждение было бы нечем.
+      const metaWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-groupmeta-'));
+      try {
+        fs.writeFileSync(
+          path.join(metaWs, 'settings.json'),
+          JSON.stringify(
+            { repos: { backend: { description: 'бэкенд целиком', core: { link: 'repos/backend/core' } } } },
+            null,
+            2,
+          ),
+        );
+        const rcMeta = JSON.parse(runScript('core/scripts/resolve-config.mjs', [metaWs]));
+        const metaErr = (rcMeta.configErrors || []).filter((e) => /description/.test(e));
+        if (!metaErr.length && rcMeta.units.some((u) => u.id === 'backend.core'))
+          ok('readUnits: description на уровне группы — метаданные, а не сломанная часть');
+        else bad('readUnits: description на группе: ' + JSON.stringify({ errors: rcMeta.configErrors, units: rcMeta.units.map((u) => u.id) }));
+      } finally {
+        fs.rmSync(metaWs, { recursive: true, force: true });
+      }
+
+      // Флаг без значения не должен съедать следующий флаг: `--workspace
+      // --plan x` давал workspace="--plan", readConfig поднимался вверх до
+      // ЧУЖОГО settings.json и сверял план с посторонней конфигурацией.
+      const argRun = runScriptFull('core/scripts/validate-artifact.mjs', [
+        '--file', planPath, '--type', 'plan', '--workspace', '--plan', 'x',
+      ]);
+      let argJson = {};
+      try {
+        argJson = JSON.parse(argRun.stdout);
+      } catch {
+        /* сообщит проверка ниже */
+      }
+      if (argJson.ok === false && (argJson.problems || []).some((p) => /--workspace требует значение/.test(p)))
+        ok('validate-artifact: флаг без значения — ошибка, а не молчаливая сверка с чужой конфигурацией');
+      else bad('validate-artifact: --workspace без значения: ' + JSON.stringify(argJson.problems || argRun.stdout.slice(0, 160)));
+    } finally {
+      fs.rmSync(mrWs, { recursive: true, force: true });
     }
   }
 } finally {

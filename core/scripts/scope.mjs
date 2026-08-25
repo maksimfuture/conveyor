@@ -8,7 +8,14 @@
 //
 // Usage:
 //   node scope.mjs set --stage <имя> --type FE|BE|FE-BE [--task TASK-ID]
-//                      [--write key1,key2|none]   # override; иначе по этапу
+//                      [--write id1,id2|none]     # override; иначе по этапу
+//
+// --write принимает id ЮНИТОВ (рабочих копий): frontend, systemsAnalysis,
+// autoTest, backend.core, backend.api, … Ключ группы («backend») не
+// принимается: на /implement-plan область записи — это репозитории, которые
+// назвал plan.md, а не «весь бэкенд». Список только СУЖАЕТ права этапа: id
+// вне кодовой базы этапа и типа задачи отвергается — иначе содержимое
+// артефакта (plan.md) решало бы, куда плагину можно писать.
 //   node scope.mjs set --stage intent --task INTENT-ID   # этап без типа
 //   node scope.mjs clear
 //   node scope.mjs show
@@ -31,6 +38,8 @@ import {
   readScopeState,
   stageWriteRepoKeys,
   repoRootFor,
+  expandKeys,
+  unitIds,
   REPO_KEYS,
   STAGE_NAMES,
   STAGES_WITHOUT_TASK_TYPE,
@@ -72,7 +81,7 @@ const FLAG_VALUE_HINT = {
   stage: 'имя этапа',
   type: 'FE, BE или FE-BE',
   task: 'TASK-ID',
-  write: 'список ключей или none',
+  write: 'список id рабочих копий (backend.api,backend.core) или none',
 };
 // Командную строку набирает модель по шаблону этапа, поэтому опечатка в ИМЕНИ
 // флага — рядовое событие, а не экзотика. Неизвестное имя со значением раньше
@@ -146,10 +155,50 @@ if (sub === 'set') {
     // Список из одних разделителей — тоже потерянное значение: запрет записи
     // объявляется только словом none.
     if (!writeRepos.length) done({ ok: false, error: '--write: пустой список (для запрета записи используйте none)' });
-    const bad = writeRepos.filter((k) => !REPO_KEYS.includes(k));
-    if (bad.length) done({ ok: false, error: `неизвестные репозитории: ${bad.join(', ')}` });
+    // Список сверяется с ФАКТИЧЕСКИМИ юнитами конфигурации, а не с константой:
+    // состав частей бэкенда задаёт settings.json команды.
+    const known = unitIds(cfg);
+    const bad = writeRepos.filter((k) => !known.includes(k));
+    if (bad.length) {
+      // Отдельная подсказка на самую частую ошибку: ключ ГРУППЫ вместо её
+      // частей. Молча пропустить нельзя — этап получил бы область, не
+      // покрывающую ни одной рабочей копии, и упёрся бы в отказ guard'а на
+      // первой же записи, без объяснимой причины.
+      const groups = bad.filter((k) => REPO_KEYS.includes(k) && known.some((id) => id.startsWith(k + '.')));
+      const hints = groups.map(
+        (k) => `«${k}» — группа репозиториев; укажите её части: ${known.filter((id) => id.startsWith(k + '.')).join(', ')}`,
+      );
+      done({
+        ok: false,
+        error:
+          `неизвестные репозитории: ${bad.join(', ')}. ` +
+          (hints.length ? hints.join('; ') + '. ' : '') +
+          `Допустимые: ${known.join(', ')}`,
+      });
+    }
+    // Явный список СУЖАЕТ права этапа, а не выдаёт новые. Этап передаёт его,
+    // прочитав plan.md, — то есть содержимое артефакта решало бы, куда можно
+    // писать. Без этой проверки план FE-задачи с забытой строкой-образцом
+    // («backend.core») открывал бы себе запись в бэкенд, и ни одна проверка
+    // ниже по течению этого бы не заметила: id существует, guard такую область
+    // исполнит буквально. Разрешённое множество считает ядро — по этапу и типу
+    // задачи.
+    const allowed = expandKeys(cfg, stageWriteRepoKeys(args.stage, taskType));
+    const outside = writeRepos.filter((k) => !allowed.includes(k));
+    if (outside.length) {
+      done({
+        ok: false,
+        error:
+          `репозитории вне кодовой базы этапа: ${outside.join(', ')}. ` +
+          `На этапе «${args.stage}» задача типа ${taskType || '—'} пишет только в: ` +
+          `${allowed.length ? allowed.join(', ') : 'артефакты задачи (--write none)'}`,
+      });
+    }
   } else {
-    writeRepos = stageWriteRepoKeys(args.stage, taskType);
+    // Дефолт этапа — ключи верхнего уровня; до рабочих копий их доводит
+    // expandKeys (BE → все части бэкенда). На /implement-plan этот дефолт
+    // перекрывается явным --write из plan.md.
+    writeRepos = expandKeys(cfg, stageWriteRepoKeys(args.stage, taskType));
   }
   const scope = {
     stage: args.stage,

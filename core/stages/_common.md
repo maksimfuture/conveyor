@@ -23,19 +23,29 @@
 ## Первый шаг любого этапа (кроме /setup и /task-status)
 1. Получи конфигурацию:
    `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`
-   Разбери JSON: `found`, `workspaceRoot`, `config`, `links`, `missingLinks`,
-   `urlLinks`, `fastMode`.
+   Разбери JSON: `found`, `workspaceRoot`, `config`, `units`, `codebase`,
+   `links`, `missingLinks`, `urlLinks`, `configErrors`, `fastMode`.
 2. Если `found:false` — останови этап: «Здесь не инициализирован рабочий
    репозиторий conveyor. Запустите /setup».
-3. Останови этап, если репозиторий, нужный ЭТОМУ этапу (таблица «Какая
-   конфигурация нужна какой команде» в README), непригоден по любой из трёх
-   причин: он в `missingLinks` (ссылка не задана),
-   в `urlLinks` (вместо пути задан git-URL) или у него
-   `links.<ключ>.inside == false` (путь ведёт за пределы рабочего
+3. Останови этап, если рабочая копия, нужная ЭТОМУ этапу (таблица «Какая
+   конфигурация нужна какой команде» в README), непригодна по любой из трёх
+   причин: она в `missingLinks` (ссылка не задана),
+   в `urlLinks` (вместо пути задан git-URL) или у неё
+   `links.<id>.inside == false` (путь ведёт за пределы рабочего
    репозитория). Объясни пользователю: в settings.json `repos.<ключ>.link` —
    это путь ВНУТРИ рабочего репозитория, вида `repos/frontend`, а сам
    репозиторий разработчик клонирует туда сам: плагин не клонирует. Затем
    предложи `/setup`.
+
+**Рабочие копии — это `units`, а не ключи настроек.** Кодовая база бэкенда
+разложена на несколько репозиториев (backend.core, backend.api,
+backend.common, backend.config), и `resolve-config` уже отдал их готовым
+списком: `units[]` (у каждого `units[].id`, `units[].path`,
+`units[].mainBranch`, `units[].description`, `units[].state`) и
+`codebase.FE` / `codebase.BE` — из чего состоит кодовая база FE- и
+BE-задачи. НЕ разбирай `config.repos` сам: форму настроек (группа или
+одиночный репозиторий) знает ядро. Там, где ниже сказано «репозиторий этапа»,
+для BE-задачи имеется в виду КАЖДЫЙ юнит из `codebase.BE`.
 
 ## Определение задачи
 Раздел применяется к этапам, которые работают с УЖЕ заведённой задачей:
@@ -64,13 +74,18 @@
 `... scope.mjs set --stage intent --task <INTENT-ID>` — без `--type`
 (переданный тип scope.mjs отвергает: он был бы выдумкой).
 
+Область записи перечисляет ЮНИТЫ (`frontend`, `backend.api`, `autoTest`), а
+не ключи настроек: `--write backend.api,backend.core`. Ключ группы
+(`backend`) scope.mjs не принимает — на `/implement-plan` писать разрешено
+только в те репозитории, которые назвал plan.md.
+
 | Этап | АГЕНТ читает | АГЕНТ пишет |
 |---|---|---|
 | intent | анализ (systemsAnalysis), read-only | — (только `intents/<INTENT-ID>/`) |
 | create-specification (фаза A) | анализ | анализ |
 | create-specification (фаза B) | анализ | — (только артефакты задачи) |
-| create-plan | код FE/BE (по типу) | — (только артефакты) |
-| implement-plan | код FE/BE | код FE/BE |
+| create-plan | кодовая база по типу задачи — ВСЕ юниты `codebase.<тип>` | — (только артефакты) |
+| implement-plan | кодовая база по типу задачи | код — ТОЛЬКО репозитории из plan.md |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты | — (только артефакты) |
 | implement-auto-test | автотесты (autoTest) | автотесты |
 
@@ -119,8 +134,13 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
   защита не исчезает по таймеру; снимает её старт сессии, сообщая об этом.
 
 ## Работа с внешними репозиториями
+Все команды ниже работают с ОДНОЙ рабочей копией. Если этапу их нужно
+несколько (BE-задача: `codebase.BE` из нескольких юнитов), вызывай их в цикле
+по юнитам — по одному вызову на `units[].link` — и подписывай результат id
+юнита: «`backend.api`: ветка создана».
+
 - Найти рабочую копию:
-  `node "<CONVEYOR_ROOT>/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <key>`
+  `node "<CONVEYOR_ROOT>/core/scripts/git-ops.mjs" locate --link <link> --workspace <workspaceRoot> --name <id>`
   (`link` — путь ОТ корня рабочего репозитория, поэтому `--workspace` обязателен)
 - Обновить перед работой:
   `... git-ops.mjs update --path <repoPath> --main <mainBranch> --mode read|write`

@@ -28,7 +28,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findWorkspaceRoot, parseEnvFile, readJsonFile, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
+import { findWorkspaceRoot, parseEnvFile, readJsonFile, reposEntryKind, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');
@@ -132,13 +132,44 @@ if (!isObject(settings)) {
         );
         continue;
       }
+      // ГРУППА репозиториев (у бэкенда это core/api/common/config) — форма
+      // версии 2.1, мигрировать в ней нечего. Трогать её здесь НЕЛЬЗЯ:
+      // запись link ниже дописала бы группе собственную ссылку и превратила
+      // несколько рабочих копий в одну — то есть сломала бы настройки всей
+      // команды одним прогоном миграции.
+      //
+      // Проверять только `=== 'group'` мало: у группы, где часть ссылок ещё
+      // не заполнена (`{"core": {"mainBranch": "develop"}}`), вид —
+      // `group-empty`, и она проваливалась ровно в ту запись, от которой
+      // защищает эта строка. Уходит ЛЮБАЯ запись с вложенными частями.
+      const kind = key in settings.repos ? reposEntryKind(settings.repos[key]) : 'repo';
+      if (kind === 'group' || kind === 'group-empty') {
+        if (kind === 'group-empty') {
+          warnings.push(
+            `${key}: группа репозиториев, но ни у одной части не задан link — ` +
+              'заполните ссылки частей вручную (миграция группы не трогает)',
+          );
+        }
+        continue;
+      }
       const repo = settings.repos[key] || (settings.repos[key] = {});
       const linkVar = varOf(repo.link);
       const oldValue = linkVar ? (env[linkVar] || '') : (repo.link || '');
-      if (repo.link !== REPO_DIRS[key]) {
+      // Переписываем ссылку ТОЛЬКО когда мигрировать действительно есть что:
+      // её нет вовсе либо она формы 1.x (`${VAR}`). Свой осмысленный путь —
+      // это выбор команды (рабочая копия могла лежать не в дефолтном
+      // каталоге), и молча заменить его дефолтом значит сломать рабочую
+      // конфигурацию под видом миграции.
+      const needsRewrite = typeof repo.link !== 'string' || repo.link.trim() === '' || Boolean(linkVar);
+      if (needsRewrite && repo.link !== REPO_DIRS[key]) {
         repo.link = REPO_DIRS[key];
         settingsChanges.push(`settings.repos.${key}.link -> ${REPO_DIRS[key]}`);
         if (oldValue) warnings.push(`${key}: раньше ссылка вела на «${oldValue}» — склонируйте репозиторий в ${REPO_DIRS[key]}`);
+      } else if (repo.link !== REPO_DIRS[key]) {
+        warnings.push(
+          `${key}: ссылка «${repo.link}» отличается от каталога по умолчанию (${REPO_DIRS[key]}) — ` +
+            'оставлена как есть; проверьте, что рабочая копия лежит именно там',
+        );
       }
       const branchVar = varOf(repo.mainBranch);
       const branch = (branchVar ? env[branchVar] : repo.mainBranch) || 'main';

@@ -35,7 +35,7 @@ import {
   repoRootFor,
   realResolve,
   isInside,
-  REPO_KEYS,
+  unitIds,
 } from './lib/config.mjs';
 import { joinContinuations, gitSubcommand, gitArgs, normalizeRefspec } from './lib/git-args.mjs';
 
@@ -160,10 +160,12 @@ function collectWriteTargets(sub, tok) {
   return targets;
 }
 
+// Основные ветки ВСЕХ рабочих копий: у бэкенда их четыре, и у каждой части
+// своя настройка. Пропусти хоть одну — push в её основную ветку пройдёт.
 function mainBranches(cfg) {
   const set = new Set();
-  for (const key of REPO_KEYS) {
-    const b = cfg.links[key] && cfg.links[key].mainBranch;
+  for (const id of unitIds(cfg)) {
+    const b = cfg.links[id] && cfg.links[id].mainBranch;
     if (b) set.add(b);
   }
   return set;
@@ -249,19 +251,25 @@ function classifyGit(tok, mains, cfg, effCwd) {
       return { decision: 'ask', reason: `git ${sub}: не удалось вычислить целевой репозиторий (cd с подстановкой) — подтвердите.` };
     }
     const real = realResolve(repoDir);
-    for (const key of REPO_KEYS) {
-      const root = repoRootFor(cfg, key);
-      if (root && isInside(real, realResolve(root))) {
-        if (!scope.writeRepos.includes(key)) {
-          return {
-            decision: 'ask',
-            reason:
-              `git ${sub} в репозитории «${key}» вне рабочей области этапа ` +
-              `${scope.stage || '?'} — подтвердите (или scope.mjs clear, если этап не идёт).`,
-          };
-        }
-        break;
+    // Рабочие копии бывают вложенными (repos/backend и repos/backend/api),
+    // поэтому решает САМАЯ ГЛУБОКАЯ подходящая — как в checkWrite. Обход по
+    // порядку взял бы внешнюю и разрешил мутацию в чужой части группы.
+    let hit = null;
+    for (const id of unitIds(cfg)) {
+      const root = repoRootFor(cfg, id);
+      if (!root) continue;
+      const rootReal = realResolve(root);
+      if (isInside(real, rootReal) && (!hit || rootReal.length > hit.root.length)) {
+        hit = { id, root: rootReal };
       }
+    }
+    if (hit && !scope.writeRepos.includes(hit.id)) {
+      return {
+        decision: 'ask',
+        reason:
+          `git ${sub} в репозитории «${hit.id}» вне рабочей области этапа ` +
+          `${scope.stage || '?'} — подтвердите (или scope.mjs clear, если этап не идёт).`,
+      };
     }
   }
   return null;

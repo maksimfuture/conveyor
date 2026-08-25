@@ -1,7 +1,8 @@
 # conveyor — конвейер командной разработки (GigaCode)
 
-Расширение проводит задачу по конвейеру через четыре репозитория (системный
-анализ, фронтенд, бэкенд, автотесты). Их рабочие копии лежат ВНУТРИ рабочего
+Расширение проводит задачу по конвейеру через репозитории команды (системный
+анализ, фронтенд, бэкенд, автотесты; бэкенд обычно разложен на несколько
+репозиториев — `core`, `api`, `common`, `config`). Их рабочие копии лежат ВНУТРИ рабочего
 репозитория — в `repos/*`; клонирует их себе сам разработчик, плагин НИЧЕГО
 не клонирует. Команды регистрируются как `/conveyor:*`. Манифест расширения —
 `gigacode-extension.json`.
@@ -22,8 +23,9 @@
 После шага «Корень расширения» каждая команда (кроме `setup` и `task-status`):
 1. Первым делом получает конфигурацию:
    `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`. В ответе поля
-   `found`, `workspaceRoot`, `config`, `links`, `missingLinks`, `urlLinks`,
-   `fastMode`; `links.<ключ>` = `{ value, isGitUrl, path, inside, mainBranch,
+   `found`, `workspaceRoot`, `config`, `units`, `codebase`, `links`,
+   `missingLinks`, `urlLinks`, `configErrors`, `fastMode`;
+   `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch,
    pipelineUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
    `repos.<ключ>.linkPipelineAutoTest`; заполнен только у `autoTest`, пустая
    строка = джоба не настроена).
@@ -38,8 +40,15 @@
      `repos.<ключ>.link` — это путь ВНУТРИ рабочего репозитория, вида
      `repos/frontend`, а сам репозиторий разработчик клонирует туда сам;
      затем предложи `/conveyor:setup` — он покажет состояние всех копий.
-   ПУТИ К РАБОЧИМ КОПИЯМ берутся ТОЛЬКО отсюда (`links.<ключ>.path`) — не
-   спрашивай их у пользователя и не угадывай.
+   ПУТИ К РАБОЧИМ КОПИЯМ берутся ТОЛЬКО отсюда (`units[].path`, он же
+   `links.<id>.path`) — не спрашивай их у
+   пользователя и не угадывай. Бери их из ГОТОВОГО списка `units[]`
+   (у каждой копии свой идентификатор: `frontend`, `backend.core`,
+   `backend.api`, …) и `codebase.FE` / `codebase.BE` — из чего состоит
+   кодовая база задачи каждого типа. Сам `config.repos` НЕ разбирай:
+   форму настроек (группа или одиночный репозиторий) знает ядро.
+   У BE-задачи кодовая база — НЕСКОЛЬКО копий, и `git-ops locate`/`update`
+   вызываются по каждой.
 2. Устанавливает рабочую область — момент и аргументы задаёт шаг 1 файла
    этапа (после определения типа/TASK-ID):
    `node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage <этап>
@@ -72,8 +81,8 @@
 | intent | анализ (systemsAnalysis), read-only | — (только `intents/<INTENT-ID>/`) |
 | create-specification (фаза A) | анализ | анализ |
 | create-specification (фаза B) | анализ | — (только артефакты задачи) |
-| create-plan | код FE/BE (по типу) + specification.md | — (только артефакты) |
-| implement-plan | код FE/BE + plan.md | код FE/BE + артефакты |
+| create-plan | кодовая база по типу задачи — ВСЕ копии `codebase.<тип>` + specification.md | — (только артефакты) |
+| implement-plan | кодовая база по типу задачи + plan.md | код — ТОЛЬКО репозитории из plan.md + артефакты |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты задачи | — (только артефакты) |
 | implement-auto-test | автотесты (autoTest) + autotest-plan.md | автотесты + артефакты |
 

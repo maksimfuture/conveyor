@@ -20,6 +20,13 @@
    (specification.md, plan.md, autotest-plan.md, report-auto-test.md),
    следующий шаг конвейера.
 
+**Ветки реализации.** У задачи их может быть несколько: BE-задача правит
+несколько репозиториев бэкенда, и в каждом заведена своя ветка (имя одно и
+то же). Источник — `meta.json → implementBranches` (карта «репозиторий →
+`{branch, baseSha, headSha}`»); показывай строкой на репозиторий:
+`backend.api → TASK-165-tags`. Задачи, заведённые до перехода на несколько
+репозиториев, хранят строку `implementBranch` — читай и её, показывай так же.
+
 ## Порядок этапов (для «следующего этапа»)
 specification → plan → implement-plan → autotest-plan → implement-auto-test.
 

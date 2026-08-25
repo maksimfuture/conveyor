@@ -25,6 +25,7 @@ import {
   readScopeState,
   repoStates,
   requiredRepoKeys,
+  expandKeys,
   STAGE_NAMES,
   scopeFilePath,
   LEGACY_SCOPE_FILE,
@@ -100,6 +101,11 @@ function main() {
   if (cfg.error) {
     lines.push(`⚠ conveyor: ${cfg.error}`);
   } else {
+    // Претензии к ФОРМЕ настроек (группа под чужим ключом, лишний ключ в
+    // repos, запись-примитив). Состояниями рабочих копий они не видны:
+    // запись, которую плагин не разобрал, просто не даёт юнита — человек
+    // правит settings.json и не понимает, почему ничего не поменялось.
+    for (const err of cfg.configErrors || []) lines.push(`⚠ conveyor: ${err}`);
     // Пригодность считает ядро — repoState, тот же критерий, что у /setup
     // (repos-status). Заполненная ссылка ещё не значит рабочую копию: шаблон
     // settings.json приходит с дефолтами repos/*, и в свежем репозитории, где
@@ -118,9 +124,12 @@ function main() {
       // Map each unusable link to the stages it blocks.
       const blocked = new Set();
       for (const stage of STAGES_NEEDING_REPO) {
+        // requiredRepoKeys отдаёт ключи верхнего уровня — до рабочих копий их
+        // доводит expandKeys: у BE-задачи `backend` раскрывается в четыре
+        // юнита, и непригоден может быть любой из них.
         const keys = requiredRepoKeys(stage, 'FE').concat(requiredRepoKeys(stage, 'BE'));
-        for (const key of new Set(keys)) {
-          if (unusable.has(key)) blocked.add(stage);
+        for (const id of new Set(expandKeys(cfg, keys))) {
+          if (unusable.has(id)) blocked.add(stage);
         }
       }
       // Ключ вместе с путём: без пути человек не знает, куда клонировать, а

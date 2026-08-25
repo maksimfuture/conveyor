@@ -8,10 +8,14 @@
 //     тип: intent | specification | plan | autotest-plan | report-auto-test
 //   node validate-artifact.mjs --file <отчёт> --type report-auto-test --plan <autotest-plan.md>
 //     — дополнительно сверяет состав автотестов отчёта с планом
+//   node validate-artifact.mjs --file <plan.md> --type plan --workspace <корень> [--taskType FE|BE]
+//     — сверяет репозитории плана с settings.json, а с --taskType ещё и с
+//       кодовой базой задачи этого типа
 //
 // Output (stdout, JSON):
 //   { ok, missingSections: [...], problems: [...], placeholders: [...] }
 //   + planMismatch: { missing: [...], extra: [...] } — только при --plan
+//   + planRepos: { repos, unknown, foreign, mismatch } — только для типа plan
 //   + ciPending: <bool> — только для report-auto-test: разделы заполнены, но
 //     прогона в CI ещё не было (законное промежуточное состояние, ok:true)
 // ok=false, если отсутствуют обязательные разделы или не выполнены
@@ -19,13 +23,23 @@
 // (<...>) — предупреждение в placeholders, ok не роняют.
 
 import fs from 'node:fs';
+import { parsePlanRepos } from './lib/plan-repos.mjs';
+import { readConfig, unitIds, codebaseUnits } from './lib/config.mjs';
 
+// Значение флага — только токен, который сам не является флагом. Иначе
+// `--workspace --plan x` отдаёт workspace = "--plan": readConfig пойдёт от
+// такого «пути» вверх, найдёт ЧУЖОЙ settings.json и сверит план с посторонней
+// конфигурацией, ничего не сказав. Флаг без значения остаётся `true` — вызовы
+// ниже отличают его от строки и называют ошибкой.
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = argv[i + 1];
+    if (!a.startsWith('--')) continue;
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith('--')) out[a.slice(2)] = true;
+    else {
+      out[a.slice(2)] = next;
       i++;
     }
   }
@@ -65,6 +79,9 @@ const REQUIRED = {
   ],
   plan: [
     '## Краткое резюме',
+    // Где будут правки — часть плана, а не деталь реализации: по этому
+    // разделу /implement-plan ставит область записи.
+    '## Затронутые репозитории',
     '## Анализ текущего кода',
     '## Шаги реализации',
     '## Изменения контрактов',
@@ -286,11 +303,20 @@ function done(obj) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-if (!args.file || !args.type) {
+if (typeof args.file !== 'string' || typeof args.type !== 'string') {
   done({ ok: false, problems: ['требуются --file <путь> и --type <тип>'] });
 }
 if (!REQUIRED[args.type]) {
   done({ ok: false, problems: [`неизвестный тип «${args.type}». Допустимые: ${Object.keys(REQUIRED).join(', ')}`] });
+}
+// Необязательные флаги, потерявшие значение, — не «как будто их нет»: этап
+// думает, что сверка выполнена, а её не было. Называем это ошибкой.
+for (const [flag, hint] of [
+  ['workspace', 'путь к корню рабочего репозитория'],
+  ['plan', 'путь к autotest-plan.md'],
+  ['taskType', 'FE или BE'],
+]) {
+  if (args[flag] === true) done({ ok: false, problems: [`--${flag} требует значение (${hint})`] });
 }
 if (!fs.existsSync(args.file)) {
   done({ ok: false, problems: [`файл не найден: ${args.file}`] });
@@ -303,6 +329,50 @@ const missingSections = REQUIRED[args.type].filter((h) => !text.includes(h));
 const problems = [];
 for (const rule of STRUCTURAL[args.type] || []) {
   if (!rule.test(text)) problems.push(rule.problem);
+}
+
+// План: раскладка по репозиториям. Разбор — общий с /implement-plan
+// (lib/plan-repos.mjs), иначе валидатор признавал бы план годным, а этап
+// получал бы другой список репозиториев. Идентификаторы сверяются с
+// settings.json только при переданном --workspace: без него проверка
+// остаётся чистым разбором текста.
+let planRepos;
+if (args.type === 'plan') {
+  const parsed = parsePlanRepos(text);
+  // Отсутствие самого раздела уже названо в missingSections — второй раз о
+  // том же в problems только шумит.
+  const sectionMissing = missingSections.includes('## Затронутые репозитории');
+  problems.push(...parsed.problems.filter((p) => !(sectionMissing && p.startsWith('нет раздела'))));
+  let unknown = [];
+  let foreign = [];
+  if (typeof args.workspace === 'string') {
+    const cfg = readConfig(args.workspace);
+    if (cfg.found && !cfg.error) {
+      const known = unitIds(cfg);
+      unknown = parsed.repos.filter((r) => !known.includes(r));
+      if (unknown.length) {
+        problems.push(
+          `в плане названы репозитории, которых нет в settings.json: ${unknown.join(', ')}. ` +
+            `Допустимые: ${known.join(', ')}`,
+        );
+      }
+      // Репозиторий ЧУЖОЙ кодовой базы — отдельная и более опасная ошибка:
+      // такой id существует, значит ни «неизвестный репозиторий», ни guard о
+      // нём не скажут, а область записи /implement-plan ставится ПО ПЛАНУ —
+      // FE-задача с забытой строкой-образцом открыла бы себе запись в бэкенд.
+      if (typeof args.taskType === 'string') {
+        const mine = codebaseUnits(cfg, args.taskType.trim().toUpperCase());
+        foreign = parsed.repos.filter((r) => known.includes(r) && !mine.includes(r));
+        if (foreign.length) {
+          problems.push(
+            `план ${args.taskType}-задачи называет репозитории чужой кодовой базы: ${foreign.join(', ')}. ` +
+              `Кодовая база этой задачи: ${mine.join(', ')}`,
+          );
+        }
+      }
+    }
+  }
+  planRepos = { repos: parsed.repos, unknown, foreign, mismatch: parsed.mismatch };
 }
 
 // Сверка отчёта с планом: количество автотестов в report-auto-test.md обязано
@@ -368,4 +438,5 @@ done({
   placeholders,
   ...(ciPending === undefined ? {} : { ciPending }),
   ...(planMismatch ? { planMismatch } : {}),
+  ...(planRepos ? { planRepos } : {}),
 });

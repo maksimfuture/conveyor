@@ -1,6 +1,6 @@
 ---
 name: create-plan
-description: Составляет план реализации (plan.md) по спецификации, анализируя кодовую базу. Запускать после /create-specification, когда разработчику нужен пошаговый план с привязкой к файлам и покрытием REQ-ID. Выбирает агента (frontend/backend) и репозиторий по типу задачи. Аргумент TASK-ID.
+description: Составляет план реализации (plan.md) по спецификации, анализируя кодовую базу. Запускать после /create-specification, когда разработчику нужен пошаговый план с привязкой к файлам и покрытием REQ-ID. Выбирает агента (frontend/backend) и кодовую базу по типу задачи; у бэкенда это несколько репозиториев, и план говорит, что в каком правим. Аргумент TASK-ID.
 ---
 
 Этап конвейера conveyor: план реализации.
@@ -19,12 +19,18 @@ description: Составляет план реализации (plan.md) по �
 `<CONVEYOR_ROOT>/core/stages/create-plan.md`.
 
 Кратко:
-1. resolve-config; тип задачи из meta.json → агент + кодовая база. Установи
-   рабочую область: `scope.mjs set --stage create-plan --type <FE|BE> --task
-   <TASK-ID>` (запись в репо запрещена); `clear` при завершении.
-2. Найди и обнови рабочую копию кода (`git-ops locate` + `update --mode read`).
-3. Запусти агента-разработчика → plan.md (core/templates/plan.md); каждый шаг
+1. resolve-config; тип задачи из meta.json → агент + `codebase.<тип>`
+   (у BE-задачи кодовая база — НЕСКОЛЬКО репозиториев: backend.core,
+   backend.api, backend.common, backend.config). Установи рабочую область:
+   `scope.mjs set --stage create-plan --type <FE|BE> --task <TASK-ID>`
+   (запись в репо запрещена); `clear` при завершении.
+2. Для КАЖДОГО юнита кодовой базы: `git-ops locate` + `update --mode read`.
+3. Запусти агента-разработчика → plan.md (core/templates/plan.md). Передай
+   таблицу рабочих копий (id, путь, ветка, назначение) и потребуй: раздел
+   «Затронутые репозитории» + `Репозиторий: <id>` у каждого шага; каждый шаг
    привязан к файлам и REQ-ID.
-4. Валидируй покрытие REQ-ID (непокрытые → один возврат агенту, затем показать
-   пользователю). Обнови meta.json (stages.plan.done). Следующий шаг —
+4. Валидируй: `validate-artifact.mjs --type plan --workspace <root> --taskType <FE|BE>` (раскладка
+   по репозиториям) + покрытие REQ-ID; непокрытое → один возврат агенту, затем
+   показать пользователю. Обнови meta.json (stages.plan.done, stages.plan.repos).
+   Покажи пользователю таблицу затронутых репозиториев. Следующий шаг —
    /implement-plan.

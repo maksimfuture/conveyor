@@ -20,7 +20,7 @@ FE → frontend-developer + `repos.frontend.link`; BE → backend-developer +
    обязан изучить архитектуру и соглашения проекта и составить `plan.md` по
    `core/templates/plan.md`.
 4. Валидация (скилл):
-   `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/plan.md --type plan`
+   `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <папка задачи>/plan.md --type plan`
    плюс покрытие: каждый шаг привязан к файлам, есть раздел рисков, каждый
    REQ-ID спецификации покрыт хотя бы одним шагом либо явно указано, почему
    требование вне плана. Не сошлось — один автоматический возврат агенту,

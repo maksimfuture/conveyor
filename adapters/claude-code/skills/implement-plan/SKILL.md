@@ -7,9 +7,16 @@ description: Реализует задачу в кодовой базе по п�
 **Агент:** frontend-developer или backend-developer (по типу задачи).
 **Предусловие:** есть plan.md.
 
-**Плагин-корень:** `${CONVEYOR_ROOT}` = `${CLAUDE_PLUGIN_ROOT}`. Прочитай и
-выполни точно: `${CONVEYOR_ROOT}/core/stages/_common.md` и
-`${CONVEYOR_ROOT}/core/stages/implement-plan.md`.
+**Корень плагина.** `${CLAUDE_PLUGIN_ROOT}` — Claude Code подставил сюда
+абсолютный путь при загрузке скилла. Ниже и во всех файлах этапа он обозначен
+плейсхолдером `<CONVEYOR_ROOT>`: подставляй этот путь БУКВАЛЬНО в каждую
+команду и каждый путь. Переменной окружения с таким именем нет — `$` с
+фигурными скобками раскроется в пустоту, а окружение между вызовами Bash не
+сохраняется. Остался незаменённый текст вместо пути — возьми каталог из строки
+«Base directory for this skill» выше и поднимись на два уровня.
+
+Прочитай и выполни точно: `<CONVEYOR_ROOT>/core/stages/_common.md` и
+`<CONVEYOR_ROOT>/core/stages/implement-plan.md`.
 
 Кратко:
 1. resolve-config; тип из meta.json → агент + кодовая база. Установи рабочую

@@ -342,6 +342,68 @@ for (const s of skills) {
   }
 }
 
+// 2a-bis) Корень плагина: одна нотация и явный источник пути.
+// `${CONVEYOR_ROOT}` выглядит как переменная оболочки, но её не задаёт ни одна
+// из сред: bash раскрывает её в ПУСТУЮ строку, `node "/core/scripts/x.mjs"`
+// уходит искать файл в корне диска (в Git Bash — в каталоге самого Git), и
+// ошибка не называет причину — этап встаёт «без объяснений». Нотация одна:
+// `<CONVEYOR_ROOT>`. Незамещённый плейсхолдер попадает в путь как есть и
+// виден в тексте ошибки, а `<` внутри кавычек оболочка не трогает.
+console.log('Корень плагина — нотация и источник пути:');
+{
+  const mdFiles = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.md')) mdFiles.push(p);
+    }
+  };
+  walk(path.join(root, 'core'));
+  walk(path.join(root, 'adapters'));
+
+  const dollar = [];
+  const unquoted = [];
+  for (const file of mdFiles) {
+    const rel = path.relative(root, file).split(path.sep).join('/');
+    const txt = fs.readFileSync(file, 'utf8');
+    if (/\$\{CONVEYOR_ROOT\}/.test(txt)) dollar.push(rel);
+    // Плейсхолдер в ЗАПУСКАЕМОЙ команде обязан стоять внутри двойных кавычек:
+    // голый `<` оболочка примет за редирект и создаст файл вместо запуска.
+    for (const m of txt.matchAll(/`([^`]+)`/g)) {
+      const span = m[1];
+      if (!/^(node|cat|bash|sh)\s/.test(span) || !span.includes('<CONVEYOR_ROOT>')) continue;
+      if (!/"[^"]*<CONVEYOR_ROOT>/.test(span)) unquoted.push(`${rel}: ${span.slice(0, 60)}`);
+    }
+  }
+  if (!dollar.length) ok(`нотация едина, записи со знаком доллара нет (${mdFiles.length} файлов)`);
+  else bad('корень записан как переменная оболочки (раскроется в пустоту): ' + dollar.join(', '));
+  if (!unquoted.length) ok('плейсхолдер корня в командах всегда внутри двойных кавычек');
+  else bad('плейсхолдер корня без кавычек, `<` уйдёт в редирект: ' + unquoted.join('; '));
+
+  // Откуда берётся НАСТОЯЩИЙ путь. Claude Code подставляет его только в тело
+  // SKILL.md (`${CLAUDE_PLUGIN_ROOT}`); в файлах core/ подстановки нет — их
+  // модель читает с диска как обычные файлы. В GigaCode подстановки нет вовсе,
+  // поэтому путь добывает сама команда — шагом «Корень расширения» в начале
+  // КАЖДОЙ команды: QWEN.md лежит в каталоге расширения и в фасадный проект
+  // может не попасть, полагаться на него нельзя.
+  const noSource = [];
+  const noStop = [];
+  for (const s of skills) {
+    const sk = fs.readFileSync(path.join(root, `adapters/claude-code/skills/${s}/SKILL.md`), 'utf8');
+    if (!/\$\{CLAUDE_PLUGIN_ROOT\}/.test(sk)) noSource.push(`skills/${s}`);
+    const cmd = fs.readFileSync(path.join(root, `adapters/gigacode/commands/conveyor/${s}.md`), 'utf8');
+    if (!/Корень расширения/.test(cmd) || !/homedir\(\)/.test(cmd)) noSource.push(`gigacode/${s}`);
+    // Ветка «не нашёл» — вторая половина шага, и она размножена по восьми
+    // файлам: потеряется в одной — этап пойдёт гадать путь вместо остановки.
+    if (!/NOT_FOUND/.test(cmd)) noStop.push(`gigacode/${s}`);
+  }
+  if (!noSource.length) ok(`путь корня добывается в каждой команде обоих адаптеров (${skills.length} x 2)`);
+  else bad('команда не добывает путь корня: ' + noSource.join(', '));
+  if (!noStop.length) ok('ветка «корень не найден» — остановка с вопросом — есть в каждой команде GigaCode');
+  else bad('в команде нет ветки «корень не найден»: ' + noStop.join(', '));
+}
+
 // 2b) Review loop wired into the three producing stages
 console.log('Цикл ревью:');
 if (!exists('core/stages/_review-loop.md')) bad('нет core/stages/_review-loop.md');
@@ -1303,14 +1365,14 @@ console.log('Стейдж setup — инициализация и диагнос
   // их как escape — `C:\Users\…\test-ai` превращается в `C:Users…` с табуляцией
   // вместо `\t`, а copyFileSync падает с ENOENT на пути, которого никто не
   // писал. Корень отдаём аргументом (`process.argv`), где никакой escape не
-  // действует, и обозначаем `${CONVEYOR_ROOT}` — той же нотацией, что и весь
+  // действует, и обозначаем `<CONVEYOR_ROOT>` — той же нотацией, что и весь
   // остальной плагин, включая соседний шаг диагностики.
   const eCmds = [...flat.matchAll(/node -e "([^"]*)"((?: "[^"]*")*)/g)].map((m) => ({ script: m[1], args: m[2] }));
   const rootCmds = eCmds.filter((c) => /core\/(templates|scripts)\//.test(c.script));
   const rootInString = rootCmds.filter((c) => /CONVEYOR_ROOT/.test(c.script)).length;
-  const rootByArg = rootCmds.filter((c) => /process\.argv/.test(c.script) && /\$\{CONVEYOR_ROOT\}/.test(c.args)).length;
-  const angleRoot = /<CONVEYOR_ROOT>/.test(flat);
-  if (rootCmds.length && !rootInString && rootByArg === rootCmds.length && !angleRoot)
+  const rootByArg = rootCmds.filter((c) => /process\.argv/.test(c.script) && /<CONVEYOR_ROOT>/.test(c.args)).length;
+  const shellRoot = /\$\{CONVEYOR_ROOT\}/.test(flat);
+  if (rootCmds.length && !rootInString && rootByArg === rootCmds.length && !shellRoot)
     ok('stage setup: корень плагина в `node -e` передаётся аргументом (process.argv), а не внутрь JS-строки');
   else
     bad(
@@ -1320,8 +1382,8 @@ console.log('Стейдж setup — инициализация и диагнос
           rootInString ? 'корень подставляется внутрь JS-строки — на Windows обратные слэши съест escape' : null,
           !rootCmds.length || rootByArg === rootCmds.length
             ? null
-            : 'корень не передан аргументом "${CONVEYOR_ROOT}" и не прочитан из process.argv',
-          angleRoot ? 'нотация <CONVEYOR_ROOT> расходится с ${CONVEYOR_ROOT} из _common.md' : null,
+            : 'корень не передан аргументом "<CONVEYOR_ROOT>" и не прочитан из process.argv',
+          shellRoot ? 'корень записан как переменная оболочки — она раскроется в пустоту' : null,
         ]
           .filter(Boolean)
           .join('; '),

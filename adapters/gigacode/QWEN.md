@@ -7,14 +7,21 @@
 `gigacode-extension.json`.
 
 ## Общий протокол выполнения команды
-`${CONVEYOR_ROOT}` — каталог установки расширения (по умолчанию
-`~/.gigacode/extensions/conveyor`). Всё ядро — в `${CONVEYOR_ROOT}/core/`.
-Если переменная `CONVEYOR_ROOT` не задана в окружении, подставляй реальный
-путь установки при запуске `node`.
+`<CONVEYOR_ROOT>` — АБСОЛЮТНЫЙ путь к каталогу установки расширения; всё ядро
+в `<CONVEYOR_ROOT>/core/`. Это ПЛЕЙСХОЛДЕР, а не переменная окружения:
+переменной `CONVEYOR_ROOT` не существует, `$` с фигурными скобками раскроется
+в ПУСТУЮ строку, и `node` уйдёт искать файл в корне диска. Настоящий путь
+печатает шаг «Корень расширения» в начале каждой команды — подставляй
+напечатанное буквально во все команды и пути.
 
-Каждая команда (кроме `setup` и `task-status`):
+Каталог установки лежит ВНЕ текущего проекта (по умолчанию
+`~/.gigacode/extensions/conveyor`). Если файловый инструмент ограничен
+каталогом проекта и файлы этапа не читает — читай их оболочкой:
+`cat "<CONVEYOR_ROOT>/core/stages/_common.md"`.
+
+После шага «Корень расширения» каждая команда (кроме `setup` и `task-status`):
 1. Первым делом получает конфигурацию:
-   `node "${CONVEYOR_ROOT}/core/scripts/resolve-config.mjs"`. В ответе поля
+   `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`. В ответе поля
    `found`, `workspaceRoot`, `config`, `links`, `missingLinks`, `urlLinks`,
    `fastMode`; `links.<ключ>` = `{ value, isGitUrl, path, inside, mainBranch,
    pipelineUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
@@ -35,20 +42,20 @@
    спрашивай их у пользователя и не угадывай.
 2. Устанавливает рабочую область — момент и аргументы задаёт шаг 1 файла
    этапа (после определения типа/TASK-ID):
-   `node "${CONVEYOR_ROOT}/core/scripts/scope.mjs" set --stage <этап>
+   `node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage <этап>
    --type FE|BE|FE-BE [--task TASK-ID]` (--type обязателен — от него зависит
    область записи; --task опционален; повторный set перезаписывает область).
    У этапа `intent` типа задачи ещё нет: `set --stage intent --task
    <INTENT-ID>` без `--type`. При завершении И при досрочной остановке
    этапа — `scope.mjs clear`.
-3. Читает и выполняет ТОЧНО `${CONVEYOR_ROOT}/core/stages/_common.md` и
-   `${CONVEYOR_ROOT}/core/stages/<команда>.md`.
+3. Читает и выполняет ТОЧНО `<CONVEYOR_ROOT>/core/stages/_common.md` и
+   `<CONVEYOR_ROOT>/core/stages/<команда>.md`.
 4. Роли-агентов (business-analyst, system-analyst, frontend/backend-developer,
    qa-autotest-engineer, reviewer) запускает как СУБАГЕНТОВ с телом промпта из
-   `${CONVEYOR_ROOT}/core/prompts/<агент>.md`, передавая контекст в промпте
+   `<CONVEYOR_ROOT>/core/prompts/<агент>.md`, передавая контекст в промпте
    (субагент не видит сессию). Если этап производит артефакт — вставь в
    промпт агента ПОЛНЫЙ текст шаблона из
-   `${CONVEYOR_ROOT}/core/templates/<имя>.md` (не ссылку!): агент заполняет
+   `<CONVEYOR_ROOT>/core/templates/<имя>.md` (не ссылку!): агент заполняет
    каркас, не меняя структуру разделов. Также проверь в корне рабочей копии
    файлы соглашений (`.gigacode/rules/*.md`, `GIGACODE.md`, `CLAUDE.md`,
    `AGENTS.md`) и вставь их текст в промпт агента (до ~200 строк; длиннее —
@@ -79,10 +86,10 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 ## Защита (важно: в GigaCode нет хуков-перехватчиков)
 В Claude Code запись и git-операции перехватывают хуки. В GigaCode
 перехватчиков нет, поэтому защита исполняется САМОЙ командой:
-- **git — только через** `${CONVEYOR_ROOT}/core/scripts/git-ops.mjs` (в нём
+- **git — только через** `<CONVEYOR_ROOT>/core/scripts/git-ops.mjs` (в нём
   нет `push`/`--force` — они структурно невозможны);
 - **перед записью файла** вызывай
-  `node "${CONVEYOR_ROOT}/core/scripts/guard-writes.mjs"` с JSON
+  `node "<CONVEYOR_ROOT>/core/scripts/guard-writes.mjs"` с JSON
   `{"cwd":"<рабочий репозиторий>","tool_input":{"file_path":"<путь>"}}` на
   stdin; если ответ `permissionDecision:"deny"` — не пиши, объясни;
 - **перед git-командой** аналогично вызывай `guard-bash.mjs` с
@@ -96,7 +103,7 @@ Guard-скрипты (см. ниже) при активной рабочей о�
   ИСХОДНИКИ пиши исключительно в рабочую копию кодовой базы; файл кода в
   `tasks/` — ошибка (guard-writes её блокирует). Перед
   `stages.<этап>.done = true` прогоняй
-  `node "${CONVEYOR_ROOT}/core/scripts/validate-task-folder.mjs" --task
+  `node "<CONVEYOR_ROOT>/core/scripts/validate-task-folder.mjs" --task
   <папка задачи>` и убирай из папки задачи всё постороннее;
 - вызов guard-скрипта — это ВСЯ проверка (dry-run). НИКОГДА не создавай
   пробные файлы («test-write.txt» и т.п.) для «проверки записи» — ни в

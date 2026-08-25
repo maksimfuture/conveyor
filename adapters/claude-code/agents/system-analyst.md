@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Edit, Write
 model: opus
 ---
 
-Тело роли — единый источник в `${CLAUDE_PLUGIN_ROOT}/core/prompts/system-analyst.md`
+Тело роли — единый источник в `<CONVEYOR_ROOT>/core/prompts/system-analyst.md`
 (этот файл собирается из него при сборке адаптера). Ключевое:
 
 Ты — опытный системный аналитик. Работаешь по критериям качества требований:

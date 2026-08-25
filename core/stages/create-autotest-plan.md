@@ -1,7 +1,7 @@
 # Этап /conveyor:create-autotest-plan — план автотестов
 
 **Кто запускает:** QA. **Агент:** qa-autotest-engineer
-(`${CONVEYOR_ROOT}/core/prompts/qa-autotest-engineer.md`).
+(`<CONVEYOR_ROOT>/core/prompts/qa-autotest-engineer.md`).
 **Аргументы:** `TASK-ID`.
 **Предусловие:** этап `implement-plan` завершён (meta.json).
 
@@ -41,7 +41,7 @@
 6. Агент вернул запрос на уточнение — задай вопросы пользователю через
    AskUserQuestion и перезапусти его с ответами (см. `_common.md`).
 7. Валидация:
-   `node "${CONVEYOR_ROOT}/core/scripts/validate-artifact.mjs" --file <папка задачи>/autotest-plan.md --type autotest-plan`
+   `node "<CONVEYOR_ROOT>/core/scripts/validate-artifact.mjs" --file <папка задачи>/autotest-plan.md --type autotest-plan`
    плюс покрытие: каждый критерий приёмки спецификации закрыт хотя бы одним
    тест-кейсом либо явно помечен «не автоматизируется» с причиной. Плюс
    сводка: «Итого» не противоречит разделам ниже (счётчики кейсов,

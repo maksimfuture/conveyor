@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   scopeFilePath,
   ARTIFACT_DIRS,
+  TASKS_DIR,
   STAGE_ARTIFACTS,
   REPO_KEYS,
   REPO_DIRS,
@@ -627,7 +628,7 @@ console.log('Стейдж intent — каталог интента:');
 
 // 2e) Скилл велит выполнить _common.md и intent.md ЦЕЛИКОМ, но два раздела
 // общих правил для intent'а невыполнимы и противоречат стейджу: «Определение
-// задачи» уводит к TASK-ID из tasks/ и полям из meta.json (у intent'а свой
+// задачи» уводит к TASK-ID из папки задач и полям из meta.json (у intent'а свой
 // INTENT-N и никакого meta.json), «Завершение этапа» требует
 // validate-task-folder по папке задачи и отметки stages.<этап>.done в
 // meta.json (папки задачи нет вовсе). Список исключений сами эти разделы не
@@ -777,14 +778,14 @@ console.log('Стейдж create-specification — две фазы:');
 
   // Свойство «не переигрывать правки чужого репозитория» держится не на
   // флагах, а на том, что повторный запуск ВООБЩЕ распознан: единственный
-  // признак — обратный индекс `tasks/*/*/meta.json → intentId`, и пройти его
-  // надо ДО вопроса про тип/номер и ДО заведения задачи (иначе на повторе
+  // признак — обратный индекс `<папка задач>/*/*/meta.json → intentId`, и пройти
+  // его надо ДО вопроса про тип/номер и ДО заведения задачи (иначе на повторе
   // появится ВТОРАЯ задача на тот же intent). Ветка «сразу фаза B» обязана
   // перечислить, что всё равно выполняется: resolve-config (workspaceRoot,
   // links, mainBranch) и `git-ops locate` — без него у шага диффа фазы B
   // неоткуда взять `--path <repo>`.
   const args = section('Разбор аргументов');
-  const detectAt = phaseA.search(/tasks\/\*\/\*\/meta\.json/);
+  const detectAt = phaseA.search(new RegExp(TASKS_DIR + '/\\*/\\*/meta\\.json'));
   const createAt = phaseA.search(/со скелетом/);
   const detectsFirst = detectAt > -1 && createAt > -1 && detectAt < createAt;
   const argsDefer = /повторн/i.test(args);
@@ -795,7 +796,7 @@ console.log('Стейдж create-specification — две фазы:');
     bad(
       'stage create-specification: распознавание повторного запуска — ' +
         [
-          detectsFirst ? null : 'обратный индекс tasks/*/*/meta.json не пройден до шага со скелетом meta.json',
+          detectsFirst ? null : `обратный индекс ${TASKS_DIR}/*/*/meta.json не пройден до шага со скелетом meta.json`,
           argsDefer ? null : '«Разбор аргументов» не отсылает к повторному запуску перед вопросом о типе/номере',
           keepsMandatory ? null : 'ветка «сразу фаза B» не называет resolve-config и locate как обязательные',
         ]
@@ -811,7 +812,7 @@ console.log('Стейдж create-specification — две фазы:');
   // принимать аргументом и TASK-ID, а ветка по TASK-ID — вести сразу в фазу B.
   const argLine = (csMd.match(/^\*\*Аргументы:\*\*.*$/m) || [''])[0];
   const bothIds = /INTENT-ID\s*\|\s*TASK-ID/.test(argLine);
-  const tellsApart = /intents\//.test(args) && /tasks\//.test(args) && /TASK-ID/.test(args);
+  const tellsApart = /intents\//.test(args) && args.includes(TASKS_DIR + '/') && /TASK-ID/.test(args);
   const taskIdBranch = section('Идемпотентность')
     .split(/\n(?=- )/)
     .map(flat)
@@ -826,7 +827,7 @@ console.log('Стейдж create-specification — две фазы:');
       'stage create-specification: запуск по TASK-ID — ' +
         [
           bothIds ? null : 'строка «Аргументы» не принимает TASK-ID наравне с INTENT-ID',
-          tellsApart ? null : '«Разбор аргументов» не говорит, как отличить TASK-ID от INTENT-ID (intents/ vs tasks/)',
+          tellsApart ? null : `«Разбор аргументов» не говорит, как отличить TASK-ID от INTENT-ID (intents/ vs ${TASKS_DIR}/)`,
           taskIdBranch ? null : 'в «Идемпотентности» нет ветки по TASK-ID',
           !taskIdBranch || branchToB ? null : 'ветка по TASK-ID не ведёт в фазу B',
           !taskIdBranch || branchMigrated ? null : 'ветка по TASK-ID не названа путём для задач с intentId: null',
@@ -1499,7 +1500,7 @@ console.log('Стейдж setup — инициализация и диагнос
   // список перечислен в DoD, и по всему файлу проверка проходит даже когда шаг
   // каталог больше не создаёт.
   const initStep = stepWith('copyFileSync');
-  const dirs = ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'].filter((d) => !initStep.includes(d));
+  const dirs = [`${TASKS_DIR}/FE`, `${TASKS_DIR}/BE`, 'intents/', 'repos/'].filter((d) => !initStep.includes(d));
   const copies = /copyFileSync/.test(flat) && /settings\.example\.json/.test(flat) && /env\.example/.test(flat);
   const byHand = /(НЕ набирай|не набирай)[^.]{0,80}памяти/i.test(flat);
   const selfCheck = /Object\.keys/.test(flat) && /missing/.test(flat);
@@ -1833,14 +1834,14 @@ console.log('_common.md — таблица рабочих областей пр�
     );
 
   // Папки, которые guard пускает на запись при активном этапе, перечислены в
-  // ARTIFACT_DIRS. Правило, называющее только tasks/, отправляет intent.md в
+  // ARTIFACT_DIRS. Правило, называющее только папку задач, отправляет intent.md в
   // отказ guard'а, а обещанный `.cache/` — в отказ гарантированно: этой папки
   // в разрешённых больше нет вовсе.
   const rules = scopeSect.replace(/\s+/g, ' ');
   const missingDirs = ARTIFACT_DIRS.filter((d) => !new RegExp(`${d}/`).test(rules));
   const cacheAllowed = /\.cache\//.test(rules);
   if (!missingDirs.length && !cacheAllowed)
-    ok('_common.md: правило артефактов называет обе папки (tasks/, intents/) и не обещает .cache/');
+    ok(`_common.md: правило артефактов называет обе папки (${ARTIFACT_DIRS.map((d) => d + '/').join(', ')}) и не обещает .cache/`);
   else
     bad(
       '_common.md: правило про папки артефактов — ' +
@@ -2449,12 +2450,12 @@ console.log('QWEN.md — протокол GigaCode:');
   if (nlMissing.length) problems.push('«естественный язык → команда» не покрывает: ' + nlMissing.join(', '));
 
   // 4. Каталоги записи в «Защите» — по checkWrite: рабочий репозиторий
-  // (tasks/, intents/), рабочие копии области этапа (repos/*), системный temp.
+  // (docs/specs/tasks/, intents/), рабочие копии области этапа (repos/*), temp.
   const guardSection = section('Защита');
   const dirsBullet = flat(guardSection.split(/\n(?=- )/).find((b) => /пиши только внутри/.test(b)) || '');
   if (!dirsBullet) problems.push('в «Защите» нет пункта о разрешённых каталогах записи');
   else {
-    const missDirs = ['tasks/', 'intents/', 'repos/'].filter((d) => !dirsBullet.includes(d));
+    const missDirs = [`${TASKS_DIR}/`, 'intents/', 'repos/'].filter((d) => !dirsBullet.includes(d));
     if (missDirs.length) problems.push('каталоги записи не названы: ' + missDirs.join(', '));
   }
   // `.cache/` — каталог 1.x: в протоколе GigaCode его быть не может (признаком
@@ -2488,7 +2489,7 @@ console.log('Скилл setup — «Кратко» против стейджа:'
   const mkStep = steps.find((s) => s.includes('.env.example')) || '';
   if (!mkStep) problems.push('нет шага создания структуры (копирования шаблонов конфигурации)');
   else
-    for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
+    for (const d of [`${TASKS_DIR}/FE`, `${TASKS_DIR}/BE`, 'intents/', 'repos/'])
       if (!mkStep.includes(d)) problems.push('шаг создания структуры не называет: ' + d);
 
   // .gitignore: repos/ и .env. `.cache/` — строка 1.x, в новом репозитории
@@ -2525,7 +2526,7 @@ console.log('Команда GigaCode setup — описание:');
   const problems = [];
   if (!/description:/.test(desc)) problems.push('нет frontmatter description');
   else {
-    for (const d of ['tasks/FE', 'tasks/BE', 'intents/', 'repos/'])
+    for (const d of [`${TASKS_DIR}/FE`, `${TASKS_DIR}/BE`, 'intents/', 'repos/'])
       if (!desc.includes(d)) problems.push('описание не называет часть структуры: ' + d);
     // Вторая (и более частая) роль этапа — диагностика рабочих копий через
     // repos-status; «проверяет ссылки» — формулировка 1.x, когда копий в
@@ -2859,6 +2860,29 @@ try {
     const vcCloned = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
     if (!/⚠ conveyor/.test(vcCloned)) ok('validate-config: при готовых рабочих копиях предупреждений нет');
     else bad('validate-config: предупреждение не гаснет после клонирования: ' + JSON.stringify(vcCloned));
+
+    // Папка задач в корне — раскладка до переезда в docs/specs/tasks. Этапы
+    // пишут уже по новому пути, поэтому молчание здесь означает две папки
+    // задач у команды, замеченные когда-нибудь потом. Предупреждение обязано
+    // назвать и новый путь, и миграцию — иначе непонятно, что делать.
+    const legacyTasks = path.join(tmpFresh, 'tasks', 'FE', 'TASK-1');
+    fs.mkdirSync(legacyTasks, { recursive: true });
+    const vcLegacy = vcCtxOf(JSON.stringify({ cwd: tmpFresh }));
+    if (vcLegacy.includes(TASKS_DIR) && /migrate-workspace/.test(vcLegacy))
+      ok('validate-config: папка задач в корне названа вместе с новым путём и миграцией');
+    else bad('validate-config: папка задач в корне не названа: ' + JSON.stringify(vcLegacy));
+    // Подсказку копируют и запускают как есть, а хук работает из cwd СЕССИИ
+    // (она бывает и подкаталогом). migrate-workspace требует, чтобы названный
+    // каталог САМ содержал settings.json, и вверх не поднимается: «.» в
+    // подсказке — это готовый fail «в каталоге нет settings.json».
+    const hinted = (vcLegacy.match(/migrate-workspace\.mjs "([^"]+)"/) || [])[1];
+    if (hinted && fs.existsSync(path.join(hinted, 'settings.json')))
+      ok('validate-config: подсказка называет корень рабочего репозитория, а не «.»');
+    else bad('validate-config: подсказка не указывает на корень с settings.json: ' + JSON.stringify(vcLegacy));
+    fs.rmSync(path.join(tmpFresh, 'tasks'), { recursive: true, force: true });
+    if (!/⚠ conveyor/.test(vcCtxOf(JSON.stringify({ cwd: tmpFresh }))))
+      ok('validate-config: после переноса папки задач предупреждение гаснет');
+    else bad('validate-config: предупреждение о папке задач не гаснет');
   } finally {
     fs.rmSync(tmpFresh, { recursive: true, force: true });
   }
@@ -2918,7 +2942,7 @@ try {
       ok('readConfig: settings.json с BOM читается');
     else bad('readConfig: settings.json с BOM не читается: ' + JSON.stringify(rcBom.error || rcBom.config));
 
-    const bomTask = path.join(tmpBom, 'tasks', 'BE', 'TASK-9');
+    const bomTask = path.join(tmpBom, TASKS_DIR, 'BE', 'TASK-9');
     fs.mkdirSync(bomTask, { recursive: true });
     fs.writeFileSync(
       path.join(bomTask, 'meta.json'),
@@ -3159,7 +3183,7 @@ try {
   else bad('guard-writes: не заблокировал запись вне корней');
 
   // guard-writes: allow inside workspace (empty output = allow)
-  const gwIn = runScript('core/scripts/guard-writes.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { file_path: path.join(tmp, 'tasks/FE/x.md') } })).trim();
+  const gwIn = runScript('core/scripts/guard-writes.mjs', [], JSON.stringify({ cwd: tmp, tool_input: { file_path: path.join(tmp, TASKS_DIR, 'FE/x.md') } })).trim();
   if (gwIn === '') ok('guard-writes: allow внутри workspace');
   else bad('guard-writes: неожиданный вывод для разрешённого пути: ' + gwIn);
 
@@ -3257,7 +3281,7 @@ try {
     ok('scope: запись в backend (вне области) ЗАБЛОКИРОВАНА');
   else bad('scope: запись в backend вне области не заблокирована');
   // Активен create-specification: свой артефакт разрешён, чужие — нет.
-  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/specification.md')) === '')
+  if (writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/specification.md')) === '')
     ok('scope: артефакт своего этапа в папке задачи разрешён');
   else bad('scope: артефакт своего этапа заблокирован при активном scope');
   // intents/ пишет ТОЛЬКО этап intent; спецификация намерение лишь читает.
@@ -3270,17 +3294,42 @@ try {
   if (denyUnknownRepo && JSON.parse(denyUnknownRepo).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: запись в незаконфигуренный repos/* заблокирована');
   else bad('scope: незаконфигуренный repos/* прошёл');
-  if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/meta.json')) === '') ok('scope: meta.json в папке задачи разрешён');
+  if (writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/meta.json')) === '') ok('scope: meta.json в папке задачи разрешён');
   else bad('scope: meta.json в папке задачи заблокирован');
   // исходник в папке задачи — deny (код пишется в рабочую копию кодовой базы)
-  const denyTsx = writeTo(path.join(tmp, 'tasks/FE/TASK-1/GreetingModal.tsx'));
+  const denyTsx = writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/GreetingModal.tsx'));
   if (denyTsx && JSON.parse(denyTsx).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник (.tsx) в папке задачи ЗАБЛОКИРОВАН');
   else bad('scope: исходник в папке задачи прошёл');
-  const denyNested = writeTo(path.join(tmp, 'tasks/FE/TASK-1/src/util.js'));
+  const denyNested = writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/src/util.js'));
   if (denyNested && JSON.parse(denyNested).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник во вложенной папке задачи заблокирован');
   else bad('scope: вложенный исходник в папке задачи прошёл');
+
+  // Папка задач лежит ВНУТРИ документации (docs/specs/tasks), и родительские
+  // каталоги прав не дают: разрешением по ПЕРВОМУ сегменту пути («docs»)
+  // переезд открыл бы запись во всю документацию фасадного репозитория —
+  // ровно то, от чего правило артефактов и защищает.
+  // Пробники — СВОЙ артефакт активного этапа и meta.json, а не посторонний
+  // файл: посторонний отбивается правилом «артефакт чужого этапа», и проверка
+  // осталась бы зелёной ровно в той регрессии, которую сторожит (`docs` снова
+  // стал папкой артефактов — specification.md и meta.json в нём разрешены).
+  {
+    const parents = TASKS_DIR.split('/')
+      .slice(0, -1)
+      .map((_, i, all) => all.slice(0, i + 1).join('/'));
+    const probes = ['specification.md', 'meta.json'];
+    const leaked = [];
+    for (const d of parents)
+      for (const probe of probes) {
+        const out = writeTo(path.join(tmp, d, probe));
+        if (!(out && JSON.parse(out).hookSpecificOutput.permissionDecision === 'deny')) leaked.push(`${d}/${probe}`);
+      }
+    if (!leaked.length && parents.length)
+      ok(`scope: родительские каталоги папки задач (${parents.join(', ')}) к записи закрыты — и для артефакта своего этапа`);
+    else bad('scope: запись разрешена мимо папки задач: ' + (parents.length ? leaked.join(', ') : 'проверять нечего'));
+  }
+
 
   // Артефакт ЧУЖОГО этапа в папке задачи — та же ошибка, что исходник, и
   // отличается только расширением: разрешение «любой *.md» её не ловит.
@@ -3288,13 +3337,14 @@ try {
   // Проверяем КАЖДЫЙ производящий этап: свой артефакт проходит, чужой
   // отбивается, meta.json разрешён всем (его обновляет каждый этап).
   {
+    const task1 = `${TASKS_DIR}/FE/TASK-1`;
     const artefactCases = [
-      { stage: 'intent', task: 'INTENT-9', own: 'intents/INTENT-9/intent.md', foreign: 'tasks/FE/TASK-1/plan.md' },
-      { stage: 'create-specification', type: 'FE', own: 'tasks/FE/TASK-1/specification.md', foreign: 'tasks/FE/TASK-1/plan.md' },
-      { stage: 'create-plan', type: 'FE', own: 'tasks/FE/TASK-1/plan.md', foreign: 'tasks/FE/TASK-1/specification.md' },
-      { stage: 'implement-plan', type: 'FE', own: 'tasks/FE/TASK-1/plan.md', foreign: 'tasks/FE/TASK-1/autotest-plan.md' },
-      { stage: 'create-autotest-plan', type: 'FE', own: 'tasks/FE/TASK-1/autotest-plan.md', foreign: 'tasks/FE/TASK-1/report-auto-test.md' },
-      { stage: 'implement-auto-test', type: 'FE', own: 'tasks/FE/TASK-1/report-auto-test.md', foreign: 'tasks/FE/TASK-1/plan.md' },
+      { stage: 'intent', task: 'INTENT-9', own: 'intents/INTENT-9/intent.md', foreign: `${task1}/plan.md` },
+      { stage: 'create-specification', type: 'FE', own: `${task1}/specification.md`, foreign: `${task1}/plan.md` },
+      { stage: 'create-plan', type: 'FE', own: `${task1}/plan.md`, foreign: `${task1}/specification.md` },
+      { stage: 'implement-plan', type: 'FE', own: `${task1}/plan.md`, foreign: `${task1}/autotest-plan.md` },
+      { stage: 'create-autotest-plan', type: 'FE', own: `${task1}/autotest-plan.md`, foreign: `${task1}/report-auto-test.md` },
+      { stage: 'implement-auto-test', type: 'FE', own: `${task1}/report-auto-test.md`, foreign: `${task1}/plan.md` },
     ];
     const broken = [];
     for (const c of artefactCases) {
@@ -3306,7 +3356,7 @@ try {
       const foreignOut = writeTo(path.join(tmp, c.foreign));
       const denied = foreignOut && JSON.parse(foreignOut).hookSpecificOutput.permissionDecision === 'deny';
       if (!denied) broken.push(`${c.stage}: чужой ${path.basename(c.foreign)} ПРОШЁЛ`);
-      if (writeTo(path.join(tmp, 'tasks/FE/TASK-1/meta.json')) !== '')
+      if (writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/meta.json')) !== '')
         broken.push(`${c.stage}: meta.json заблокирован`);
     }
     // Возвращаем область, которая была активна до блока: следующие проверки
@@ -3417,10 +3467,10 @@ try {
   // clear снимает привязку к ЭТАПУ, но не открывает всё: артефакты остаются
   // артефактами, а рабочие копии — закрытыми до следующего этапа.
   runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
-  const afterClearMd = writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.md'));
+  const afterClearMd = writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/manual.md'));
   if (afterClearMd === '') ok('scope: после clear артефакт (*.md) в папке задачи разрешён');
   else bad('scope: после clear артефакт заблокирован: ' + afterClearMd.slice(0, 160));
-  const noScopeSrcTask = writeTo(path.join(tmp, 'tasks/FE/TASK-1/manual.tsx'));
+  const noScopeSrcTask = writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-1/manual.tsx'));
   if (noScopeSrcTask && JSON.parse(noScopeSrcTask).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник в папке задачи запрещён и БЕЗ области');
   else bad('scope: исходник в папке задачи прошёл без области');
@@ -3428,6 +3478,22 @@ try {
   if (noScopeSrcIntent && JSON.parse(noScopeSrcIntent).hookSpecificOutput.permissionDecision === 'deny')
     ok('scope: исходник в папке интента запрещён и БЕЗ области');
   else bad('scope: исходник в папке интента прошёл без области');
+
+  // Регистр пути — проверяем ИМЕННО без области: при активном этапе такой путь
+  // отбивается общим правилом «запись только в папки артефактов», и дыра под
+  // ним не видна. Файловая система Windows регистр не различает, а
+  // realpathSync сохраняет регистр вызывающего: пока папку артефактов искали
+  // сравнением строк, `<ws>/Docs/Specs/Tasks/FE/TASK-1/x.tsx` физически
+  // ложился в папку задачи, но правилом «только *.md/meta.json» не считался.
+  {
+    const shuffled = TASKS_DIR.split('/')
+      .map((seg) => seg[0].toUpperCase() + seg.slice(1))
+      .join('/');
+    const out = writeTo(path.join(tmp, shuffled, 'FE/TASK-1/GreetingModal.tsx'));
+    if (out && JSON.parse(out).hookSpecificOutput.permissionDecision === 'deny')
+      ok(`scope: исходник в папке задачи с другим регистром пути (${shuffled}) запрещён и БЕЗ области`);
+    else bad(`scope: другой регистр пути (${shuffled}) обходит правило артефактов без области`);
+  }
   if (!fs.existsSync(scopeFilePath(tmp))) ok('scope: clear удаляет файл области из temp');
   else bad('scope: clear не удалил файл области');
 
@@ -3443,8 +3509,8 @@ try {
   // а подсказка отказа говорит про исходники и уводит в сторону. Это опора
   // текста create-specification: он заводит до ДВУХ таких папок и предписывает
   // Write, а не mkdir.
-  const mkdirTask = ['mkdir tasks/FE', 'mkdir -p tasks/FE/TASK-12'].map((c) => decisionOf(runBash(c)));
-  if (mkdirTask.every((d) => d === 'deny') && writeTo(path.join(tmp, 'tasks/FE/TASK-12/meta.json')) === '')
+  const mkdirTask = [`mkdir ${TASKS_DIR}/FE`, `mkdir -p ${TASKS_DIR}/FE/TASK-12`].map((c) => decisionOf(runBash(c)));
+  if (mkdirTask.every((d) => d === 'deny') && writeTo(path.join(tmp, TASKS_DIR, 'FE/TASK-12/meta.json')) === '')
     ok('guard-bash: mkdir папки задачи запрещён, запись meta.json разрешена');
   else bad('guard-bash: mkdir папки задачи: ' + mkdirTask.join(', '));
 
@@ -4214,7 +4280,7 @@ try {
   else bad('validate-artifact: новые разделы спецификации не обязательны: ' + JSON.stringify(vaSpec.missingSections));
 
   // validate-task-folder: исходник в папке задачи → ok:false + имя файла
-  const vtDir = path.join(tmp, 'tasks/FE/TASK-7');
+  const vtDir = path.join(tmp, TASKS_DIR, 'FE/TASK-7');
   fs.mkdirSync(path.join(vtDir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(vtDir, 'feature.md'), '# f\n');
   fs.writeFileSync(path.join(vtDir, 'meta.json'), '{}');
@@ -4255,7 +4321,12 @@ try {
         }, null, 2),
       );
       fs.writeFileSync(path.join(old, '.env'), 'SYSTEMS_ANALYSIS_REPO=C:/work/sa\nBACKEND_MAIN_BRANCH=master\n');
+      // Задачи фикстуры лежат в КОРНЕ (tasks/) — это и есть раскладка, с
+      // которой миграция начинает; после --apply их читают по новому пути
+      // (<ws>/docs/specs/tasks), поэтому у каждой папки две переменные.
+      const movedTask = (...parts) => path.join(old, TASKS_DIR, ...parts);
       const taskDir = path.join(old, 'tasks', 'BE', 'TASK-3');
+      const taskDirNew = movedTask('BE', 'TASK-3');
       fs.mkdirSync(taskDir, { recursive: true });
       fs.writeFileSync(
         path.join(taskDir, 'meta.json'),
@@ -4289,6 +4360,7 @@ try {
 
       // meta.json с BOM: тот же дефект чтения, что и у settings.json.
       const bomDir = path.join(old, 'tasks', 'BE', 'TASK-5');
+      const bomDirNew = movedTask('BE', 'TASK-5');
       fs.mkdirSync(bomDir, { recursive: true });
       fs.writeFileSync(
         path.join(bomDir, 'meta.json'),
@@ -4319,7 +4391,14 @@ try {
       if (st.repos.backend.mainBranch === 'master') ok('migrate: mainBranch перенесён из .env');
       else bad('migrate: mainBranch не перенесён: ' + st.repos.backend.mainBranch);
 
-      const meta = JSON.parse(fs.readFileSync(path.join(taskDir, 'meta.json'), 'utf8'));
+      // Папка задач переехала: старого пути после --apply быть не должно.
+      if (!fs.existsSync(path.join(old, 'tasks')) && fs.existsSync(taskDirNew))
+        ok(`migrate: папка задач перенесена из корня в ${TASKS_DIR}`);
+      else bad(`migrate: папка задач не перенесена в ${TASKS_DIR}`);
+      if (res.changes.some((c) => c.includes(TASKS_DIR))) ok('migrate: перенос папки задач назван в отчёте');
+      else bad('migrate: перенос папки задач не назван в отчёте: ' + JSON.stringify(res.changes));
+
+      const meta = JSON.parse(fs.readFileSync(path.join(taskDirNew, 'meta.json'), 'utf8'));
       if (meta.schemaVersion === 2) ok('migrate: schemaVersion добавлен');
       else bad('migrate: нет schemaVersion');
       if (meta.stages.specification.analysisDone === true && meta.analysisBaseSha === 'abc123')
@@ -4328,10 +4407,10 @@ try {
       if (meta.stages['autotest-plan'] && !meta.stages['requirements-auto-test'])
         ok('migrate: этап requirements-auto-test переименован');
       else bad('migrate: этап не переименован: ' + Object.keys(meta.stages).join(','));
-      if (fs.existsSync(path.join(taskDir, 'autotest-plan.md')) && !fs.existsSync(path.join(taskDir, 'requirements-auto-test.md')))
+      if (fs.existsSync(path.join(taskDirNew, 'autotest-plan.md')) && !fs.existsSync(path.join(taskDirNew, 'requirements-auto-test.md')))
         ok('migrate: артефакт переименован в autotest-plan.md');
       else bad('migrate: артефакт не переименован');
-      if (fs.existsSync(path.join(taskDir, 'feature.md'))) ok('migrate: feature.md сохранён как легаси-артефакт');
+      if (fs.existsSync(path.join(taskDirNew, 'feature.md'))) ok('migrate: feature.md сохранён как легаси-артефакт');
       else bad('migrate: feature.md удалён — так нельзя');
       if (fs.readFileSync(path.join(old, '.gitignore'), 'utf8').includes('repos/'))
         ok('migrate: .gitignore дополнен');
@@ -4360,7 +4439,9 @@ try {
           const td = path.join(w, 'tasks', 'FE', 'TASK-9');
           fs.mkdirSync(td, { recursive: true });
           fs.writeFileSync(path.join(td, 'meta.json'), JSON.stringify(meta, null, 2));
-          return { w, metaPath: path.join(td, 'meta.json') };
+          // Читать после --apply — уже по новому пути: папку задач миграция
+          // переносит первым шагом.
+          return { w, metaPath: path.join(w, TASKS_DIR, 'FE', 'TASK-9', 'meta.json') };
         };
         const migrated = (w) => {
           const r = runScriptFull('core/scripts/migrate-workspace.mjs', [w, '--apply']);
@@ -4399,9 +4480,122 @@ try {
         else bad('migrate: порча данных — ' + problems.join('; '));
       }
 
+      // Обе папки задач сразу (перенос делали наполовину руками). Слить их
+      // автоматически нельзя: совпавший TASK-ID означал бы затёртые артефакты
+      // команды — миграция обязана сказать об этом и не трогать ни одну.
+      {
+        const w = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-two-'));
+        try {
+          fs.writeFileSync(
+            path.join(w, 'settings.json'),
+            JSON.stringify({ taskPrefix: 'TASK', repos: Object.fromEntries(REPO_KEYS.map((k) => [k, { link: REPO_DIRS[k] }])) }),
+          );
+          const oldTask = path.join(w, 'tasks', 'FE', 'TASK-1');
+          const newTask = path.join(w, TASKS_DIR, 'FE', 'TASK-2');
+          fs.mkdirSync(oldTask, { recursive: true });
+          fs.mkdirSync(newTask, { recursive: true });
+          fs.writeFileSync(path.join(oldTask, 'meta.json'), JSON.stringify({ taskId: 'TASK-1', type: 'FE', stages: {} }));
+          fs.writeFileSync(path.join(newTask, 'meta.json'), JSON.stringify({ taskId: 'TASK-2', type: 'FE', schemaVersion: 2, stages: {} }));
+          const run = runScriptFull('core/scripts/migrate-workspace.mjs', [w, '--apply']);
+          let out = {};
+          try {
+            out = JSON.parse(run.stdout);
+          } catch {
+            /* проверка ниже сообщит */
+          }
+          const warned = (out.blockers || []).some((m) => m.includes(TASKS_DIR));
+          const kept = fs.existsSync(path.join(oldTask, 'meta.json')) && fs.existsSync(path.join(newTask, 'meta.json'));
+          // ok:false и ненулевой код — не придирка: задачи из корня шаги 3-4 НЕ
+          // мигрируют (они читают новую папку), и прогон с ok:true прочитали бы
+          // как «мигрировано», а форму 1.x нашли бы потом на этапе.
+          const failed = out.ok === false && run.status !== 0;
+          if (warned && kept && failed) ok('migrate: две папки задач сразу — блокер, ok:false, ничего не слито');
+          else bad('migrate: конфликт папок задач — ' + JSON.stringify({ blockers: out.blockers, kept, ok: out.ok, status: run.status }));
+        } finally {
+          fs.rmSync(w, { recursive: true, force: true });
+        }
+      }
+
+      // Посторонняя папка `tasks/` в фасадном репозитории (скрипты сборки,
+      // роли Ansible) — не наши данные: раскладку конвейера выдают подпапки
+      // типов (FE/BE). Без этого признака миграция унесла бы чужие файлы в
+      // документацию и отчиталась «папка задач перенесена».
+      {
+        const w = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-alien-'));
+        try {
+          fs.writeFileSync(
+            path.join(w, 'settings.json'),
+            JSON.stringify({ taskPrefix: 'TASK', repos: Object.fromEntries(REPO_KEYS.map((k) => [k, { link: REPO_DIRS[k] }])) }),
+          );
+          fs.mkdirSync(path.join(w, 'tasks', 'deploy'), { recursive: true });
+          fs.writeFileSync(path.join(w, 'tasks', 'deploy', 'main.yml'), '- hosts: all\n');
+          const run = runScriptFull('core/scripts/migrate-workspace.mjs', [w, '--apply']);
+          let out = {};
+          try {
+            out = JSON.parse(run.stdout);
+          } catch {
+            /* проверка ниже сообщит */
+          }
+          const untouched = fs.existsSync(path.join(w, 'tasks', 'deploy', 'main.yml')) && !fs.existsSync(path.join(w, TASKS_DIR));
+          const silent = ![...(out.changes || []), ...(out.warnings || [])].some((m) => m.includes(TASKS_DIR));
+          // Тем же признаком живёт и SessionStart: предупреждать о папке,
+          // которую миграция не переносит, значит слать за лекарством, которого
+          // нет, — и предупреждение не погаснет никогда.
+          const hook = JSON.parse(runScript('core/scripts/validate-config.mjs', [], JSON.stringify({ cwd: w })).trim() || '{}');
+          const hookCtx = ((hook.hookSpecificOutput || {}).additionalContext || '');
+          if (untouched && silent && !hookCtx.includes(TASKS_DIR))
+            ok('migrate/validate-config: посторонняя tasks/ без FE и BE не переносится и не поминается');
+          else
+            bad(
+              'migrate: посторонняя tasks/ — ' +
+                JSON.stringify({ untouched, changes: out.changes, warnings: out.warnings, hook: hookCtx.slice(0, 160) }),
+            );
+        } finally {
+          fs.rmSync(w, { recursive: true, force: true });
+        }
+      }
+
+      // Папка задач коммитится, поэтому перенос обязан попасть в ИНДЕКС:
+      // переименование мимо индекса даёт `git commit -a`, который унесёт
+      // удаление старых файлов, а новые оставит неотслеженными — коллеги
+      // вытянут репозиторий без артефактов.
+      {
+        const w = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-gitmv-'));
+        try {
+          const g = (a) => spawnSync('git', a, { cwd: w, encoding: 'utf8' });
+          fs.writeFileSync(
+            path.join(w, 'settings.json'),
+            JSON.stringify({ taskPrefix: 'TASK', repos: Object.fromEntries(REPO_KEYS.map((k) => [k, { link: REPO_DIRS[k] }])) }),
+          );
+          fs.mkdirSync(path.join(w, 'tasks', 'FE', 'TASK-1'), { recursive: true });
+          fs.writeFileSync(
+            path.join(w, 'tasks', 'FE', 'TASK-1', 'meta.json'),
+            JSON.stringify({ taskId: 'TASK-1', type: 'FE', schemaVersion: 2, stages: {} }),
+          );
+          g(['init', '--quiet']);
+          g(['add', '-A']);
+          const committed = g([
+            '-c', 'user.email=check@conveyor.local', '-c', 'user.name=check', '-c', 'commit.gpgsign=false',
+            'commit', '--quiet', '-m', 'init',
+          ]);
+          if (committed.status !== 0) {
+            bad('migrate: фикстура git-репозитория не собралась (есть ли git в PATH?)');
+          } else {
+            runScriptFull('core/scripts/migrate-workspace.mjs', [w, '--apply']);
+            const status = g(['status', '--short']).stdout;
+            const renamed = /^R.*docs\/specs\/tasks\/FE\/TASK-1\/meta\.json/m.test(status);
+            const untracked = /^\?\?.*docs\/specs/m.test(status);
+            if (renamed && !untracked) ok('migrate: перенос папки задач попал в индекс git (переименование, а не удаление+новые файлы)');
+            else bad('migrate: перенос мимо индекса git: ' + JSON.stringify(status));
+          }
+        } finally {
+          fs.rmSync(w, { recursive: true, force: true });
+        }
+      }
+
       // Задача с BOM в meta.json мигрирована, а не отброшена как «не
       // разбирается».
-      const bomMeta = JSON.parse(fs.readFileSync(path.join(bomDir, 'meta.json'), 'utf8').replace(/^\uFEFF/, ''));
+      const bomMeta = JSON.parse(fs.readFileSync(path.join(bomDirNew, 'meta.json'), 'utf8').replace(/^\uFEFF/, ''));
       if (bomMeta.schemaVersion === 2) ok('migrate: meta.json с BOM мигрирован');
       else bad('migrate: meta.json с BOM не мигрирован: ' + JSON.stringify(res.warnings));
 
@@ -4459,11 +4653,14 @@ try {
             JSON.stringify({ out: missRun.stdout.slice(0, 160), status: missRun.status }),
         );
     } finally {
-      // Атрибут «только чтение» снимаем, иначе каталог не удалить.
-      try {
-        fs.chmodSync(path.join(old, 'tasks', 'BE', 'TASK-1', 'meta.json'), 0o666);
-      } catch {
-        /* файла может не быть */
+      // Атрибут «только чтение» снимаем, иначе каталог не удалить. Где лежит
+      // файл, зависит от того, дошёл ли прогон до переноса папки задач.
+      for (const p of [path.join(old, TASKS_DIR, 'BE', 'TASK-1', 'meta.json'), path.join(old, 'tasks', 'BE', 'TASK-1', 'meta.json')]) {
+        try {
+          fs.chmodSync(p, 0o666);
+        } catch {
+          /* файла может не быть */
+        }
       }
       fs.rmSync(old, { recursive: true, force: true });
     }

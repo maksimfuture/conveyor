@@ -74,9 +74,10 @@ gigacode
 /conveyor:setup
 ```
 `/conveyor:setup` спросит `taskPrefix` и создаст в текущем каталоге
-`settings.json`, `.env.example`, `tasks/FE`, `tasks/BE`, `intents/`, `repos/`,
-`.gitignore` (в нём `repos/` и `.env`). `settings.json` нужно **закоммитить**:
-он одинаков у всей команды. Файл `.env` не создаётся — он не обязателен.
+`settings.json`, `.env.example`, `docs/specs/tasks/FE`, `docs/specs/tasks/BE`,
+`intents/`, `repos/`, `.gitignore` (в нём `repos/` и `.env`). `settings.json`
+нужно **закоммитить**: он одинаков у всей команды. Файл `.env` не создаётся —
+он не обязателен.
 
 ### Шаг 7. Склонировать репозитории в `repos/`
 Плагин не клонирует: рабочие копии заводит каждый разработчик сам — своими

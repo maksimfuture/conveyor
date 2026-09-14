@@ -567,7 +567,7 @@ export function requiredRepoKeys(stage, taskType) {
 // ---- stage scope (защита от «гуляния» агентов по репозиториям) ------------
 //
 // Each stage may WRITE only into its own repos; artifacts always go to the
-// workspace tasks/ folder. The skill records the active stage in
+// workspace docs/specs/tasks folder. The skill records the active stage in
 // .cache/active-scope.json (via scope.mjs); guard-writes/guard-bash then deny
 // writes into any non-scoped repository working copy.
 
@@ -687,10 +687,56 @@ export function isInside(childPath, parentDir) {
 const CLEAR_HINT =
   'если этап уже не выполняется — снимите область: node <plugin>/core/scripts/scope.mjs clear';
 
+// Папка задач — ОДНА константа на весь плагин (скрипты, гарды, миграция).
+// Путь POSIX и ОТНОСИТЕЛЬНО корня рабочего репозитория; вложенный, а не
+// корневой: артефакты задач лежат в документации фасадного репозитория.
+export const TASKS_DIR = 'docs/specs/tasks';
+
+// Папка задач ДО переезда — в корне рабочего репозитория. Осталась в коде
+// ровно для двух вещей: перенести её (migrate-workspace) и сказать о ней
+// вслух (SessionStart). Признак ОДИН на оба места — hasLegacyTasksDir:
+// разъехавшись, предикаты дают вечное предупреждение, которое нечем убрать.
+export const LEGACY_TASKS_DIR = 'tasks';
+
+// Абсолютный путь к папке задач рабочего репозитория.
+export function tasksDirPath(workspaceRoot) {
+  return path.join(workspaceRoot, ...TASKS_DIR.split('/'));
+}
+
+// Папка задач СТАРОЙ раскладки на месте? Существования `tasks/` мало: в
+// фасадном репозитории `tasks/` бывает и чужой (скрипты сборки, роли
+// Ansible), а перенос такой папки в docs/specs/tasks — порча чужих данных с
+// отчётом «папка задач перенесена». Признак раскладки конвейера — подпапки
+// типов задач (`tasks/FE`, `tasks/BE`), их и проверяем.
+export function hasLegacyTasksDir(workspaceRoot) {
+  const root = path.join(workspaceRoot, LEGACY_TASKS_DIR);
+  return ['FE', 'BE'].some((type) => {
+    try {
+      return fs.statSync(path.join(root, type)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
 // Папки артефактов конвейера в рабочем репозитории. Список ОДИН на два правила
 // checkWrite — что разрешено писать в корне и где действует «только артефакты»:
 // разъехавшись, они дают дыру (папка разрешена, а состав в ней не проверяется).
-export const ARTIFACT_DIRS = ['tasks', 'intents'];
+// Элементы бывают ВЛОЖЕННЫМИ путями, поэтому сверять их с первым сегментом
+// пути нельзя — принадлежность считает artifactDirFor через isInside.
+export const ARTIFACT_DIRS = [TASKS_DIR, 'intents'];
+
+// Какой папке артефактов принадлежит АБСОЛЮТНЫЙ путь. Сверяем через isInside
+// (path.relative), а не сравнением строк: на Windows файловая система регистр
+// не различает, а realpathSync сохраняет регистр вызывающего — и запись в
+// `<ws>/Docs/Specs/Tasks/FE/TASK-1/a.tsx` попадает в ту же папку задачи, но
+// строковый префикс её там не узнаёт. path.win32.relative регистр игнорирует,
+// поэтому дыра закрывается вместе с дублированием предиката.
+// Родительские каталоги (`docs`, `docs/specs`) папками артефактов НЕ являются:
+// иначе переезд открыл бы запись во всю документацию.
+export function artifactDirFor(target, workspaceRoot) {
+  return ARTIFACT_DIRS.find((d) => isInside(target, path.join(workspaceRoot, ...d.split('/'))));
+}
 
 // Какой артефакт производит КАЖДЫЙ этап. Разрешения по расширению («любой
 // *.md») мало: в 1.x один запуск ПЕРВОГО этапа создавал разом артефакты трёх
@@ -725,8 +771,8 @@ export function isTaskArtifactFile(relPathInTasks) {
 // Scope-aware write check (spec 8.1 + stage scope).
 //   - repo working copies (repos/* inside the workspace): with an active scope
 //     only the scoped repos are writable; without a scope — all of them;
-//   - workspace (tasks/, intents/, settings): allowed — EXCEPT the scope file
-//     itself (only scope.mjs may change it);
+//   - workspace (docs/specs/tasks/, intents/, settings): allowed — EXCEPT the
+//     scope file itself (only scope.mjs may change it);
 //   - system temp: allowed (checked last — explicit roots take priority);
 //   - deepest matching root wins (nested repo/workspace configurations).
 // Returns { allowed, reason } so guards can explain denials.
@@ -801,15 +847,24 @@ export function checkWrite(targetPath, cfg) {
     }
 
     const rel = path.relative(wsRoot, target);
-    const top = rel.split(path.sep)[0];
+    const relPosix = rel.split(path.sep).join('/');
+    // Папка артефактов определяется ВЛОЖЕННОСТЬЮ пути, а не первым его
+    // сегментом: папка задач лежит в docs/specs/tasks, и сверка по первому
+    // сегменту либо не нашла бы её вовсе, либо (добавь мы `docs` в списки)
+    // открыла бы всю документацию фасадного репозитория. Предикат ОДИН на оба
+    // правила ниже — разъехавшись, они дают дыру.
+    const artifactDir = artifactDirFor(target, wsRoot);
+    const insideArtifactDir =
+      !!artifactDir && path.relative(path.join(wsRoot, ...artifactDir.split('/')), target) !== '';
 
-    // В tasks/ и intents/ — только артефакты (*.md, meta.json). Правило по ТИПУ
-    // файла действует ВСЕГДА, в том числе без активного этапа: исходник в папке
-    // артефактов не бывает правильным ни при каких обстоятельствах. Раньше это
-    // правило висело на области, и без неё `.tsx` в папку задачи проходил.
-    if (ARTIFACT_DIRS.includes(top) && rel !== top && !isTaskArtifactFile(rel)) {
+    // В папке задач и в intents/ — только артефакты (*.md, meta.json). Правило
+    // по ТИПУ файла действует ВСЕГДА, в том числе без активного этапа: исходник
+    // в папке артефактов не бывает правильным ни при каких обстоятельствах.
+    // Раньше это правило висело на области, и без неё `.tsx` в папку задачи
+    // проходил.
+    if (insideArtifactDir && !isTaskArtifactFile(rel)) {
       const hint =
-        top === 'tasks'
+        artifactDir === TASKS_DIR
           ? 'в папке задачи разрешены только артефакты (*.md, meta.json); ' +
             'исходники пиши в рабочую копию кодовой базы'
           : 'в папке интента разрешены только артефакты (*.md, meta.json); ' +
@@ -823,8 +878,12 @@ export function checkWrite(targetPath, cfg) {
     // рабочая копия сюда не доходит (матчится выше как kind:'repo'), а всё
     // прочее в repos/ — чужой клон.
     if (scopedKeys || corrupt) {
-      const allowedTop = [...ARTIFACT_DIRS, 'settings.json', '.env', '.env.example', '.gitignore'];
-      if (rel !== '' && !allowedTop.includes(top)) {
+      // Корневые файлы конфигурации — точным именем; папки артефактов — через
+      // artifactDir выше. Промежуточных каталогов (`docs`, `docs/specs`) в
+      // разрешении намеренно нет: они не артефакты, а инструмент записи создаёт
+      // их сам вместе с файлом.
+      const allowedRootFiles = ['settings.json', '.env', '.env.example', '.gitignore'];
+      if (rel !== '' && !artifactDir && !allowedRootFiles.includes(relPosix)) {
         return {
           allowed: false,
           reason:
@@ -838,7 +897,7 @@ export function checkWrite(targetPath, cfg) {
       // будущих — так в 1.x первый этап заводил ещё и артефакты плана и
       // автотестов, а защита это пропускала.
       const own = scope && scope.stage ? STAGE_ARTIFACTS[scope.stage] : undefined;
-      if (ARTIFACT_DIRS.includes(top) && rel !== top && own) {
+      if (insideArtifactDir && own) {
         const base = path.basename(rel);
         if (base !== 'meta.json' && !own.includes(base)) {
           return {

@@ -12,6 +12,8 @@
 //     ссылками — «ссылка есть» ещё не
 //     значит «репозиторий склонирован»)
 //   - Also lists active tasks (some stage done, some not) as a nudge.
+//   - Warns about a legacy tasks/ folder left in the workspace root (the
+//     artifacts moved to docs/specs/tasks) and points at migrate-workspace.
 //
 // Reads the hook JSON from stdin (SessionStart passes { cwd, ... }); falls
 // back to process.cwd() when run directly. Any internal error is swallowed
@@ -29,6 +31,10 @@ import {
   STAGE_NAMES,
   scopeFilePath,
   LEGACY_SCOPE_FILE,
+  TASKS_DIR,
+  LEGACY_TASKS_DIR,
+  tasksDirPath,
+  hasLegacyTasksDir,
 } from './lib/config.mjs';
 
 // Этапы, которым нужна рабочая копия, выводим из ядра, а не дублируем списком:
@@ -58,7 +64,7 @@ function emitContext(text) {
 }
 
 function listActiveTasks(workspaceRoot) {
-  const tasksDir = path.join(workspaceRoot, 'tasks');
+  const tasksDir = tasksDirPath(workspaceRoot);
   const active = [];
   for (const type of ['FE', 'BE']) {
     const dir = path.join(tasksDir, type);
@@ -171,6 +177,23 @@ function main() {
           : 'Запустите /conveyor:setup.',
       );
     }
+  }
+
+  // Папка задач в корне — раскладка до переезда в docs/specs/tasks. Молчать
+  // нельзя: этапы пишут по новому пути, и команда получила бы две папки задач,
+  // ни разу не увидев про это ни слова. Признак тот же, что у миграции
+  // (hasLegacyTasksDir): предупреждать по тому, чего миграция не переносит, —
+  // значит слать человека за лекарством, которого нет.
+  if (hasLegacyTasksDir(cfg.workspaceRoot)) {
+    // Путь корня — ЯВНО и в кавычках: хук работает из cwd сессии (она бывает
+    // и подкаталогом, например repos/frontend), а migrate-workspace требует,
+    // чтобы переданный каталог САМ содержал settings.json, и вверх не идёт.
+    // Подсказка с «.» из подкаталога падает с «в каталоге нет settings.json».
+    lines.push(
+      `⚠ conveyor: папка задач лежит в корне (${LEGACY_TASKS_DIR}/), а конвейер работает ` +
+        `с ${TASKS_DIR}. Перенесите: node <plugin>/core/scripts/migrate-workspace.mjs ` +
+        `"${cfg.workspaceRoot}" --apply (без --apply — сухой прогон).`,
+    );
   }
 
   const active = listActiveTasks(cfg.workspaceRoot);

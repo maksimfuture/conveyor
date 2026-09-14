@@ -18,7 +18,7 @@ description: Показывает сводку по задачам конвей�
 
 Кратко:
 1. Найди рабочий репозиторий (каталог с settings.json, поднимаясь вверх).
-2. Прочитай tasks/FE/*/meta.json и tasks/BE/*/meta.json.
+2. Прочитай docs/specs/tasks/FE/*/meta.json и docs/specs/tasks/BE/*/meta.json.
 3. Без TASK-ID — таблица по всем: TASK-ID, тип, title, прогресс (N/6),
    следующий этап, ветки, связанная задача. С TASK-ID — детали одной задачи.
 4. Повреждённый meta.json — пометь и продолжай. Ничего не меняй.

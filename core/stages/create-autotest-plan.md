@@ -19,7 +19,7 @@
 1. Первый шаг — resolve-config (см. `_common.md`): нужна ссылка `autoTest`,
    её нет в `missingLinks`/`urlLinks` — иначе останови этап. Тип задачи
    (FE/BE) и завершённость `implement-plan` — из
-   `tasks/<FE|BE>/<TASK-ID>/meta.json`.
+   `docs/specs/tasks/<FE|BE>/<TASK-ID>/meta.json`.
 2. Установи рабочую область:
    `scope.mjs set --stage create-autotest-plan --type <FE|BE> --task <TASK-ID>`
    (запись в репозитории запрещена: репозиторий автотестов этот этап только

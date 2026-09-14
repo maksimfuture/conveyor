@@ -4,12 +4,13 @@
 // Что делает:
 //   1. settings.json: ссылки ${VAR} -> пути repos/<dir>, mainBranch из .env
 //      подставляется значением, ключ repoCache удаляется;
-//   2. meta.json каждой задачи: schemaVersion=2, stages.feature сворачивается
+//   2. папка задач переезжает из корня (tasks/FE, tasks/BE) в docs/specs/tasks;
+//   3. meta.json каждой задачи: schemaVersion=2, stages.feature сворачивается
 //      в stages.specification.analysisDone, analysisShaAtFeature ->
 //      analysisBaseSha, stages['requirements-auto-test'] ->
 //      stages['autotest-plan'], добавляется intentId:null;
-//   3. requirements-auto-test.md -> autotest-plan.md;
-//   4. .gitignore дополняется строками repos/ и .env.
+//   4. requirements-auto-test.md -> autotest-plan.md;
+//   5. .gitignore дополняется строками repos/ и .env.
 // feature.md НЕ удаляется: это результат работы аналитика, он остаётся в
 // папке задачи как легаси-артефакт.
 //
@@ -23,12 +24,26 @@
 //   { ok, applied, workspaceRoot, changes: [...], warnings: [...], writeErrors: [...] }
 // writeErrors — операции записи, которые не удались (файл только для чтения,
 // открыт редактором, OneDrive, антивирус): остальные задачи при этом
-// мигрированы. ok:false и ненулевой код возврата — либо миграцию не начать,
-// либо часть записей отказала.
+// мигрированы. blockers — миграция не доведена до конца, хотя записи не
+// отказывали (папка задач есть и в корне, и по новому пути). ok:false и
+// ненулевой код возврата — миграцию не начать, часть записей отказала либо
+// остался блокер.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { findWorkspaceRoot, parseEnvFile, readJsonFile, reposEntryKind, REPO_KEYS, REPO_DIRS } from './lib/config.mjs';
+import { spawnSync } from 'node:child_process';
+import {
+  findWorkspaceRoot,
+  parseEnvFile,
+  readJsonFile,
+  reposEntryKind,
+  REPO_KEYS,
+  REPO_DIRS,
+  TASKS_DIR,
+  LEGACY_TASKS_DIR,
+  tasksDirPath,
+  hasLegacyTasksDir,
+} from './lib/config.mjs';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');
@@ -62,6 +77,11 @@ if (argPath === undefined) {
 const changes = [];
 const warnings = [];
 const writeErrors = [];
+// Причины, по которым миграция НЕ доведена до конца, хотя записи не отказывали
+// (конфликт двух папок задач). От warnings отличаются последствием: ok:false и
+// ненулевой код возврата — вызывающая сторона не должна считать такой прогон
+// успешным.
+const blockers = [];
 
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
@@ -191,7 +211,84 @@ if (!isObject(settings)) {
   }
 }
 
-// ---- 2-3. задачи ----------------------------------------------------------
+// ---- 2. папка задач: tasks/ -> docs/specs/tasks ----------------------------
+//
+// Шаг стоит ДО разбора задач: дальше их читают уже по новому пути. Он не
+// привязан к schemaVersion — переезд папки касается и репозиториев, давно
+// живущих на 2.0, а не только тех, что идут с 1.x.
+
+const legacyTasksDir = path.join(workspaceRoot, LEGACY_TASKS_DIR);
+const newTasksDir = tasksDirPath(workspaceRoot);
+
+// Рабочий репозиторий под git? Спрашиваем сам git, а не наличие `<ws>/.git`:
+// фасадный репозиторий бывает подкаталогом монорепо, и тогда .git лежит выше,
+// а переименование всё равно должно попасть в индекс.
+function inGitWorkTree() {
+  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspaceRoot, encoding: 'utf8' });
+  return r.status === 0 && String(r.stdout).trim() === 'true';
+}
+
+// Перенос каталога. `git mv` сохраняет переименование в ИНДЕКСЕ: папка задач
+// коммитится, и без индекса `git commit -a` унесёт удаление старых файлов, а
+// новые останутся неотслеженными — коллеги вытянут репозиторий без артефактов.
+// Поэтому откат на fs — только с предупреждением: молчаливый откат и есть тот
+// самый потерянный коммит. `git mv` отказывает, когда внутри нет ни одного
+// отслеживаемого файла («source directory is empty») — это законный случай,
+// подсказка `git add -A` для него и написана.
+function moveDir(from, to) {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  const git = inGitWorkTree();
+  if (git) {
+    const r = spawnSync('git', ['mv', from, to], { cwd: workspaceRoot, encoding: 'utf8' });
+    if (r.status === 0) return;
+    // `git mv` переименовывает НА ДИСКЕ до записи индекса: упасть он мог уже
+    // после переноса (index.lock, антивирус, права на .git). Тогда fs.rename
+    // бросил бы ENOENT — ложную ошибку записи поверх состоявшегося переноса.
+    if (!fs.existsSync(from) && fs.existsSync(to)) {
+      warnings.push(
+        `папка задач перенесена, но переименование не попало в индекс git ` +
+          `(${String(r.stderr || r.error || '').trim().split('\n')[0] || 'git mv не завершился'}) — ` +
+          `выполните: git add -A ${TASKS_DIR} ${LEGACY_TASKS_DIR}`,
+      );
+      return;
+    }
+    warnings.push(
+      `git mv не выполнен (${String(r.stderr || r.error || '').trim().split('\n')[0] || 'без сообщения'}) — ` +
+        `папка перенесена средствами файловой системы; проверьте git status и выполните: ` +
+        `git add -A ${TASKS_DIR} ${LEGACY_TASKS_DIR}`,
+    );
+  } else if (fs.existsSync(path.join(workspaceRoot, '.git'))) {
+    // git не ответил, а репозиторий на месте: скорее всего его нет в PATH.
+    // Молчать нельзя по той же причине — переименование мимо индекса.
+    warnings.push(
+      'git не отвечает (нет в PATH?) — переименование не попало в индекс; ' +
+        `после установки git выполните: git add -A ${TASKS_DIR} ${LEGACY_TASKS_DIR}`,
+    );
+  }
+  fs.renameSync(from, to);
+}
+
+// Переносим ТОЛЬКО раскладку конвейера (`tasks/FE`, `tasks/BE`): посторонняя
+// папка `tasks/` в фасадном репозитории (скрипты сборки, роли Ansible) — не
+// наши данные, и «перенос» её в документацию был бы порчей чужих файлов с
+// бодрым отчётом об успехе. Тем же признаком предупреждает SessionStart.
+if (hasLegacyTasksDir(workspaceRoot)) {
+  if (fs.existsSync(newTasksDir)) {
+    // Слить две папки автоматически нельзя: это задачи команды, и совпавший
+    // TASK-ID означал бы затёртые артефакты. Разбирает человек — а до тех пор
+    // миграция НЕ успешна: задачи из старой папки шаги 3-4 не увидят (они
+    // читают новую), и их meta.json останутся в форме 1.x. Прогон с ok:true
+    // прочитали бы как «мигрировано», и дефект всплыл бы на этапе.
+    blockers.push(
+      `папка задач есть и в корне (${LEGACY_TASKS_DIR}/), и по новому пути (${TASKS_DIR}) — ` +
+        'перенос пропущен, сведите их вручную; meta.json задач из корня НЕ мигрированы',
+    );
+  } else if (attempt(`перенос ${LEGACY_TASKS_DIR}/ -> ${TASKS_DIR}`, () => moveDir(legacyTasksDir, newTasksDir))) {
+    changes.push(`папка задач перенесена: ${LEGACY_TASKS_DIR}/ -> ${TASKS_DIR}`);
+  }
+}
+
+// ---- 3-4. задачи ----------------------------------------------------------
 
 // Канонический порядок этапов в meta.json (core/stages/task-status.md). Этапы
 // пересобираем в нём при записи: переименованный autotest-plan, дописанный
@@ -219,7 +316,11 @@ function metaShapeProblem(meta) {
   return null;
 }
 
-const tasksDir = path.join(workspaceRoot, 'tasks');
+// Откуда читать задачи. При сухом прогоне перенос выше НЕ выполнен, и по
+// новому пути ещё пусто — читаем старый, иначе сухой прогон промолчал бы про
+// meta.json и показал бы неполный план. Если существуют обе папки (конфликт
+// выше), работаем с новой: старую человек сводит руками.
+const tasksDir = fs.existsSync(newTasksDir) ? newTasksDir : legacyTasksDir;
 for (const type of ['FE', 'BE']) {
   const dir = path.join(tasksDir, type);
   if (!fs.existsSync(dir)) continue;
@@ -334,9 +435,17 @@ if (fs.existsSync(path.join(workspaceRoot, '.cache', 'repos'))) {
 
 process.stdout.write(
   JSON.stringify(
-    { ok: writeErrors.length === 0, applied: apply, workspaceRoot, changes, warnings, writeErrors },
+    {
+      ok: writeErrors.length === 0 && blockers.length === 0,
+      applied: apply,
+      workspaceRoot,
+      changes,
+      warnings: [...warnings, ...blockers],
+      writeErrors,
+      blockers,
+    },
     null,
     2,
   ) + '\n',
 );
-if (writeErrors.length) process.exit(1);
+if (writeErrors.length || blockers.length) process.exit(1);

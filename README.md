@@ -230,7 +230,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 │   │   ├── common/
 │   │   └── config/
 │   └── autotests/
-└── tasks/<FE|BE>/<TASK-ID>/
+└── docs/specs/tasks/<FE|BE>/<TASK-ID>/
     ├── meta.json                  # schemaVersion 2, intentId, этапы, ветки, ревью
     ├── specification.md
     ├── plan.md
@@ -238,10 +238,11 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
     └── report-auto-test.md
 ```
 
-Коммитятся конфигурация и артефакты (`intents/`, `tasks/`); рабочие копии в
-`repos/` — нет, они у каждого свои. В папках `intents/` и `tasks/` живут только
-артефакты (`*.md` и `meta.json`) — исходники пишутся в рабочую копию
-соответствующего репозитория, и guard-скрипты за этим следят.
+Коммитятся конфигурация и артефакты (`intents/`, `docs/specs/tasks/`); рабочие
+копии в `repos/` — нет, они у каждого свои. В папках `intents/` и
+`docs/specs/tasks/` живут только артефакты (`*.md` и `meta.json`) — исходники
+пишутся в рабочую копию соответствующего репозитория, и guard-скрипты за этим
+следят.
 
 ## Защита (guard-хуки)
 
@@ -258,8 +259,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 - **PreToolUse (Write/Edit/NotebookEdit)** → `guard-writes.mjs`: разрешает
   запись только в рабочий репозиторий, рабочие копии из `repos/` и системный
   temp; при активном этапе в рабочем репозитории — только в `intents/`,
-  `tasks/` и файлы конфигурации в корне; блокирует запись непригодной ссылки
-  `repos.*.link` в `settings.json`.
+  `docs/specs/tasks/` и файлы конфигурации в корне; блокирует запись
+  непригодной ссылки `repos.*.link` в `settings.json`.
 - **PreToolUse (Bash)** → `guard-bash.mjs`: блокирует `push --force`, push и
   удаление основной ветки, запись вне разрешённых корней; `reset --hard`,
   `clean -f` и прочие `push` → запрос подтверждения.
@@ -274,7 +275,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 Каждый этап пишет только в СВОИ репозитории: команда ставит рабочую область
 (`core/scripts/scope.mjs set --stage <этап> --type <FE|BE> --task <TASK-ID>`),
 и guard-скрипты блокируют запись в рабочие копии всех остальных репозиториев
-(артефакты `tasks/`, `intents/` и системный temp разрешены всегда;
+(артефакты `docs/specs/tasks/`, `intents/` и системный temp разрешены всегда;
 `scope.mjs clear` — снять, в том числе при досрочной остановке этапа;
 устаревшая область игнорируется по TTL 8 ч и снимается на старте сессии).
 
@@ -339,6 +340,12 @@ node <plugin>/core/scripts/migrate-workspace.mjs <путь к рабочему �
 
 - `settings.json`: ссылки `${VAR}` → пути `repos/*`, `mainBranch` подставляется
   значением из `.env`, ключ `repoCache` удаляется;
+- папка задач переезжает из корня (`tasks/FE`, `tasks/BE`) в
+  `docs/specs/tasks/`; переименование сохраняется в индексе git, поэтому
+  история артефактов не рвётся. Посторонняя папка `tasks/` без подпапок типов
+  не трогается. Если папка задач есть и в корне, и по новому пути — миграция
+  НЕ сводит их сама: она останавливается с ненулевым кодом и просит свести
+  вручную (задачи из корня при этом остаются в форме 1.x);
 - `meta.json` каждой задачи: `schemaVersion: 2`, добавляется `intentId: null`,
   этап `feature` сворачивается в `specification.analysisDone`,
   `analysisShaAtFeature` → `analysisBaseSha`, этап `requirements-auto-test` →

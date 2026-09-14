@@ -29,7 +29,8 @@
    перезаписывают — только дописывают недостающее и показывают состояние.
 2. Спроси у пользователя `taskPrefix` (по умолчанию `TASK`).
 3. Создай структуру:
-   - каталоги `tasks/FE/`, `tasks/BE/`, `intents/`, `repos/`;
+   - каталоги `docs/specs/tasks/FE/`, `docs/specs/tasks/BE/`, `intents/`,
+     `repos/`;
    - `settings.json` и `.env.example` — СКОПИРУЙ ФАЙЛЫ шаблонов МЕХАНИЧЕСКИ
      (НЕ набирай содержимое по памяти — потеряешь новые ключи):
      `node -e "const f=require('fs'),r=process.argv[1];f.copyFileSync(r+'/core/templates/settings.example.json','settings.json');f.copyFileSync(r+'/core/templates/env.example','.env.example')" "<CONVEYOR_ROOT>"`
@@ -73,6 +74,12 @@
      руками ровно то, что чинит миграция;
    - скажи, что после `--apply` нужно склонировать репозитории в `repos/*` и
      повторить `/conveyor:setup` — вот тогда диагностика будет осмысленной.
+
+   Отдельно от признаков 1.x: папка задач в КОРНЕ (`tasks/`) — раскладка до
+   переезда в `docs/specs/tasks`. Это НЕ 1.x, диагностику (шаг 6) не
+   отменяет, но скажи о ней и предложи ту же миграцию (сначала без
+   `--apply`): этапы уже пишут по новому пути, и без переноса у команды
+   окажутся две папки задач — в одной старые артефакты, в другой новые.
 6. Диагностика рабочих копий — если признаков 1.x нет:
    `node "<CONVEYOR_ROOT>/core/scripts/repos-status.mjs"`
    Скрипт отдаёт JSON: `repos[]`, `configErrors[]` и `summary`. Покажи
@@ -139,8 +146,9 @@
 `settings.json`), и следующий шаг — `/conveyor:intent`.
 
 ## DoD
-При первичной инициализации структура создана (`tasks/FE`, `tasks/BE`,
-`intents/`, `repos/`, `settings.json`, `.env.example`, `.gitignore`), а
+При первичной инициализации структура создана (`docs/specs/tasks/FE`,
+`docs/specs/tasks/BE`, `intents/`, `repos/`, `settings.json`, `.env.example`,
+`.gitignore`), а
 `settings.json` закоммичен; при повторном запуске ничего не перезаписано,
 но состав `.gitignore` проверен и при нехватке дополнен.
 Дальше одно из двух: либо репозиторий распознан как 1.x и пользователю

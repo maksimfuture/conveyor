@@ -1,5 +1,5 @@
 ---
-description: Инициализирует рабочий репозиторий conveyor — settings.json, .env.example, tasks/FE, tasks/BE, intents/, repos/, .gitignore — и диагностирует рабочие копии в repos/ (repos-status). Запускать при настройке нового рабочего репозитория команды и после его клонирования каждым разработчиком.
+description: Инициализирует рабочий репозиторий conveyor — settings.json, .env.example, docs/specs/tasks/FE, docs/specs/tasks/BE, intents/, repos/, .gitignore — и диагностирует рабочие копии в repos/ (repos-status). Запускать при настройке нового рабочего репозитория команды и после его клонирования каждым разработчиком.
 ---
 
 **Шаг 0. Корень расширения.** Файлы этапа и скрипты лежат в каталоге установки

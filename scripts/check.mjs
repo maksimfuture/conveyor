@@ -1190,6 +1190,21 @@ console.log('Этап create-autotest-plan — план по специфика�
             .join('; '),
       );
 
+    // Из артефактов задачи агент получает ТОЛЬКО спецификацию. plan.md с его
+    // «Отклонениями и остатками» — рассказ о том, что получилось в реализации;
+    // план автотестов, написанный с оглядкой на него, закрепит расхождение
+    // вместо того, чтобы его поймать. Это то же решение, что «без диффа», и
+    // держится оно так же — одним текстом стейджа.
+    const onlySpec =
+      /единственный артефакт задачи/i.test(stageFlat) &&
+      /`plan\.md` агенту НЕ передавать/.test(stageFlat);
+    if (onlySpec) ok('create-autotest-plan: из артефактов задачи агенту идёт только specification.md');
+    else
+      bad(
+        'create-autotest-plan: вход агента — в стейдже не сказано, что specification.md ' +
+          'ЕДИНСТВЕННЫЙ артефакт задачи и что plan.md агенту НЕ передавать',
+      );
+
     const validates = /validate-artifact[^`]{0,200}--type autotest-plan/.test(stageFlat);
     const coverage = /критери\S* приёмки/i.test(stageFlat) && /не автоматизируется/i.test(stageFlat);
     if (validates && coverage) ok('create-autotest-plan: валидация шаблона плюс покрытие критериев приёмки');
@@ -1262,16 +1277,27 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
     );
 
   const planSect = sect(promptRaw, 'На этапе /conveyor:create-autotest-plan');
-  const input = /specification\.md/.test(planSect) && /plan\.md/.test(planSect) && /ТОЛЬКО ДЛЯ ЧТЕНИЯ/i.test(planSect);
+  // Из артефактов задачи на этот этап идёт ТОЛЬКО спецификация. Требуем
+  // слово «единственный», а не отсутствие строки «plan.md»: промпт как раз
+  // ДОЛЖЕН назвать план разработки, чтобы запретить его, — как он называет
+  // дифф и кодовую базу. Проверка на отсутствие упоминания запрещала бы
+  // объяснение вместо самого входа.
+  const input =
+    /specification\.md/.test(planSect) &&
+    /единственный артефакт задачи/i.test(planSect) &&
+    /ТОЛЬКО ДЛЯ ЧТЕНИЯ/i.test(planSect);
   const noDiff = !/дифф/i.test(planSect) && /кодов\S*[^.]{0,140}не открыва/i.test(planSect);
   const noWrite = /(писать|запис\S*)[^.]{0,60}репозитори\S* автотестов[^.]{0,60}(НЕЛЬЗЯ|запрещ)/i.test(planSect);
-  if (planSect && input && noDiff && noWrite) ok('qa-autotest-engineer: вход этапа плана — спецификация и план, автотесты read-only, записи нет');
+  if (planSect && input && noDiff && noWrite)
+    ok('qa-autotest-engineer: вход этапа плана — ТОЛЬКО спецификация, автотесты read-only, записи нет');
   else
     bad(
       'qa-autotest-engineer: этап плана — ' +
         (planSect
           ? [
-              input ? null : 'вход не назван полностью (specification.md, plan.md, путь к автотестам ТОЛЬКО ДЛЯ ЧТЕНИЯ)',
+              input
+                ? null
+                : 'вход не назван точно: specification.md как ЕДИНСТВЕННЫЙ артефакт задачи плюс путь к автотестам ТОЛЬКО ДЛЯ ЧТЕНИЯ',
               noDiff ? null : 'дифф реализации не исключён либо не сказано, что кодовая база не открывается',
               noWrite ? null : 'не запрещена запись в репозиторий автотестов на этом этапе',
             ]
@@ -1281,15 +1307,24 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
     );
 
   const byCriteria = /критери\S* приёмки/i.test(planSect) && /не автоматизируется/i.test(planSect);
-  const traced = /TC-/.test(planSect) && /REQ-/.test(planSect);
+  // ID кейса и автотеста — идентификатор теста в Jira (@TmsLink), у нового
+  // теста плейсхолдер T999-N. Промпт обязан назвать и источник ID, и правило
+  // для новых: без второго агент выдаст всем новым тестам ОДИН ID, состав ID
+  // схлопнется, и сверка отчёта с планом перестанет ловить потерянный тест.
+  const traced =
+    /TmsLink/.test(planSect) &&
+    /сквозн\S* нумерац/i.test(planSect) &&
+    /одинаковым ID[^.]{0,40}ошибка/i.test(planSect) &&
+    /REQ-/.test(planSect);
   const reuse = /(переиспольз|фикстур)/i.test(planSect) && /дубл/i.test(planSect);
-  if (byCriteria && traced && reuse) ok('qa-autotest-engineer: кейсы по критериям приёмки, TC-N → REQ-N, без дублей');
+  if (byCriteria && traced && reuse)
+    ok('qa-autotest-engineer: кейсы по критериям приёмки, ID теста (@TmsLink) → REQ-N, без дублей');
   else
     bad(
       'qa-autotest-engineer: правила кейсов — ' +
         [
           byCriteria ? null : 'кейсы не привязаны к критериям приёмки («не автоматизируется» с причиной)',
-          traced ? null : 'нет ID TC-N и трассировки на REQ-N',
+          traced ? null : 'нет ID теста из @TmsLink (с плейсхолдером T999-N у новых) и трассировки на REQ-N',
           reuse ? null : 'не предписано переиспользовать существующие фикстуры и не дублировать покрытые сценарии',
         ]
           .filter(Boolean)
@@ -1314,25 +1349,27 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
-  // Чекбоксы «Шагов реализации тестов» — единственная правка плана после его
-  // создания, и договорённость о них держится только текстом. Этап плана
-  // обязан оставить их пустыми (иначе план врёт про прогресс с первого дня),
-  // этап реализации — отмечать (иначе список работ мёртвый, и следующий
-  // читатель не отличит сделанное от запланированного). Разъехавшийся конец
-  // не виден ни валидатору, ни сборке: галочку никто не считает.
+  // Колонка «Статус» таблицы автотестов — единственная правка плана после его
+  // создания, и договорённость о ней держится только текстом. Раздела с
+  // чекбокс-шагами больше нет: команда убрала его, а объём работ и прогресс
+  // переехали в таблицу. Этап плана обязан оставить колонку пустой (иначе план
+  // врёт про прогресс с первого дня), этап реализации — отмечать (иначе список
+  // работ мёртвый, и следующий читатель не отличит сделанное от
+  // запланированного). Разъехавшийся конец не виден ни валидатору, ни сборке:
+  // отметку никто не считает.
   const implSect = sect(promptRaw, 'На этапе /conveyor:implement-auto-test');
-  const planLeaves = /(галочк|чекбокс)/i.test(planSect) && /не расставляй/i.test(planSect);
-  const promptTicks = /\[x\]/i.test(implSect) && /autotest-plan\.md/.test(implSect);
-  const stageTicks = /\[x\]/i.test(stage) && /autotest-plan\.md/.test(stage);
+  const planLeaves = /Статус/.test(planSect) && /не расставляй/i.test(planSect);
+  const promptTicks = /Статус/.test(implSect) && /\[x\]/i.test(implSect) && /autotest-plan\.md/.test(implSect);
+  const stageTicks = /Статус/.test(stage) && /\[x\]/i.test(stage) && /autotest-plan\.md/.test(stage);
   if (planLeaves && promptTicks && stageTicks)
-    ok('autotest-plan: чекбоксы шагов — этап плана оставляет пустыми, implement-auto-test отмечает');
+    ok('autotest-plan: колонка «Статус» — этап плана оставляет пустой, implement-auto-test отмечает');
   else
     bad(
-      'autotest-plan: чекбоксы шагов — ' +
+      'autotest-plan: колонка «Статус» — ' +
         [
-          planLeaves ? null : 'в промпте этапа плана не сказано оставить галочки нерасставленными',
-          promptTicks ? null : 'промпт этапа реализации не предписывает отмечать их в autotest-plan.md',
-          stageTicks ? null : 'стейдж implement-auto-test не предписывает отмечать их в autotest-plan.md',
+          planLeaves ? null : 'в промпте этапа плана не сказано оставить «Статус» нерасставленным',
+          promptTicks ? null : 'промпт этапа реализации не предписывает отмечать «Статус» в autotest-plan.md',
+          stageTicks ? null : 'стейдж implement-auto-test не предписывает отмечать «Статус» в autotest-plan.md',
         ]
           .filter(Boolean)
           .join('; '),
@@ -3967,69 +4004,93 @@ try {
   }
 
   // План автотестов читают, чтобы узнать ОБЪЁМ РАБОТ, а не только предмет
-  // проверки: ревью команды снимается именно на этом. Отвечает за это раздел
-  // «Шаги реализации тестов», и оба его конца обязаны проверяться машинно —
+  // проверки: ревью команды снимается именно на этом. После правок команды
+  // объём работ держит таблица «Автотесты» — колонки «Класс» (куда писать) и
+  // «Реализация» (что именно сделать), а прогресс — колонка «Статус»
+  // (`[ ]` → `[x]` ставит /conveyor:implement-auto-test). Отдельного раздела
+  // с чекбокс-шагами больше нет, и оба конца обязаны проверяться машинно:
   // цикла ревью на create-autotest-plan нет, других сигналов не будет.
   // Ломаем ровно одну вещь за раз, отталкиваясь от шаблона: так падение
   // указывает на причину, а не на «что-то в autotest-plan».
   {
     const tplText = fs.readFileSync(path.join(root, 'core/templates/autotest-plan.md'), 'utf8');
     const atpPath = path.join(tmp, 'atp-test.md');
-    const va = () =>
-      JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
+    const va = (text) => {
+      fs.writeFileSync(atpPath, text);
+      return JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
+    };
+    const caught = (res, re) => res.ok === false && res.problems.some((p) => re.test(p));
 
-    // 1) шагов-чекбоксов нет вовсе — план снова «что проверяем» без «что делаем»
-    fs.writeFileSync(atpPath, tplText.replace(/^- \[ \] /gm, '- '));
-    const noBox = va();
-    const noBoxCaught = noBox.ok === false && noBox.problems.some((p) => /чекбокс/i.test(p));
+    // Мутации адресуем ТЕЛУ раздела «Автотесты», а не файлу целиком: у таблицы
+    // кейсов часть колонок называется так же, и общая замена ломала бы обе.
+    const atFrom = tplText.indexOf('## Автотесты');
+    const atTo = tplText.indexOf('\n## ', atFrom + 1);
+    const inAutotests = (fn) => va(tplText.slice(0, atFrom) + fn(tplText.slice(atFrom, atTo)) + tplText.slice(atTo));
 
-    // 2) шаги есть, но ни один не назван кейсом: работа взялась ниоткуда и
-    //    разъедется с таблицей молча. TC-ID в самой таблице при этом остаются —
-    //    проверка обязана смотреть в РАЗДЕЛ, а не в файл целиком.
-    const head = '## Шаги реализации тестов';
-    const from = tplText.indexOf(head);
-    const to = tplText.indexOf('\n## ', from + 1);
-    const cut = tplText.slice(0, from) + tplText.slice(from, to).replace(/TC-\d+/g, 'TC-нет') + tplText.slice(to);
-    fs.writeFileSync(atpPath, cut);
-    const noLink = va();
-    const noLinkCaught =
-      noLink.ok === false && /TC-\d+/.test(cut) && noLink.problems.some((p) => /TC-ID/.test(p));
+    // 1) в таблице нет колонки «Реализация» — план снова «что проверяем» без
+    //    «что делаем»: объём работ по нему не собрать
+    const noWork = inAutotests((s) => s.replace('| Реализация |', '| Комментарий |'));
+    const noWorkCaught = caught(noWork, /Реализация/);
 
-    if (noBoxCaught && noLinkCaught)
-      ok('validate-artifact: план автотестов без шагов-чекбоксов и без связи шагов с кейсами не проходит');
+    // 2) нет колонки «Статус» — прогресс реализации отмечать негде, и
+    //    следующий читатель не отличит сделанное от запланированного
+    const noStatus = inAutotests((s) => s.replace('| Статус |', '| Заметки |'));
+    const noStatusCaught = caught(noStatus, /Статус/);
+
+    // 3) колонка есть, но у строки клетка пустая: «неизвестно» молча выглядит
+    //    как «ещё не начинали»
+    const emptyStatus = inAutotests((s) => s.replace('| [ ] |', '|  |'));
+    const emptyStatusCaught = caught(emptyStatus, /Статус/);
+
+    if (noWorkCaught && noStatusCaught && emptyStatusCaught)
+      ok('validate-artifact: таблица автотестов несёт объём работ («Класс»/«Реализация») и отметку прогресса («Статус»)');
     else
       bad(
-        'validate-artifact: «Шаги реализации тестов» — ' +
+        'validate-artifact: таблица «Автотесты» — ' +
           [
-            noBoxCaught ? null : 'план без единого чекбокса прошёл: ' + JSON.stringify(noBox.problems),
-            noLinkCaught ? null : 'шаги без TC-ID прошли: ' + JSON.stringify(noLink.problems),
+            noWorkCaught ? null : 'без колонки «Реализация» прошла: ' + JSON.stringify(noWork.problems),
+            noStatusCaught ? null : 'без колонки «Статус» прошла: ' + JSON.stringify(noStatus.problems),
+            emptyStatusCaught ? null : 'строка с пустым «Статусом» прошла: ' + JSON.stringify(emptyStatus.problems),
           ]
             .filter(Boolean)
             .join('; '),
       );
 
-    // Состав обязательных разделов спрашиваем у самого валидатора: переставить
-    // «Итого» наверх мало — раздел должен быть ОБЯЗАТЕЛЬНЫМ, иначе агент его
-    // просто не напишет, и ревью команды вернётся к тому же замечанию.
+    // Состав обязательных разделов спрашиваем у самого валидатора: перенести
+    // «Итого» вниз мало — раздел обязан остаться ОБЯЗАТЕЛЬНЫМ, иначе агент его
+    // просто не напишет. Обратная сторона: удалённые по замечанию команды
+    // «Что переиспользуем» и «Шаги реализации тестов» не должны вернуться —
+    // иначе ревью придёт к тому же замечанию со второго круга.
     const atpRequired = JSON.parse(
       runScript('core/scripts/validate-artifact.mjs', ['--file', emptyArtPath, '--type', 'autotest-plan']),
     ).missingSections;
-    const needAtp = ['## Итого', '## Уровни тестирования', '## Что переиспользуем', '## Шаги реализации тестов'];
+    const needAtp = ['## Итого', '## Уровни тестирования', '## Тест-кейсы', '## Автотесты'];
+    const goneAtp = ['## Что переиспользуем', '## Шаги реализации тестов'];
     const missAtp = needAtp.filter((h) => !atpRequired.includes(h));
-    if (!missAtp.length)
-      ok('validate-artifact: план автотестов обязан нести «Итого», уровни, переиспользование и шаги');
-    else bad('validate-artifact: необязательные разделы плана автотестов: ' + missAtp.join(', '));
+    const backAtp = goneAtp.filter((h) => atpRequired.includes(h));
+    if (!missAtp.length && !backAtp.length)
+      ok('validate-artifact: план автотестов обязан нести «Итого», уровни и обе таблицы, удалённых разделов не требует');
+    else
+      bad(
+        'validate-artifact: обязательные разделы плана автотестов — ' +
+          [
+            missAtp.length ? 'необязательны: ' + missAtp.join(', ') : null,
+            backAtp.length ? 'вернулись удалённые: ' + backAtp.join(', ') : null,
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
   }
 
-  // Замечание команды по плану автотестов: тест-кейсы остаются ТЕКСТОВЫМ
-  // описанием и живут ОДНОЙ таблицей (на «ручные» и «автоматизированные» их
-  // не делят — покрытие показывает колонка «Автотест»), а автотесты
-  // выделяются ОТДЕЛЬНЫМ разделом и делятся на новый функционал
-  // (сгруппированный по уровням тестирования: название, код теста, краткое
-  // описание) и регресс (уровень, список, почему выбран именно такой). Цикла
-  // ревью на create-autotest-plan нет — каждое из этих требований держится
-  // только машинной проверкой. Ломаем по одному, отталкиваясь от шаблона:
-  // падение указывает на конкретную причину.
+  // Замечание команды по плану автотестов: ВСЁ В ТАБЛИЦАХ. Кейс держит себя
+  // целиком в строке (шаги и ожидаемый результат — колонки, отдельных описаний
+  // под таблицей нет), автотесты лежат второй таблицей о тех же тестах, а
+  // связывает их ID теста в Jira. Кейс, которому автотеста не будет, обязан
+  // быть назван в «Что не автоматизируем»: колонки «Автотест», которая раньше
+  // это показывала, больше нет. Регресс берут выборочно, а уровни перечисляют
+  // только те, на которых будут тесты. Цикла ревью на create-autotest-plan
+  // нет — каждое из требований держится только машинной проверкой. Ломаем по
+  // одному, отталкиваясь от шаблона: падение указывает на конкретную причину.
   {
     const tplText = fs.readFileSync(path.join(root, 'core/templates/autotest-plan.md'), 'utf8');
     const atpPath = path.join(tmp, 'atp-autotests.md');
@@ -4038,75 +4099,220 @@ try {
       return JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
     };
     const caught = (res, re) => res.ok === false && res.problems.some((p) => re.test(p));
+    const section = (text, head) => {
+      const from = text.indexOf(head);
+      const to = text.indexOf('\n## ', from + 1);
+      return [text.slice(0, from), text.slice(from, to), text.slice(to)];
+    };
 
-    // 1) раздел «Автотесты» вообще не заведён — автотесты снова растворены в
-    //    ручных кейсах, и сверять отчёт с планом будет нечем
+    // 1) раздела «Автотесты» вообще нет — автотесты снова растворены в кейсах,
+    //    и сверять отчёт о прогоне с планом будет нечем
     const noSection = va(tplText.replace('## Автотесты', '## Прочее'));
     const noSectionCaught = noSection.ok === false && noSection.missingSections.includes('## Автотесты');
 
-    // 2) раздел есть, но без ID: список тестов не адресуем ни из шагов, ни из
-    //    отчёта. AT-ID в «Шагах реализации тестов» при этом остаются —
-    //    проверка обязана смотреть в РАЗДЕЛ, а не в файл целиком.
-    const secFrom = tplText.indexOf('## Автотесты');
-    const secTo = tplText.indexOf('\n## ', secFrom + 1);
-    const noIds = va(
-      tplText.slice(0, secFrom) +
-        tplText.slice(secFrom, secTo).replace(/AT-\d+/g, 'AT-нет') +
-        tplText.slice(secTo),
-    );
-    const noIdsCaught = /AT-\d+/.test(tplText) && caught(noIds, /AT-N/);
+    // 2) раздел есть, но без ID тестов: строки не адресуемы ни из TMS, ни из
+    //    отчёта. ID в таблице кейсов при этом остаются — проверка обязана
+    //    смотреть в РАЗДЕЛ, а не в файл целиком.
+    const [atHead, atBody, atTail] = section(tplText, '## Автотесты');
+    const noIds = va(atHead + atBody.replace(/PROJ-T\d+(?:-\d+)?/g, 'тест') + atTail);
+    const noIdsCaught = /PROJ-T\d+/.test(atBody) && caught(noIds, /ID теста/);
 
-    // 3) нет разбиения на новый функционал и регресс
-    const noSplit = va(tplText.replace('### Новый функционал', '### Тесты'));
-    const noSplitCaught = caught(noSplit, /Новый функционал/);
+    // 3) в таблице кейсов нет колонки «Вид тестирования» — не отличить новый
+    //    тест от регресса, а подразделов «Новый функционал»/«Регресс», которые
+    //    раньше это показывали, больше нет
+    const [tcHead, tcBody, tcTail] = section(tplText, '## Тест-кейсы');
+    const noKind = va(tcHead + tcBody.replace('| Вид тестирования |', '| Приоритет |') + tcTail);
+    const noKindCaught = caught(noKind, /Вид тестирования/);
 
-    // 4) новый функционал не сгруппирован по уровням тестирования
-    const noLevels = va(tplText.replace(/#### Уровень:/g, '- Уровень:'));
-    const noLevelsCaught = caught(noLevels, /уровн/i);
+    // 4) кейс не назван ни в автотестах, ни в «Что не автоматизируем»: решение
+    //    не покрывать его выглядит ровно как потерянный кейс
+    const orphan = va(tplText.replace('Кейсы: PROJ-T999-2', 'Кейсы: —'));
+    const orphanCaught = caught(orphan, /не автоматизируем/);
 
-    // 5) регресс без обоснования выбора — «взяли весь набор» проходило бы молча
-    const noWhy = va(tplText.replace(/^- \*\*Почему выбраны эти тесты:\*\*.*$/m, '- <список>'));
+    // 5) регресс без обоснования выбора — «взяли весь набор целиком» проходило
+    //    бы молча
+    const noWhy = va(tplText.replace('**Регресс: почему выбраны эти тесты**', '**Список тестов**'));
     const noWhyCaught = caught(noWhy, /Регресс/);
 
-    // 6) колонки «Автотест» в таблице кейсов нет — по плану не сказать, какие
-    //    кейсы уходят в автоматизацию, а какие остаются на руках
-    const noColumn = va(tplText.replace('| Автотест |', '| Действие |'));
-    const noColumnCaught = caught(noColumn, /колонки «Автотест»/);
+    // 6) в уровнях снова перечислены отклонённые: раздел вернулся к защите
+    //    выбора вместо состава работ — ровно то, что сняла команда
+    const rejected = va(
+      tplText.replace('- **<уровень>** — <почему тесты', '- **Отклонено: <уровень>** — <почему не нужен, а тесты'),
+    );
+    const rejectedCaught = caught(rejected, /отклонённ/i);
 
-    // 7) колонка есть, но у кейса пустая: «неизвестно» молча выглядит как «нет»
-    const emptyCell = va(tplText.replace(/^(\| TC-1 .*?\| P1 )\| AT-1 \|/m, '$1|  |'));
-    const emptyCellCaught = caught(emptyCell, /колонка «Автотест»/);
-
-    // 8) кейс с «нет» остался без детального блока: автотеста не будет, а
-    //    шагов ручного прогона нет ни здесь, ни в «Что не автоматизируем»
-    const noManualSteps = va(tplText.replace(/### TC-4 —[\s\S]*?(?=\n## )/, ''));
-    const noManualStepsCaught = caught(noManualSteps, /### TC-N/);
-
-    if (
-      noSectionCaught &&
-      noIdsCaught &&
-      noSplitCaught &&
-      noLevelsCaught &&
-      noWhyCaught &&
-      noColumnCaught &&
-      emptyCellCaught &&
-      noManualStepsCaught
-    )
-      ok('validate-artifact: кейсы одной таблицей с колонкой «Автотест» (у «нет» — шаги ручного прогона), автотесты отдельным разделом (уровни + регресс с обоснованием)');
+    if (noSectionCaught && noIdsCaught && noKindCaught && orphanCaught && noWhyCaught && rejectedCaught)
+      ok('validate-artifact: кейсы и автотесты — две таблицы, связанные ID теста (непокрытый кейс назван, регресс обоснован, уровни только нужные)');
     else
       bad(
-        'validate-artifact: раздел «Автотесты» — ' +
+        'validate-artifact: таблицы плана автотестов — ' +
           [
-            noSectionCaught ? null : 'план без раздела прошёл: ' + JSON.stringify(noSection.missingSections),
-            noIdsCaught ? null : 'раздел без AT-ID прошёл: ' + JSON.stringify(noIds.problems),
-            noSplitCaught ? null : 'без «Новый функционал»/«Регресс» прошёл: ' + JSON.stringify(noSplit.problems),
-            noLevelsCaught ? null : 'без группировки по уровням прошёл: ' + JSON.stringify(noLevels.problems),
+            noSectionCaught ? null : 'план без раздела «Автотесты» прошёл: ' + JSON.stringify(noSection.missingSections),
+            noIdsCaught ? null : 'раздел без ID тестов прошёл: ' + JSON.stringify(noIds.problems),
+            noKindCaught ? null : 'таблица кейсов без «Вида тестирования» прошла: ' + JSON.stringify(noKind.problems),
+            orphanCaught ? null : 'кейс без автотеста и без причины прошёл: ' + JSON.stringify(orphan.problems),
             noWhyCaught ? null : 'регресс без обоснования прошёл: ' + JSON.stringify(noWhy.problems),
-            noColumnCaught ? null : 'таблица без колонки «Автотест» прошла: ' + JSON.stringify(noColumn.problems),
-            emptyCellCaught ? null : 'кейс с пустой колонкой «Автотест» прошёл: ' + JSON.stringify(emptyCell.problems),
-            noManualStepsCaught
+            rejectedCaught ? null : 'отклонённые уровни прошли: ' + JSON.stringify(rejected.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+
+  // ID теста — единственное, что связывает кейс с автотестом, план с отчётом и
+  // артефакт с TMS. Считается он ИЗ ПЕРВОЙ ЯЧЕЙКИ строки, и каждое из четырёх
+  // свойств этого разбора обязано проверяться машинно: без них строка молча
+  // выпадает из всех проверок разом (нераспознанный ID), два теста
+  // схлопываются в один (повтор), а упомянутый в прозе идентификатор
+  // становится фантомным тестом. Цикла ревью на create-autotest-plan нет.
+  {
+    const tplText = fs.readFileSync(path.join(root, 'core/templates/autotest-plan.md'), 'utf8');
+    const atpPath = path.join(tmp, 'atp-ids.md');
+    const va = (text) => {
+      fs.writeFileSync(atpPath, text);
+      return JSON.parse(runScript('core/scripts/validate-artifact.mjs', ['--file', atpPath, '--type', 'autotest-plan']));
+    };
+    const caught = (res, re) => res.ok === false && res.problems.some((p) => re.test(p));
+
+    // 1) два теста с одним ID: ради этого у новых тестов сквозной суффикс
+    const dup = va(tplText.split('PROJ-T999-2').join('PROJ-T999-1'));
+    const dupCaught = caught(dup, /повторяется/);
+
+    // 2) в первой ячейке не ID, а что угодно ещё: строка становится невидимой
+    const badId = va(tplText.split('| PROJ-T113 |').join('| TC-3 |'));
+    const badIdCaught = caught(badId, /первой ячейке/);
+
+    // 3) ID упомянут в прозе — это НЕ строка таблицы. Проверяем обратное:
+    //    посторонний идентификатор в ячейке «Реализация» не должен ни стать
+    //    фантомным автотестом, ни закрыть собой непокрытый кейс.
+    const prose = va(tplText.replace('создать: <что именно>', 'создать: <что именно>, как в PROJ-T500'));
+    const proseOk = prose.ok === true;
+
+    // 4) кейс «покрыт» только упоминанием в тексте причины, а не строкой
+    //    «Кейсы: <ID>» — покрытием это не считается
+    const looseSkip = va(tplText.replace('Кейсы: PROJ-T999-2', 'похоже на PROJ-T999-2'));
+    const looseSkipCaught = caught(looseSkip, /не автоматизируем/);
+
+    // 4b) колонка «Автотест» — вторая запись того же факта, и ценна ровно
+    //     пока сходится с таблицей автотестов: «да» без строки там — обещание
+    //     без исполнителя, «нет» при живой строке — тест, потерянный для
+    //     таблицы кейсов. Обе стороны расходятся молча.
+    const promise = va(tplText.replace('| REQ-3 | нет |', '| REQ-3 | да |'));
+    const promiseCaught = caught(promise, /Автотест/);
+    const hidden = va(tplText.replace('| REQ-1 | да |', '| REQ-1 | нет |'));
+    const hiddenCaught = caught(hidden, /Автотест/);
+    const vague = va(tplText.replace('| REQ-1 | да |', '| REQ-1 | частично |'));
+    const vagueCaught = caught(vague, /Автотест/);
+    // Колонки нет вовсе — покрытие снова читается только сверкой двух таблиц
+    // построчно, а команда просила видеть его в самой таблице кейсов.
+    const noAutoCol = va(
+      tplText.split(' | Автотест |').join(' |').split(' | да |').join(' |').split(' | нет |').join(' |'),
+    );
+    const noAutoColCaught = caught(noAutoCol, /Автотест/);
+
+    // 5) тот же кейс, но упомянутый в прозе ВНУТРИ «Автотестов»: строки с его
+    //    ID в таблице нет, автоматизации не будет. Это ровно тот мутант, что
+    //    отличает разбор по первой ячейке от поиска ID по телу раздела: с
+    //    поиском по телу непокрытый кейс проходит по одному слову в соседней
+    //    ячейке.
+    const looseCover = va(
+      tplText
+        .replace('Кейсы: PROJ-T999-2', 'Кейсы: —')
+        .replace('создать: <что именно>', 'создать: <что именно>, как в PROJ-T999-2'),
+    );
+    const looseCoverCaught = caught(looseCover, /не автоматизируем/);
+
+    if (dupCaught && badIdCaught && proseOk && looseSkipCaught && looseCoverCaught && promiseCaught && hiddenCaught && vagueCaught && noAutoColCaught)
+      ok('validate-artifact: ID берётся из первой ячейки строки (повтор и нераспознанный ловятся, проза за тест не считается), колонка «Автотест» сверяется с таблицей автотестов');
+    else
+      bad(
+        'validate-artifact: разбор ID — ' +
+          [
+            dupCaught ? null : 'повтор ID прошёл: ' + JSON.stringify(dup.problems),
+            badIdCaught ? null : 'посторонний текст в ячейке ID прошёл: ' + JSON.stringify(badId.problems),
+            proseOk ? null : 'ID в прозе засчитан за строку таблицы: ' + JSON.stringify(prose.problems),
+            looseSkipCaught ? null : 'кейс закрыт упоминанием мимо «Кейсы:»: ' + JSON.stringify(looseSkip.problems),
+            looseCoverCaught
               ? null
-              : 'кейс без автотеста и без шагов прошёл: ' + JSON.stringify(noManualSteps.problems),
+              : 'непокрытый кейс закрыт упоминанием в прозе «Автотестов»: ' + JSON.stringify(looseCover.problems),
+            promiseCaught ? null : '«да» без строки в «Автотестах» прошло: ' + JSON.stringify(promise.problems),
+            hiddenCaught ? null : '«нет» при живом автотесте прошло: ' + JSON.stringify(hidden.problems),
+            vagueCaught ? null : 'значение не да/нет прошло: ' + JSON.stringify(vague.problems),
+            noAutoColCaught ? null : 'таблица кейсов без колонки «Автотест» прошла: ' + JSON.stringify(noAutoCol.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+
+    // Колонка на месте, а ячейка пуста — тот же непроходимый кейс и тот же
+    // несобираемый объём работ, только заметить труднее. Плюс сама колонка
+    // REQ-ID: без неё трассировка держится единственным REQ в другом разделе.
+    const emptyStep = va(tplText.replace('| 1) <шаг> 2) <шаг> |', '|  |'));
+    const emptyStepCaught = caught(emptyStep, /пустая ячейка/);
+    const emptyWork = va(tplText.replace('| создать: <что именно> |', '|  |'));
+    const emptyWorkCaught = caught(emptyWork, /пустая ячейка/);
+    const noReq = va(tplText.split(' REQ-ID |').join(' |').split(' REQ-1 |').join(' |').split(' REQ-2 |').join(' |'));
+    const noReqCaught = caught(noReq, /REQ-ID/);
+    // Неэкранированный `|` внутри ячейки сдвигает все колонки строки вправо —
+    // после этого «Статус» читается из чужой ячейки, и врут все проверки.
+    const pipe = va(tplText.replace('| <что ожидаем> |', '| NEW|DONE |'));
+    const pipeCaught = caught(pipe, /число ячеек/);
+    // Обратная сторона: `\|` — это ТЕКСТ ячейки, а не разделитель. Шаблон
+    // предписывает писать черту именно так, и разбор обязан с ним сходиться,
+    // иначе правильно оформленная строка падает с советом сделать то, что уже
+    // сделано.
+    const escaped = va(tplText.replace('| <что ожидаем> |', '| ответ по ?status=NEW\\|DONE |'));
+    const escapedOk = escaped.ok === true;
+
+    if (emptyStepCaught && emptyWorkCaught && noReqCaught && pipeCaught && escapedOk)
+      ok('validate-artifact: пустые ячейки, пропавший REQ-ID и неэкранированный «|» в строке не проходят');
+    else
+      bad(
+        'validate-artifact: ячейки таблиц — ' +
+          [
+            emptyStepCaught ? null : 'пустые «Шаги» прошли: ' + JSON.stringify(emptyStep.problems),
+            emptyWorkCaught ? null : 'пустая «Реализация» прошла: ' + JSON.stringify(emptyWork.problems),
+            noReqCaught ? null : 'таблицы без REQ-ID прошли: ' + JSON.stringify(noReq.problems),
+            pipeCaught ? null : 'строка с лишним «|» прошла: ' + JSON.stringify(pipe.problems),
+            escapedOk ? null : 'экранированный «\\|» принят за разделитель: ' + JSON.stringify(escaped.problems),
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+
+    // Две правки команды, которые иначе не держатся ничем: порядок разделов
+    // («Итого» пишется последним и стоит внизу) и невозврат удалённых
+    // разделов. Плюс обратная сторона проверки отклонённых уровней: слово
+    // «Отклонено» в описании уровня — законный текст, а не отклонённый
+    // уровень, и валить на нём готовый план нельзя.
+    const lines = tplText.split(/\r?\n/);
+    const from = lines.findIndex((l) => l === '## Итого');
+    const to = lines.findIndex((l, i) => i > from && l.startsWith('## '));
+    const moved = lines.slice();
+    moved.splice(2, 0, ...moved.splice(from, to - from));
+    const order = va(moved.join('\n'));
+    const orderCaught = caught(order, /порядке шаблона/);
+
+    const oldBack = va(tplText + '\n## Шаги реализации тестов\n- [ ] **Шаг 1.** Файл: x. Кейсы: PROJ-T113.\n');
+    const oldBackCaught = caught(oldBack, /удалённый формат/);
+
+    const legit = va(
+      tplText.replace(
+        '- **<уровень>** — <почему тесты этого уровня нужны, одна строка>',
+        '- **API** — проверяем переходы в статусы «Одобрено» и «Отклонено»',
+      ),
+    );
+    const legitOk = legit.ok === true;
+
+    if (orderCaught && oldBackCaught && legitOk)
+      ok('validate-artifact: порядок разделов и невозврат удалённых держатся машинно, «Отклонено» в тексте уровня не ложно-срабатывает');
+    else
+      bad(
+        'validate-artifact: структура плана — ' +
+          [
+            orderCaught ? null : '«Итого» наверху прошло: ' + JSON.stringify(order.problems),
+            oldBackCaught ? null : 'вернувшийся «Шаги реализации тестов» прошёл: ' + JSON.stringify(oldBack.problems),
+            legitOk ? null : 'уровень со словом «Отклонено» в описании не прошёл: ' + JSON.stringify(legit.problems),
           ]
             .filter(Boolean)
             .join('; '),
@@ -4196,21 +4402,43 @@ try {
     // `.*$\n` здесь не работает: шаблоны лежат с CRLF, `$` встаёт ПЕРЕД `\r`,
     // и замена молча не срабатывает — фикстура остаётся исходной, проверка
     // «потерянный автотест — ошибка» проходит ни на чём. Поэтому `\r?\n`.
-    const dropped = vaRep(repTpl.replace(/^\| AT-2 .*\r?\n/m, ''));
+    const dropped = vaRep(repTpl.replace(/^\| PROJ-T113 .*\r?\n/m, ''));
     const droppedCaught =
       dropped.ok === false &&
-      dropped.planMismatch.missing.includes('AT-2') &&
-      dropped.problems.some((p) => /AT-2/.test(p));
+      dropped.planMismatch.missing.includes('PROJ-T113') &&
+      dropped.problems.some((p) => /PROJ-T113/.test(p));
 
     // тест сверх плана: не роняем валидацию, но обязаны показать
-    const added = vaRep(repTpl.replace(/^\| AT-2 .*$/m, (row) => row + '\n' + row.replace('AT-2', 'AT-9')));
-    const addedCaught = added.ok === true && added.planMismatch.extra.includes('AT-9') && !added.planMismatch.missing.length;
+    const added = vaRep(repTpl.replace(/^\| PROJ-T113 .*$/m, (row) => row + '\n' + row.replace('PROJ-T113', 'PROJ-T777')));
+    const addedCaught = added.ok === true && added.planMismatch.extra.includes('PROJ-T777') && !added.planMismatch.missing.length;
 
     // без --plan сверки нет: этап плана отчёта ещё не видит
     const solo = vaRep(repTpl, false);
     const soloOk = solo.ok === true && !('planMismatch' in solo);
 
-    if (sameOk && droppedCaught && addedCaught && soloOk)
+    // Повтор ID в плане: два теста схлопнулись в один ID, а написан только
+    // один. Состав ID отчёта с планом СОЙДЁТСЯ (множества равны), и
+    // ненаписанный тест прошёл бы молча — ловим по числу строк.
+    fs.writeFileSync(planPath, fs.readFileSync(planPath, 'utf8').split('PROJ-T999-1').join('PROJ-T113'));
+    const collapsed = vaRep(repTpl.replace(/^\| PROJ-T999-1 .*\r?\n/m, ''));
+    const collapsedCaught =
+      collapsed.ok === false &&
+      !collapsed.planMismatch.missing.length &&
+      collapsed.problems.some((p) => /повторяется/.test(p));
+
+    // Посторонний ID в прозе плана («переиспользуется, как в PROJ-T500»,
+    // обоснование регресса) не должен становиться фантомным missing: этап
+    // вернул бы отчёт агенту дописывать несуществующую строку.
+    fs.copyFileSync(path.join(root, 'core/templates/autotest-plan.md'), planPath);
+    fs.writeFileSync(
+      planPath,
+      fs.readFileSync(planPath, 'utf8').replace('создать: <что именно>', 'создать: <что именно>, как в PROJ-T500'),
+    );
+    const phantom = vaRep(repTpl);
+    const phantomOk = phantom.ok === true && !phantom.planMismatch.missing.length;
+    fs.copyFileSync(path.join(root, 'core/templates/autotest-plan.md'), planPath);
+
+    if (sameOk && droppedCaught && addedCaught && soloOk && collapsedCaught && phantomOk)
       ok('validate-artifact: состав автотестов отчёта сверяется с планом (потерянный — ошибка, лишний — предупреждение)');
     else
       bad(
@@ -4220,6 +4448,8 @@ try {
             droppedCaught ? null : 'потерянный автотест прошёл: ' + JSON.stringify(dropped),
             addedCaught ? null : 'лишний автотест не показан: ' + JSON.stringify(added.planMismatch),
             soloOk ? null : 'без --plan появился planMismatch: ' + JSON.stringify(solo),
+            collapsedCaught ? null : 'повтор ID в плане скрыл ненаписанный тест: ' + JSON.stringify(collapsed),
+            phantomOk ? null : 'ID из прозы плана стал фантомным missing: ' + JSON.stringify(phantom.planMismatch),
           ]
             .filter(Boolean)
             .join('; '),

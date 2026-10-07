@@ -32,7 +32,7 @@ description: Вносит требования из intent в репозитор
    вопросом.
 2. Фаза A (пишем в анализ):
    `scope.mjs set --stage create-specification --type <FE|BE|FE-BE> --task <TASK-ID>`
-   → задача(и) и meta.json (intentId, пять этапов; каталог задачи появляется
+   → задача(и) и meta.json (intentId, шесть этапов; каталог задачи появляется
    этой записью — `mkdir` по нему guard запрещает) →
    `git-ops locate --link <link systemsAnalysis> --workspace <workspaceRoot> --name systemsAnalysis`
    → `git-ops update --path <repo> --main <mainBranch> --mode write` →
@@ -56,4 +56,5 @@ description: Вносит требования из intent в репозитор
    Задачу с пустым `intentId` (мигрированную из 1.x) продолжают ТОЛЬКО
    запуском по TASK-ID: обратный индекс её не находит, а чужой INTENT-ID
    завёл бы вторую задачу.
-5. `scope.mjs clear`; следующий шаг — /conveyor:create-plan.
+5. `scope.mjs clear`; следующий шаг — /conveyor:create-plan и параллельно
+   /conveyor:create-autotest-plan (QA, нужна только спецификация).

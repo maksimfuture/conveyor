@@ -11,6 +11,7 @@
 //   log          --path <p> [--main <branch>] [-n <count>]
 //   branch       --path <p> --branch <name> --from <mainBranch>
 //   diff         --path <p> --base <ref> --head <ref>
+//   pushed       --path <p> --branch <name>
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,7 +52,7 @@ function tryGit(cwd, args) {
   try {
     return { ok: true, out: git(cwd, args) };
   } catch (e) {
-    return { ok: false, out: (e.stderr || e.stdout || e.message || '').toString().trim() };
+    return { ok: false, out: (e.stderr || e.stdout || e.message || '').toString().trim(), code: e.status };
   }
 }
 
@@ -229,6 +230,46 @@ function cmdDiff(a) {
   });
 }
 
+function cmdPushed(a) {
+  const repoPath = a.path;
+  const branch = a.branch;
+  if (!repoPath || !branch) return fail('pushed: --path --branch required');
+  const local = tryGit(repoPath, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+  if (!local.ok) return fail(`локальной ветки «${branch}» нет`);
+  const answer = (fields) => done({ ok: true, localSha: local.out, remoteSha: null, ahead: null, warnings: [], ...fields });
+
+  const ls = tryGit(repoPath, ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
+  if (!ls.ok && ls.code === 2) return answer({ pushed: false, checkFailed: false, reason: 'ветки нет в origin' });
+  if (!ls.ok)
+    return answer({
+      pushed: false,
+      checkFailed: true,
+      reason: 'не удалось проверить origin (см. warnings)',
+      warnings: [`git ls-remote не удался: ${ls.out}`],
+    });
+  const remoteSha = ls.out.split(/\s+/)[0];
+  if (remoteSha === local.out) return answer({ pushed: true, checkFailed: false, remoteSha, ahead: 0 });
+
+  const fetch = tryGit(repoPath, ['fetch', 'origin', branch]);
+  const ahead = tryGit(repoPath, ['rev-list', '--count', `${remoteSha}..${local.out}`]);
+  if (!ahead.ok)
+    return answer({
+      pushed: false,
+      checkFailed: true,
+      reason: 'не удалось сравнить с origin (см. warnings)',
+      remoteSha,
+      warnings: [fetch.ok ? `git rev-list не удался: ${ahead.out}` : `git fetch не удался: ${fetch.out}`],
+    });
+  const n = Number(ahead.out);
+  return answer({
+    pushed: n === 0,
+    checkFailed: false,
+    ...(n === 0 ? {} : { reason: `локальная ветка впереди origin на ${n} коммит(ов)` }),
+    remoteSha,
+    ahead: n,
+  });
+}
+
 // ---- dispatch ------------------------------------------------------------
 
 const [, , sub, ...rest] = process.argv;
@@ -253,6 +294,9 @@ try {
       break;
     case 'diff':
       cmdDiff(args);
+      break;
+    case 'pushed':
+      cmdPushed(args);
       break;
     default:
       fail(`неизвестная подкоманда: ${sub || '(нет)'}. См. шапку git-ops.mjs.`);

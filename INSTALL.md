@@ -52,11 +52,11 @@ unexpected behavior») — подтвердите вводом `Y`.
 gigacode extensions list
 ```
 Ожидаемый вывод: `conveyor (<версия>)`, `Enabled (User): true`,
-`Enabled (Workspace): true` и 8 команд:
+`Enabled (Workspace): true` и 9 команд:
 `/conveyor:setup`, `/conveyor:intent`, `/conveyor:create-specification`,
 `/conveyor:create-plan`, `/conveyor:implement-plan`,
 `/conveyor:create-autotest-plan`, `/conveyor:implement-auto-test`,
-`/conveyor:task-status`.
+`/conveyor:run-auto-test`, `/conveyor:task-status`.
 
 Каталог установки команды определяют сами: шаг «Корень расширения» в начале
 каждой команды ищет `~/.gigacode/extensions/conveyor` и проверяет, что там
@@ -124,8 +124,8 @@ node <plugin>/core/scripts/repos-status.mjs
 Ссылок на репозитории в `.env` нет — они живут в `settings.json`.
 
 ### Шаг 9. (Опционально) Запуск автотестов в Jenkins
-Этап `/conveyor:implement-auto-test` умеет после push запускать джобу
-автотестов и дожидаться результата. Для этого нужны две вещи:
+Этап `/conveyor:run-auto-test` запускает джобу автотестов (ветку пушит
+`/conveyor:implement-auto-test`) и дожидается результата. Для этого нужны две вещи:
 
 1. **Ссылка на джобу** в `settings.json`:
    `repos.autoTest.linkPipelineAutoTest` — например
@@ -140,8 +140,8 @@ node <plugin>/core/scripts/repos-status.mjs
 **Токен Jenkins живёт в конфигурации MCP-сервера**, а не в `settings.json` и
 не в `.env` конвейера: в репозиторий команды попадает только ссылка на джобу.
 
-Ничего из этого не настроено — этап работает как раньше: тесты пишутся,
-коммитятся, а в отчёте в разделе «Прогон в CI» пишется, что джоба с
+Ничего из этого не настроено — `/conveyor:implement-auto-test` работает как
+обычно (тесты пишутся, коммитятся), а `/conveyor:run-auto-test` пишет в разделе «Прогон в CI» отчёта, что джоба с
 автотестами не запускалась.
 
 Готово — можно запускать `/conveyor:intent`.

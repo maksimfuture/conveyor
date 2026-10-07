@@ -44,4 +44,7 @@ description: Реализует задачу в кодовой базе по п�
    (push/MR — по подтверждению + permission-prompt guard-хука, в порядке
    мержа из плана). Обнови meta.json (stages.implement-plan.done + review +
    implementBranches). Напечатай итог таблицей «репозиторий → ветка →
-   коммиты». Следующий шаг — `/conveyor:create-autotest-plan`.
+   коммиты». Следующий шаг — `/conveyor:create-autotest-plan`, если
+   autotest-plan.md ещё нет; план есть, а implement-auto-test не завершён —
+   `/conveyor:implement-auto-test`; автотесты уже готовы —
+   `/conveyor:run-auto-test`.

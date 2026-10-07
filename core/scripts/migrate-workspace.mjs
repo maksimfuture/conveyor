@@ -294,7 +294,7 @@ if (hasLegacyTasksDir(workspaceRoot)) {
 // пересобираем в нём при записи: переименованный autotest-plan, дописанный
 // в конец, оказался бы ПОСЛЕ implement-auto-test — и «следующий этап»
 // в /task-status считался бы по нему.
-const META_STAGE_ORDER = ['specification', 'plan', 'implement-plan', 'autotest-plan', 'implement-auto-test'];
+const META_STAGE_ORDER = ['specification', 'plan', 'implement-plan', 'autotest-plan', 'implement-auto-test', 'run-auto-test'];
 
 function orderedStages(stages) {
   const out = {};

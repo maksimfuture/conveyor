@@ -15,7 +15,7 @@ GigaCode: манифест `gigacode-extension.json`, контекст `QWEN.md`
 conveyor/                      # каталог расширения
 ├── gigacode-extension.json    # манифест { name, version, description }
 ├── QWEN.md                    # контекст: общий протокол, защита, список команд
-├── commands/conveyor/*.md     # 8 команд → /conveyor:<имя>
+├── commands/conveyor/*.md     # 9 команд → /conveyor:<имя>
 └── core/                      # ядро (промпты, стейджи, шаблоны, скрипты)
 ```
 
@@ -38,7 +38,7 @@ gigacode extensions install dist/gigacode
 GigaCode спросит подтверждение (security-предупреждение) — подтвердите. После
 этого:
 ```
-gigacode extensions list      # должно показать conveyor (2.0.0) и 8 команд
+gigacode extensions list      # должно показать conveyor (2.0.0) и 9 команд
 gigacode
 /conveyor:setup
 ```

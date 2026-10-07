@@ -49,7 +49,8 @@ BE-задачи. НЕ разбирай `config.repos` сам: форму нас�
 
 ## Определение задачи
 Раздел применяется к этапам, которые работают с УЖЕ заведённой задачей:
-`create-plan`, `implement-plan`, `create-autotest-plan`, `implement-auto-test`.
+`create-plan`, `implement-plan`, `create-autotest-plan`, `implement-auto-test`,
+`run-auto-test`.
 
 - TASK-ID берётся из аргумента. Если не передан — предложи выбор: до 3
   последних незавершённых задач из `docs/specs/tasks/` + вариант «введу
@@ -90,12 +91,13 @@ BE-задачи. НЕ разбирай `config.repos` сам: форму нас�
 | implement-plan | кодовая база по типу задачи | код — ТОЛЬКО репозитории из plan.md |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты | — (только артефакты) |
 | implement-auto-test | автотесты (autoTest) | автотесты |
+| run-auto-test | агента нет; команда читает ветку автотестов (теги) | — (только `report-auto-test.md` и meta.json) |
 
 (Колонки — про АГЕНТА: сама команда может читать кодовую базу для подготовки
 диффов через git-ops — например, на фазе B create-specification. Фаза B
 снимает право записи в анализ вызовом `scope.mjs set … --write none`. На
-create-autotest-plan и implement-auto-test кодовая база FE/BE не открывается
-вовсе.)
+create-autotest-plan, implement-auto-test и run-auto-test кодовая база FE/BE
+не открывается вовсе.)
 
 Правила:
 - агенту передаются ТОЛЬКО пути его области (см. таблицу) + папка задачи
@@ -117,6 +119,7 @@ create-autotest-plan и implement-auto-test кодовая база FE/BE не �
   | implement-plan | `plan.md` (отметки шагов, отклонения, ревью) |
   | create-autotest-plan | `autotest-plan.md` |
   | implement-auto-test | `report-auto-test.md` |
+  | run-auto-test | `report-auto-test.md` (только раздел «Прогон в CI») |
 
   ИСХОДНИКИ (tsx/js/adoc/…) пишутся ТОЛЬКО в рабочую копию соответствующего
   репозитория, НИКОГДА в папку задачи или намерения;

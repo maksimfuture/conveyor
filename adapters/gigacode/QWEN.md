@@ -85,6 +85,7 @@
 | implement-plan | кодовая база по типу задачи + plan.md | код — ТОЛЬКО репозитории из plan.md + артефакты |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты задачи | — (только артефакты) |
 | implement-auto-test | автотесты (autoTest) + autotest-plan.md | автотесты + артефакты |
+| run-auto-test | агента нет; команда читает ветку автотестов (теги) | — (только «Прогон в CI» отчёта + meta.json) |
 
 Колонки — про АГЕНТА: сама команда может читать кодовую базу для подготовки
 диффов через git-ops (например, на фазе B create-specification; фаза B
@@ -138,8 +139,9 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 | `/conveyor:create-specification` | системный аналитик | правки анализа по намерению + спецификация |
 | `/conveyor:create-plan` | разработчик | план реализации по коду |
 | `/conveyor:implement-plan` | разработчик | реализация в ветке задачи + ревью |
-| `/conveyor:create-autotest-plan` | QA | план автотестов по спецификации |
-| `/conveyor:implement-auto-test` | QA | реализация автотестов + ревью |
+| `/conveyor:create-autotest-plan` | QA | план автотестов по спецификации (сразу после спецификации, параллельно с разработкой) |
+| `/conveyor:implement-auto-test` | QA | реализация автотестов + ревью (параллельно с разработкой) |
+| `/conveyor:run-auto-test` | QA | прогон автотестов в Jenkins на стенде (после реализации и автотестов) |
 | `/conveyor:task-status` | любой | сводка по задачам и намерениям |
 
 Естественный язык → команда: «настроить/инициализировать» → setup;
@@ -147,6 +149,7 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 анализ/спецификация» → create-specification; «план» → create-plan;
 «реализуй/напиши код» → implement-plan; «план тестов/что тестировать» →
 create-autotest-plan; «напиши автотесты» → implement-auto-test;
+«запусти автотесты в Jenkins/CI, прогон на стенде» → run-auto-test;
 «статус/сводка задач» → task-status.
 
 Цикл ревью (`core/stages/_review-loop.md`) запускается после фазы A

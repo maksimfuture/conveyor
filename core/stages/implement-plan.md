@@ -109,4 +109,8 @@ plan.md. У BE-задачи их обычно несколько (`backend.core`
 линтеры зелёные во ВСЕХ затронутых репозиториях; цикл ревью пройден (коммит —
 после ревью; нерешённые blocker|major вынесены пользователю); в каждом
 затронутом репозитории есть ветка с коммитами, и она записана в
-`implementBranches`. Следующий шаг — `/conveyor:create-autotest-plan`.
+`implementBranches`. Следующий шаг — `/conveyor:create-autotest-plan`, если
+`autotest-plan.md` ещё нет. QA работает параллельно с разработкой, поэтому
+сверься с meta.json: план автотестов есть, а `implement-auto-test` не
+завершён — `/conveyor:implement-auto-test`; автотесты уже готовы
+(`implement-auto-test.done`) — `/conveyor:run-auto-test`.

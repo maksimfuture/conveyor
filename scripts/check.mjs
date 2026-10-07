@@ -238,6 +238,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan',
     'create-autotest-plan',
     'implement-auto-test',
+    'run-auto-test',
     'task-status',
   ];
   // Порядок смысловой — это порядок конвейера, и в таком виде список этапов
@@ -258,6 +259,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan': 'backend',
     'create-autotest-plan': 'autoTest',
     'implement-auto-test': 'autoTest',
+    'run-auto-test': 'autoTest',
     'task-status': '',
   };
   const reposDiff = STAGE_NAMES.filter((s) => requiredRepoKeys(s, 'BE').join(',') !== wantRepos[s]);
@@ -282,6 +284,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan': { FE: 'frontend', BE: 'backend' },
     'create-autotest-plan': { FE: '', BE: '' },
     'implement-auto-test': { FE: 'autoTest', BE: 'autoTest' },
+    'run-auto-test': { FE: '', BE: '' },
     'task-status': { FE: '', BE: '' },
   };
   const writeDiff = [];
@@ -1253,6 +1256,7 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
   const flatten = (s) => s.replace(/\s+/g, ' ');
   const promptRaw = fs.readFileSync(path.join(root, 'core/prompts/qa-autotest-engineer.md'), 'utf8');
   const stageRaw = fs.readFileSync(path.join(root, 'core/stages/implement-auto-test.md'), 'utf8');
+  const runRaw = fs.readFileSync(path.join(root, 'core/stages/run-auto-test.md'), 'utf8');
   const prompt = flatten(promptRaw);
   const stage = flatten(stageRaw);
   const sect = (raw, name) => flatten(raw.split(/^## /m).find((s) => s.startsWith(name)) || '');
@@ -1349,6 +1353,36 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
+  {
+    const precond = (raw) => flatten((raw.replace(/\r\n/g, '\n').match(/\*\*Предусловие:\*\*[\s\S]*?(?=\n\n)/) || [''])[0]);
+    const gateRe = /stages\['implement-plan'\]\.done/;
+    const planRaw = fs.readFileSync(path.join(root, 'core/stages/create-autotest-plan.md'), 'utf8');
+    const planSkill = flatten(fs.readFileSync(path.join(root, 'adapters/claude-code/skills/create-autotest-plan/SKILL.md'), 'utf8'));
+    const implSkill = flatten(fs.readFileSync(path.join(root, 'adapters/claude-code/skills/implement-auto-test/SKILL.md'), 'utf8'));
+    const planPre = precond(planRaw);
+    const planNoGate = /specification/.test(planPre) && !/implement-plan/.test(planPre);
+    const planSkillNoGate = !/Предусловие — этап implement-plan завершён/.test(planSkill);
+    const waitsDev = /implement-auto-test[^.]{0,120}(заверш\w*|после)[^.]{0,20}implement-plan/;
+    const planBodyNoWait = !waitsDev.test(flatten(planRaw)) && !waitsDev.test(planSkill);
+    const implNoGate = !gateRe.test(precond(stageRaw)) && !gateRe.test(implSkill) && /autotest-plan/.test(precond(stageRaw));
+    const runGate = gateRe.test(precond(runRaw)) && /stages\['implement-auto-test'\]\.done/.test(precond(runRaw));
+    if (planNoGate && planSkillNoGate && planBodyNoWait && implNoGate && runGate)
+      ok('гейт implement-plan — только на run-auto-test; план автотестов и автотесты идут параллельно с разработкой');
+    else
+      bad(
+        'гейт implement-plan — ' +
+          [
+            planNoGate ? null : 'предусловие create-autotest-plan не «спецификация готова» либо всё ещё требует implement-plan',
+            planSkillNoGate ? null : 'SKILL.md create-autotest-plan всё ещё требует implement-plan',
+            planBodyNoWait ? null : 'create-autotest-plan (стейдж или SKILL.md) отправляет на implement-auto-test только после implement-plan',
+            implNoGate ? null : 'implement-auto-test всё ещё требует implement-plan (или не требует план автотестов)',
+            runGate ? null : 'предусловие run-auto-test не требует завершённых implement-plan и implement-auto-test',
+          ]
+            .filter(Boolean)
+            .join('; '),
+      );
+  }
+
   // Колонка «Статус» таблицы автотестов — единственная правка плана после его
   // создания, и договорённость о ней держится только текстом. Раздела с
   // чекбокс-шагами больше нет: команда убрала его, а объём работ и прогресс
@@ -1394,94 +1428,154 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
-  // Прогон автотестов в CI. Порядок шагов держится только текстом стейджа, и
-  // каждое нарушение даёт правдоподобный, но ложный результат:
-  // (1) отчёт раньше ревью — он переписывался бы после каждого исправления;
-  // (2) отчёт позже сборки — потерянный автотест всплывает после прогона,
-  // а он же означает недостающий тег, то есть второй прогон джобы; сборка
-  // при этом идёт долго и не всегда доходит до конца — обрыв уносит отчёт
-  // целиком; (3) «Прогон в CI» дописан раньше сборки — в отчёте не будет её
-  // результата; (4) сборка раньше push — Jenkins соберёт СТАРУЮ ветку из
-  // origin и отчитается зелёным; (5) запуск без разрешения — чужая сборка на
-  // общем агенте; (6) теги без права правки — гоняется не то, что нужно
-  // человеку; (7) без периода опроса «дождись результата» превращается в
-  // бесконечный цикл; (8) отказ от запуска не должен отменять отчёт — иначе
-  // этап заканчивается ничем; (9) без ciPending:false этап закрывается по
-  // отчёту, в котором на месте сборки остался маркер ожидания.
-  //
   // Порядок сверяем по НОМЕРАМ шагов алгоритма, а не по позиции слова в
   // тексте: «джоба» упоминается и там, где её только записывают в отчёт.
-  const algoSteps = (stageRaw.split(/^## /m).find((s) => s.startsWith('Алгоритм')) || '').split(/\n(?=\d+\. )/);
-  const stepIdx = (re) => algoSteps.findIndex((s) => re.test(s));
+  const stepsOf = (raw) => (raw.split(/^## /m).find((s) => s.startsWith('Алгоритм')) || '').split(/\n(?=\d+\. )/);
+  const algoSteps = stepsOf(stageRaw);
+  const stepIdx = (re, steps = algoSteps) => steps.findIndex((s) => re.test(s));
   const iReview = stepIdx(/Цикл ревью/i);
   const iReport = stepIdx(/Отчёт \(без прогона в CI\)/i);
   const iPush = stepIdx(/push/i);
-  const iRun = stepIdx(/Запусти сборку/i);
-  const iFinal = stepIdx(/Дописать «Прогон в CI»/i);
-  const found = [iReview, iReport, iPush, iRun, iFinal].every((i) => i !== -1);
-  const reportAfterReview = found && iReview < iReport;
-  const reportBeforeRun = found && iReport < iRun;
-  const finalAfterRun = found && iRun < iFinal;
-  const pushFirst = found && iPush < iRun;
-  // Сверка с планом обязана идти в шаге отчёта — то есть ДО сборки: в этом и
-  // смысл переноса. Уехав в финализацию, она снова ловила бы потерянный тест
-  // после прогона.
-  const reportStep = found ? algoSteps[iReport] : '';
+  const foundA = [iReview, iReport, iPush].every((i) => i !== -1);
+  const reportAfterReview = foundA && iReview < iReport;
+  const pushAfterReport = foundA && iReport < iPush;
+  const reportStep = foundA ? algoSteps[iReport] : '';
   const planCheckEarly = /validate-artifact/.test(reportStep) && /--plan/.test(reportStep);
-  // Маркер ожидания снимается только фактами сборки, и этап закрывается по
-  // ciPending:false. Без этого промежуточный отчёт неотличим от финального.
-  const pendingGate = /ciPending/.test(stage) && /ожидается прогон в CI/i.test(stage);
-  const askRun = /(разрешени|спроси)\w*[^.]{0,120}(запуск|джоб)/i.test(stage);
-  const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(stage);
-  const poll = /(3 минут|три минут)/i.test(stage);
-  const refusedStillReports = /(отказ|не запускал)\w*[^.]{0,200}отчёт/i.test(stage);
+  const pendingNormal = /ожидается прогон в CI/i.test(stage) && /ciPending: true/.test(stage);
+  const algoA = algoSteps.join('\n');
+  const noJenkinsInA = !/Запусти сборку|TAGS|autoTestJob|3 минут/.test(algoA);
+  const handsOver = /run-auto-test/.test(sect(stageRaw, 'DoD'));
+  if (foundA && reportAfterReview && pushAfterReport && planCheckEarly && pendingNormal && noJenkinsInA && handsOver)
+    ok('implement-auto-test: ревью → отчёт (сверка с планом, маркер ожидания) → push; джобу не запускает, передаёт run-auto-test');
+  else
+    bad(
+      'implement-auto-test: порядок и граница с CI — ' +
+        [
+          foundA ? null : 'шаги алгоритма не опознаны (ревью / отчёт / push)',
+          reportAfterReview ? null : 'отчёт формируется раньше цикла ревью',
+          pushAfterReport ? null : 'push описан раньше отчёта',
+          planCheckEarly ? null : 'сверка отчёта с планом не идёт в шаге отчёта (до сборки)',
+          pendingNormal ? null : 'не сказано, что маркер «ожидается прогон в CI» / ciPending: true — норма этапа',
+          noJenkinsInA ? null : 'в алгоритме остались запуск джобы / TAGS / autoTestJob / опрос',
+          handsOver ? null : 'DoD не называет следующим шагом run-auto-test',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+
+  const run = flatten(runRaw);
+  const runSteps = stepsOf(runRaw);
+  const jStand = stepIdx(/на стенде\?/i, runSteps);
+  const jChecks = stepIdx(/Можно ли запускать джобу/i, runSteps);
+  const jRun = stepIdx(/Запусти сборку/i, runSteps);
+  const jFinal = stepIdx(/Дописать «Прогон в CI»/i, runSteps);
+  const foundB = [jStand, jChecks, jRun, jFinal].every((i) => i !== -1);
+  const standFirst = foundB && jStand < jChecks && jStand < jRun;
+  const pushedChecked =
+    foundB && /git-ops\.mjs" pushed/.test(runSteps[jChecks]) && /checkFailed/.test(runSteps[jChecks]) && jChecks < jRun;
+  const finalAfterRun = foundB && jRun < jFinal;
+  const pendingGate = /ciPending: false/.test(run) && /ожидается прогон в CI/i.test(run);
+  const askRun = /(разрешени|спроси)\w*[^.]{0,120}(запуск|джоб)/i.test(run);
+  const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(run);
+  const poll = /(3 минут|три минут)/i.test(run);
+  const refusedStillReports = /(отказ|не запускал)\w*[^.]{0,200}отчёт/i.test(run);
   // Имён MCP-инструментов плагин не хранит: у каждой команды свой сервер
   // Jenkins, и захардкоженное имя означало бы «работает только у автора».
   // Этап подбирает их в сессии — и обязан пережить случай, когда подбирать
   // нечего: без инструмента запуска сборки нет, но этап не падает.
   const picksTools =
-    /(подбер|подбир|определ|выбер)\w*[^.]{0,80}инструмент/i.test(stage) ||
-    /инструмент\w*[^.]{0,120}(подбер|подбир|определ|выбер)/i.test(stage);
-  const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(stage);
+    /(подбер|подбир|определ|выбер)\w*[^.]{0,80}инструмент/i.test(run) ||
+    /инструмент\w*[^.]{0,120}(подбер|подбир|определ|выбер)/i.test(run);
+  const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(run);
+  const rerun = /ПОВТОРНОМ запуске[^.]{0,250}заменяются целиком/i.test(run);
+  const noPush = /не пушит/i.test(run);
   if (
-    pushFirst &&
-    reportAfterReview &&
-    reportBeforeRun &&
+    foundB &&
+    standFirst &&
+    pushedChecked &&
     finalAfterRun &&
-    planCheckEarly &&
     pendingGate &&
     askRun &&
     askTags &&
     poll &&
     refusedStillReports &&
     picksTools &&
-    noToolsFallback
+    noToolsFallback &&
+    rerun &&
+    noPush
   )
     ok(
-      'implement-auto-test: ревью → отчёт (сверка с планом, маркер ожидания) → push → разрешение → теги → ' +
-        'сборка (опрос раз в 3 минуты) → «Прогон в CI» дописан; отказ не отменяет отчёт',
+      'run-auto-test: «функционал на стенде?» → проверка push (git-ops pushed) → разрешение → теги → ' +
+        'сборка (опрос раз в 3 минуты) → «Прогон в CI» дописан (повтор перезаписывает); отказ не отменяет отчёт',
     );
   else
     bad(
-      'implement-auto-test: прогон в CI — ' +
+      'run-auto-test: прогон в CI — ' +
         [
-          found ? null : 'шаги алгоритма не опознаны (ревью / отчёт / push / запуск сборки / дописывание)',
-          pushFirst ? null : 'запуск джобы описан раньше push',
-          reportAfterReview ? null : 'отчёт формируется раньше цикла ревью',
-          reportBeforeRun ? null : 'отчёт формируется позже запуска сборки',
+          foundB ? null : 'шаги алгоритма не опознаны (стенд / проверки / запуск сборки / дописывание)',
+          standFirst ? null : 'вопрос «функционал на стенде?» не стоит перед запуском',
+          pushedChecked ? null : 'push не проверяется через git-ops pushed (с разбором checkFailed) до запуска',
           finalAfterRun ? null : '«Прогон в CI» дописывается раньше сборки',
-          planCheckEarly ? null : 'сверка отчёта с планом не идёт в шаге отчёта (до сборки)',
-          pendingGate ? null : 'нет маркера «ожидается прогон в CI» / проверки ciPending',
+          pendingGate ? null : 'нет проверки ciPending: false после дописывания',
           askRun ? null : 'не спрашивается разрешение на запуск джобы',
           askTags ? null : 'пользователю не предлагается изменить теги',
           poll ? null : 'не указан опрос статуса раз в 3 минуты',
-          refusedStillReports ? null : 'не сказано, что при отказе отчёт всё равно формируется',
+          refusedStillReports ? null : 'не сказано, что при отказе причина всё равно идёт в отчёт',
           picksTools ? null : 'этап не подбирает MCP-инструменты сам',
           noToolsFallback ? null : 'не описан случай «подходящих инструментов нет»',
+          rerun ? null : 'не описан повторный запуск (строки раздела заменяются целиком)',
+          noPush ? null : 'не сказано, что этап сам не пушит',
         ]
           .filter(Boolean)
           .join('; '),
     );
+}
+
+console.log('git-ops pushed — ветка автотестов в origin:');
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-pushed-'));
+  const origin = path.join(tmp, 'origin.git');
+  const work = path.join(tmp, 'work');
+  const g = (cwd, a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+  const commit = (msg) =>
+    g(work, ['-c', 'user.email=check@conveyor.local', '-c', 'user.name=check', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', msg]);
+  fs.mkdirSync(work);
+  g(tmp, ['init', '--quiet', '--bare', origin]);
+  g(work, ['init', '--quiet']);
+  g(work, ['remote', 'add', 'origin', origin]);
+  commit('init');
+  g(work, ['checkout', '--quiet', '-b', 'TASK-1-autotests']);
+  const pushed = () => JSON.parse(runScript('core/scripts/git-ops.mjs', ['pushed', '--path', work, '--branch', 'TASK-1-autotests']) || '{}');
+  const absent = pushed();
+  g(work, ['push', '--quiet', 'origin', 'TASK-1-autotests']);
+  const same = pushed();
+  commit('ahead');
+  const ahead = pushed();
+  const missing = JSON.parse(runScript('core/scripts/git-ops.mjs', ['pushed', '--path', work, '--branch', 'nope']) || '{}');
+  g(work, ['push', '--quiet', 'origin', 'TASK-1-autotests']);
+  g(origin, ['branch', '--quiet', '-D', 'TASK-1-autotests']);
+  const staleRef = g(work, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/TASK-1-autotests']).status === 0;
+  const deleted = pushed();
+  g(work, ['checkout', '--quiet', '-b', 'TASK-2-autotests']);
+  g(work, ['remote', 'set-url', 'origin', path.join(tmp, 'no-such-origin.git')]);
+  const broken = JSON.parse(runScript('core/scripts/git-ops.mjs', ['pushed', '--path', work, '--branch', 'TASK-2-autotests']) || '{}');
+  const missingBroken = JSON.parse(runScript('core/scripts/git-ops.mjs', ['pushed', '--path', work, '--branch', 'nope']) || '{}');
+  if (
+    absent.ok === true && absent.pushed === false && absent.checkFailed === false && absent.reason === 'ветки нет в origin' && absent.warnings.length === 0 &&
+    same.ok === true && same.pushed === true && same.checkFailed === false && same.ahead === 0 &&
+    ahead.ok === true && ahead.pushed === false && ahead.checkFailed === false && ahead.ahead === 1 &&
+    missing.ok === false &&
+    staleRef && deleted.ok === true && deleted.pushed === false && deleted.checkFailed === false && deleted.reason === 'ветки нет в origin' &&
+    broken.ok === true && broken.pushed === false && broken.checkFailed === true && broken.warnings.length === 1 &&
+    missingBroken.ok === false && /локальной ветки/.test(missingBroken.error || '')
+  )
+    ok(
+      'git-ops pushed: нет в origin → false без warning; совпадает → true; локальная впереди → false (ahead=1); ' +
+        'удалена в origin при живом tracking-ref → false; нет локальной ветки → ошибка до сети; ' +
+        'origin недоступен → checkFailed:true, а не «ветки нет»',
+    );
+  else bad('git-ops pushed: ' + JSON.stringify({ absent, same, ahead, missing, staleRef, deleted, broken, missingBroken }));
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 // 2n) Стейдж /setup создаёт то, из чего потом читает ВЕСЬ плагин, и выполняет
@@ -3985,9 +4079,11 @@ try {
   // placeholders — /create-plan.
   {
     const reviewStages = ['create-specification', 'implement-plan', 'implement-auto-test'];
+    const appendStages = ['run-auto-test'];
     const offenders = [];
     for (const [stage, arts] of Object.entries(STAGE_ARTIFACTS)) {
       if (reviewStages.includes(stage)) continue; // этап сам гоняет ревью — заполнит
+      if (appendStages.includes(stage)) continue;
       for (const art of arts) {
         const tplPath = path.join(root, 'core/templates', art);
         if (!fs.existsSync(tplPath)) continue;

@@ -98,9 +98,9 @@
    systemsAnalysis).
 4. Заведи задачу(и) — запиши `meta.json` со скелетом: `schemaVersion: 2`,
    `taskId`, `type`, `title`, `intentId`, `relatedTaskId` (для пары; иначе
-   `null`) и пять этапов со `done: false` — `specification` (плюс
+   `null`) и шесть этапов со `done: false` — `specification` (плюс
    `analysisDone: false`, `specDone: false`), `plan`, `implement-plan`,
-   `autotest-plan`, `implement-auto-test`. Каталог
+   `autotest-plan`, `implement-auto-test`, `run-auto-test`. Каталог
    `docs/specs/tasks/<FE|BE>/<TASK-ID>/` отдельным шагом НЕ создаётся: он
    появляется при записи `meta.json` (Write). `mkdir` по этому пути guard
    запрещает — в папке задачи разрешены только `*.md` и `meta.json`, а подсказка отказа
@@ -197,7 +197,9 @@
     предлагать повторить спецификацию для неё. Сними рабочую область
     (`scope.mjs clear`) и покажи сводку: изменённые документы анализа и
     ветка, резюме спецификации, итог ревью, открытые вопросы. Следующий шаг
-    — `/conveyor:create-plan`.
+    — `/conveyor:create-plan` (разработчик) и параллельно
+    `/conveyor:create-autotest-plan` (QA): плану автотестов нужна только
+    готовая спецификация.
 
 ## Ошибки
 - аргумент не опознан — нет ни `intents/<аргумент>/intent.md`, ни
@@ -234,4 +236,4 @@ TASK-ID из 1.x, он так и остаётся `null` — intent'а для н
 по шаблону и прошёл валидацию, остатки каркаса (`placeholders`) устранены
 либо показаны пользователю; цикл ревью пройден (нерешённые blocker|major
 вынесены пользователю); рабочая область снята. Следующий шаг —
-`/conveyor:create-plan`.
+`/conveyor:create-plan` и параллельно `/conveyor:create-autotest-plan`.

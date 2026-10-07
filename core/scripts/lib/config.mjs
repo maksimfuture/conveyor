@@ -220,6 +220,7 @@ export const STAGE_NAMES = [
   'implement-plan',
   'create-autotest-plan',
   'implement-auto-test',
+  'run-auto-test',
   'task-status',
 ];
 
@@ -558,6 +559,7 @@ export function requiredRepoKeys(stage, taskType) {
       return [code];
     case 'create-autotest-plan':
     case 'implement-auto-test':
+    case 'run-auto-test':
       return ['autoTest'];
     default:
       return [];
@@ -606,7 +608,7 @@ export function stageWriteRepoKeys(stage, taskType) {
       return [code];
     case 'implement-auto-test':
       return ['autoTest'];
-    // setup, task-status, intent, create-plan, create-autotest-plan:
+    // setup, task-status, intent, create-plan, create-autotest-plan, run-auto-test:
     // artifacts only — no repo writes.
     default:
       return [];
@@ -756,6 +758,7 @@ export const STAGE_ARTIFACTS = {
   'implement-plan': ['plan.md'],
   'create-autotest-plan': ['autotest-plan.md'],
   'implement-auto-test': ['report-auto-test.md'],
+  'run-auto-test': ['report-auto-test.md'],
   'task-status': [],
 };
 

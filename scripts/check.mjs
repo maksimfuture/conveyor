@@ -700,6 +700,39 @@ console.log('Стейдж intent — остатки каркаса шаблон�
     );
 }
 
+console.log('Шаблон intent — остатки старых разделов и метка «не найдено»:');
+{
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mjs|json)$/.test(e.name)) files.push(p);
+    }
+  };
+  walk(path.join(root, 'core'));
+  walk(path.join(root, 'adapters'));
+  const gone = ['Источники в анализе', 'Проблема и контекст', 'Бизнес-ценность'];
+  const stale = [];
+  for (const file of files) {
+    const txt = fs.readFileSync(file, 'utf8').replace(/\s+/g, ' ');
+    for (const g of gone) if (txt.includes(g)) stale.push(`${path.relative(root, file).split(path.sep).join('/')}: «${g}»`);
+  }
+  if (!stale.length) ok(`intent: старые разделы (${gone.join(', ')}) нигде не упоминаются`);
+  else bad('intent: упоминания удалённых разделов — ' + stale.join('; '));
+
+  const MARK = 'В анализе не найдено:';
+  const sides = [
+    'core/prompts/business-analyst.md',
+    'adapters/claude-code/agents/business-analyst.md',
+    'core/prompts/system-analyst.md',
+    'adapters/claude-code/agents/system-analyst.md',
+  ];
+  const noMark = sides.filter((rel) => !fs.readFileSync(path.join(root, rel), 'utf8').replace(/\s+/g, ' ').includes(MARK));
+  if (!noMark.length) ok(`intent: метку «${MARK}» знают и бизнес-, и системный аналитик`);
+  else bad(`intent: метки «${MARK}» нет в: ` + noMark.join(', '));
+}
+
 // 2g) Стейдж create-specification — единственный этап, который ПИШЕТ в чужой
 // репозиторий, и самый дорогой в конвейере. Проверяем не «текст красивый», а
 // пять свойств, потерю которых пользователь замечает уже после испорченной
@@ -4554,11 +4587,10 @@ try {
 
   const intentPath = path.join(tmp, 'intent-test.md');
   const intentSections = [
-    '## Проблема и контекст',
-    '## Бизнес-ценность',
+    '## Процесс AS IS',
+    '## Описание процесса TO BE',
     '## Границы',
     '## Критерии приёмки',
-    '## Источники в анализе',
     '## Открытые вопросы',
   ];
 

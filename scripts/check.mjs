@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { validateTmsConfig, TMS_CONFIG_PATH } from '../core/scripts/lib/tms-config.mjs';
 import {
   scopeFilePath,
   ARTIFACT_DIRS,
@@ -103,6 +104,7 @@ for (const rel of [
   'adapters/claude-code/hooks/hooks.json',
   'adapters/gigacode/gigacode-extension.json',
   'core/templates/settings.example.json',
+  'core/templates/tms.example.json',
   'package.json',
 ]) {
   try {
@@ -238,6 +240,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan',
     'create-autotest-plan',
     'implement-auto-test',
+    'update-tms',
     'run-auto-test',
     'task-status',
   ];
@@ -259,6 +262,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan': 'backend',
     'create-autotest-plan': 'autoTest',
     'implement-auto-test': 'autoTest',
+    'update-tms': 'autoTest',
     'run-auto-test': 'autoTest',
     'task-status': '',
   };
@@ -284,6 +288,7 @@ console.log('hooks.json — включение защиты:');
     'implement-plan': { FE: 'frontend', BE: 'backend' },
     'create-autotest-plan': { FE: '', BE: '' },
     'implement-auto-test': { FE: 'autoTest', BE: 'autoTest' },
+    'update-tms': { FE: 'autoTest', BE: 'autoTest' },
     'run-auto-test': { FE: '', BE: '' },
     'task-status': { FE: '', BE: '' },
   };
@@ -4112,7 +4117,9 @@ try {
   // placeholders — /create-plan.
   {
     const reviewStages = ['create-specification', 'implement-plan', 'implement-auto-test'];
-    const appendStages = ['run-auto-test'];
+    // Этапы, которые ПРАВЯТ готовый артефакт, а не производят его по шаблону:
+    // run-auto-test дописывает «Прогон в CI», update-tms меняет ID тестов.
+    const appendStages = ['run-auto-test', 'update-tms'];
     const offenders = [];
     for (const [stage, arts] of Object.entries(STAGE_ARTIFACTS)) {
       if (reviewStages.includes(stage)) continue; // этап сам гоняет ревью — заполнит
@@ -5519,6 +5526,328 @@ try {
   }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ---- /conveyor:update-tms: план автотестов → Zephyr --------------------------
+//
+// Скрипт tms-cases.mjs — единственное, что стоит между таблицей плана и
+// кейсами в Zephyr. Ошибись разбор шагов — в TMS уйдёт другой кейс; ошибись
+// граница ID — `T999-1` испортит `T999-10` в коде автотестов; пиши он мимо
+// рабочей области — guard-хуки (они видят только `node …`) его не остановят.
+console.log('update-tms: разбор плана, учёт ключей, замена заглушек:');
+{
+  const tmsWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-tms-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-tms-out-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmsWs, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'PROJ',
+        repos: {
+          autoTest: {
+            link: 'repos/autotests',
+            mainBranch: 'main',
+            linkTMS: 'https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=329301',
+          },
+        },
+      }),
+    );
+    const taskDir = path.join(tmsWs, ...TASKS_DIR.split('/'), 'FE', 'PROJ-7');
+    const repo = path.join(tmsWs, 'repos', 'autotests');
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify({ schemaVersion: 2, taskId: 'PROJ-7', type: 'FE', stages: {} }));
+    const plan = [
+      '# План автотестов: x (PROJ-7)',
+      '',
+      '## Тест-кейсы',
+      '',
+      '| ID | Вид тестирования | Уровень | Название | Шаги | Ожидаемый результат | REQ-ID | Автотест |',
+      '|---|---|---|---|---|---|---|---|',
+      '| PROJ-T999-1 | НФ | API | Создание `create` | 1) Создать задачу (200) 2) Вызвать `a\\|b` 3) Выгрузить логи | 1) Задача создана (200) 2) Ответ 200 3) Записи найдены | REQ-1 | да |',
+      '| PROJ-T999-10 | НФ | E2E | Форма | Открыть форму | Ошибка показана | REQ-2 | нет |',
+      '| PROJ-T113 | Регресс | UI | Старый кейс | 1) a 2) b | Всё хорошо | REQ-3 | да |',
+      '',
+      '## Автотесты',
+      '',
+      '| ID | Вид тестирования | Уровень | Класс | Реализация | REQ-ID | Статус |',
+      '|---|---|---|---|---|---|---|',
+      '| PROJ-T999-1 | НФ | API | `A.java` | создать | REQ-1 | [x] |',
+      '| PROJ-T113 | Регресс | UI | `B.java` | без правок | REQ-3 | [ ] |',
+      '',
+      '## Тестовые данные и окружение',
+      '- **Стенд:** ift',
+      '- **Данные и фикстуры:** <файлы>',
+      '',
+    ].join('\n');
+    fs.writeFileSync(path.join(taskDir, 'autotest-plan.md'), plan);
+    fs.writeFileSync(path.join(taskDir, 'report-auto-test.md'), '| PROJ-T999-1 | ok |\n| PROJ-T999-10 | — |\n');
+    // Заглушки в коде: в @TmsLink (меняются), в комментарии и константе
+    // (скрипт их не трогает, но обязан показать) и чужая T999-3 (пришла из
+    // основной ветки, этап ею не блокируется).
+    const java = [
+      'class A {',
+      '  @TmsLink("PROJ-T999-1") void a() {}',
+      '  @TmsLink(value = "PROJ-T999-10") void b() {}',
+      '  // PROJ-T999-1 в комментарии не меняется',
+      '  @TmsLink("PROJ-T999-3") void c() {}',
+      '}',
+      '',
+    ].join('\n');
+    const ids = 'class Ids {\n  static final String CREATE = "PROJ-T999-1";\n}\n';
+    fs.writeFileSync(path.join(repo, 'src', 'A.java'), java);
+    fs.writeFileSync(path.join(repo, 'src', 'Ids.java'), ids);
+    // Конвенции полей Zephyr — в репозитории автотестов, не в плагине.
+    const tmsConf = {
+      namePrefix: 'В работе | ',
+      priority: 'Normal',
+      status: 'Approved',
+      fields: {
+        kind: { name: 'Вид тестирования', values: { НФ: 'Новый функционал', Регресс: 'Регресс' } },
+        automated: { name: 'Автоматизирован', values: { done: 'Да', planned: 'На автоматизации', no: 'Нет' } },
+        level: { name: 'Уровень теста', values: { api: 'API', DB: 'DB', UI: 'UI' } },
+      },
+      constantFields: { Актуальный: 'Да', Команда: 'Команда X' },
+      fieldsByTaskType: { FE: { АС: 'АС FE' }, BE: { АС: 'АС BE' } },
+    };
+    const tmsConfPath = path.join(repo, ...TMS_CONFIG_PATH.split('/'));
+    // Настоящий git: check-diff смотрит в git status / git diff.
+    const g = (...args) =>
+      execFileSync('git', ['-c', 'user.email=check@conveyor', '-c', 'user.name=check', '-c', 'core.autocrlf=false', ...args], {
+        cwd: repo,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    g('init', '-q');
+    g('add', '-A');
+    g('commit', '-q', '-m', 'init');
+
+    const tms = (args, cwd) => {
+      const r = runScriptFull('core/scripts/tms-cases.mjs', args, '', cwd || tmsWs);
+      try {
+        return { ...JSON.parse(r.stdout), status: r.status };
+      } catch {
+        return { ok: undefined, status: r.status, raw: r.stdout + r.stderr };
+      }
+    };
+
+    // Конфига нет — parse останавливается и называет образец. pending
+    // работает и без него и смотрит не только план, но и код: чужая
+    // заглушка (T999-3) — отдельно и не в pending.
+    const noConf = tms(['parse', '--task', taskDir]);
+    const pendNoConf = tms(['pending', '--task', taskDir]);
+    if (
+      noConf.ok === false && noConf.status === 1 && /tms\.example\.json/.test(noConf.error || '') &&
+      pendNoConf.ok === true && (pendNoConf.pending || []).join(',') === 'PROJ-T999-1,PROJ-T999-10' &&
+      /PROJ-T999-3/.test((pendNoConf.foreignPlaceholders || []).join(','))
+    )
+      ok('tms-cases: без .conveyor/tms.json parse останавливается с образцом; pending — по плану и коду, чужие заглушки отдельно');
+    else bad('tms-cases без конфига: ' + JSON.stringify({ noConf, pendNoConf }));
+    fs.mkdirSync(path.dirname(tmsConfPath), { recursive: true });
+    fs.writeFileSync(tmsConfPath, JSON.stringify({ ...tmsConf, fields: { ...tmsConf.fields, automated: { name: 'Автоматизирован', values: { done: 'Да' } } } }));
+    const badConf = tms(['parse', '--task', taskDir]);
+    if (badConf.ok === false && ((badConf.tmsConfig || {}).errors || []).some((e) => /automated\.values\.planned/.test(e)))
+      ok('tms-cases: неполный конфиг — ok:false с названным полем');
+    else bad('tms-cases неполный конфиг: ' + JSON.stringify(badConf));
+    fs.writeFileSync(tmsConfPath, JSON.stringify(tmsConf, null, 2));
+    g('add', '-A');
+    g('commit', '-q', '-m', 'tms.json');
+
+    const p = tms(['parse', '--task', taskDir]);
+    const c1 = (p.cases || []).find((c) => c.id === 'PROJ-T999-1') || {};
+    const c10 = (p.cases || []).find((c) => c.id === 'PROJ-T999-10') || {};
+    const c113 = (p.cases || []).find((c) => c.id === 'PROJ-T113') || {};
+    const s1 = (c1.testCase || {}).steps || [];
+    const cf1 = (c1.testCase || {}).customFields || {};
+    if (
+      p.ok === true &&
+      p.projectKey === 'PROJ' &&
+      p.projectId === '329301' &&
+      /Tests\.jspa/.test(p.tmsUrl || '') &&
+      s1.length === 3 &&
+      s1[0].description === 'Создать задачу (200)' &&
+      s1[1].description === 'Вызвать a|b' &&
+      s1[2].expectedResult === 'Записи найдены' &&
+      c1.testCase.name === 'В работе | Создание create' &&
+      c1.testCase.title === 'Создание create' &&
+      c1.testCase.precondition === 'Стенд: ift'
+    )
+      ok('tms-cases parse: linkTMS и projectId; шаги и ожидание по номерам; название и отдельно title без префикса (для поиска дубля)');
+    else bad('tms-cases parse: шаги/поля — ' + JSON.stringify({ ok: p.ok, steps: s1, testCase: c1.testCase, raw: p.raw }));
+    const s10 = (c10.testCase || {}).steps || [];
+    if (s10.length === 1 && s10[0].expectedResult === 'Ошибка показана')
+      ok('tms-cases parse: кейс без нумерации — один шаг с ожиданием целиком');
+    else bad('tms-cases parse: ненумерованный кейс — ' + JSON.stringify(s10));
+    if (
+      cf1['Вид тестирования'] === 'Новый функционал' &&
+      cf1['Автоматизирован'] === 'Да' &&
+      cf1['АС'] === 'АС FE' &&
+      cf1['Команда'] === 'Команда X' &&
+      cf1['Уровень теста'] === 'API' &&
+      ((c10.testCase || {}).customFields || {})['Уровень теста'] === null &&
+      ((c10.testCase || {}).customFields || {})['Автоматизирован'] === 'Нет'
+    )
+      ok('tms-cases parse: поля из .conveyor/tms.json — НФ/Регресс, «Автоматизирован» по колонке и [x], поля по типу задачи, уровень без регистра');
+    else bad('tms-cases parse: кастомные поля — ' + JSON.stringify([cf1, (c10.testCase || {}).customFields]));
+    // Регресс с «[ ]» в этой задаче мог быть автоматизирован в другой: у
+    // существующего кейса поле автоматизации только повышается.
+    if (
+      !c1.raiseOnly &&
+      c113.raiseOnly && c113.raiseOnly.field === 'Автоматизирован' && c113.raiseOnly.value === 'На автоматизации' &&
+      ((p.automatedRank || {}).order || []).join(',') === 'Нет,На автоматизации,Да'
+    )
+      ok('tms-cases parse: у существующего кейса «Автоматизирован» помечен raiseOnly, порядок значений — в automatedRank');
+    else bad('tms-cases parse: raiseOnly — ' + JSON.stringify({ c1: c1.raiseOnly, c113: c113.raiseOnly, rank: p.automatedRank }));
+    if (c1.kind === 'new' && c113.kind === 'existing' && (p.pending || []).join(',') === 'PROJ-T999-1,PROJ-T999-10')
+      ok('tms-cases parse: заглушки — new и в pending, настоящий ключ — existing');
+    else bad('tms-cases parse: виды кейсов — ' + JSON.stringify({ c1: c1.kind, c113: c113.kind, pending: p.pending }));
+
+    // record: ключ пишется в meta.json, один ключ — одной заглушке; кейс,
+    // найденный поиском, помечается взятым и своим не становится.
+    const r1 = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-1', '--key', 'PROJ-T700']);
+    const rDup = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-10', '--key', 'PROJ-T700']);
+    const rForeign = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-10', '--key', 'OTHER-T5']);
+    const r10 = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-10', '--key', 'PROJ-T701', '--adopted']);
+    const rAgain = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-1', '--key', 'PROJ-T700']);
+    const rFlip = tms(['record', '--task', taskDir, '--id', 'PROJ-T999-10', '--key', 'PROJ-T701']);
+    const meta1 = JSON.parse(fs.readFileSync(path.join(taskDir, 'meta.json'), 'utf8'));
+    const metaMap = meta1.tmsCases || {};
+    if (
+      r1.ok && r10.ok && rAgain.ok && rAgain.changed === false &&
+      rDup.ok === false && rDup.status === 1 && rForeign.ok === false && rFlip.ok === false &&
+      metaMap['PROJ-T999-1'] === 'PROJ-T700' && metaMap['PROJ-T999-10'] === 'PROJ-T701' &&
+      (meta1.tmsAdopted || []).join(',') === 'PROJ-T701'
+    )
+      ok('tms-cases record: ключ в tmsCases, взятый кейс — ещё и в tmsAdopted; повтор без изменений; чужой ключ и смена признака отвергнуты');
+    else bad('tms-cases record: ' + JSON.stringify({ r1, rDup, rForeign, r10, rAgain, rFlip, meta1 }));
+    const pm = tms(['parse', '--task', taskDir]);
+    const m1 = (pm.cases || []).find((c) => c.id === 'PROJ-T999-1') || {};
+    const m10 = (pm.cases || []).find((c) => c.id === 'PROJ-T999-10') || {};
+    if (m1.createdByConveyor === true && m10.adopted === true && m10.createdByConveyor === false)
+      ok('tms-cases parse: созданный этапом кейс — свой, взятый по поиску — чужой (план его целиком не переписывает)');
+    else bad('tms-cases parse: свой/взятый — ' + JSON.stringify({ m1, m10 }));
+
+    // Без конфигурации запись не проверить — значит, её нет (fail-closed):
+    // папка задачи вне рабочего репозитория.
+    const outTask = path.join(outside, 'PROJ-8');
+    fs.mkdirSync(outTask);
+    const outMeta = JSON.stringify({ taskId: 'PROJ-8', type: 'FE' });
+    fs.writeFileSync(path.join(outTask, 'meta.json'), outMeta);
+    const outRec = tms(['record', '--task', outTask, '--id', 'PROJ-T999-1', '--key', 'PROJ-T9'], outside);
+    if (outRec.ok === false && /заблокирована/.test(outRec.error || '') && fs.readFileSync(path.join(outTask, 'meta.json'), 'utf8') === outMeta)
+      ok('tms-cases: вне рабочего репозитория запись отвергается, а не идёт без проверки');
+    else bad('tms-cases вне рабочего репозитория: ' + JSON.stringify(outRec));
+
+    // Репозиторий проверяется ДО записи: битый --repo не оставляет план с
+    // ключами при коде с заглушками.
+    const planBefore = fs.readFileSync(path.join(taskDir, 'autotest-plan.md'), 'utf8');
+    const badRepo = tms(['apply', '--task', taskDir, '--repo', outside]);
+    if (badRepo.ok === false && fs.readFileSync(path.join(taskDir, 'autotest-plan.md'), 'utf8') === planBefore)
+      ok('tms-cases apply: рабочая копия не найдена — остановка до первой записи, план не тронут');
+    else bad('tms-cases apply с битым --repo: ' + JSON.stringify(badRepo));
+
+    // apply без рабочей области: в рабочую копию автотестов не пишет.
+    const noScope = tms(['apply', '--task', taskDir, '--repo', repo]);
+    if (noScope.ok === false && (noScope.denied || []).length && fs.readFileSync(path.join(repo, 'src', 'A.java'), 'utf8') === java)
+      ok('tms-cases apply: без рабочей области код автотестов не тронут (запись через checkWrite)');
+    else bad('tms-cases apply без области: ' + JSON.stringify(noScope));
+
+    // apply в области update-tms: граница ID, только @TmsLink, остатки.
+    runScript('core/scripts/scope.mjs', ['set', '--stage', 'update-tms', '--type', 'FE', '--task', 'PROJ-7'], '', tmsWs);
+    try {
+      const ap = tms(['apply', '--task', taskDir]);
+      const javaAfter = fs.readFileSync(path.join(repo, 'src', 'A.java'), 'utf8');
+      const planAfter = fs.readFileSync(path.join(taskDir, 'autotest-plan.md'), 'utf8');
+      const reportAfter = fs.readFileSync(path.join(taskDir, 'report-auto-test.md'), 'utf8');
+      const left = (ap.leftovers || {}).repo || [];
+      if (
+        ap.ok === true &&
+        javaAfter.includes('@TmsLink("PROJ-T700")') &&
+        javaAfter.includes('@TmsLink(value = "PROJ-T701")') &&
+        javaAfter.includes('// PROJ-T999-1 в комментарии') &&
+        javaAfter.includes('@TmsLink("PROJ-T999-3")') &&
+        fs.readFileSync(path.join(repo, 'src', 'Ids.java'), 'utf8') === ids &&
+        !/PROJ-T999-1\b|PROJ-T999-10/.test(planAfter) &&
+        reportAfter.includes('| PROJ-T701 |') &&
+        !/PROJ-T7000|PROJ-T7010/.test(planAfter + reportAfter + javaAfter) &&
+        (ap.repoFiles || []).join(',') === 'src/A.java' &&
+        left.some((l) => /^src\/A\.java: PROJ-T999-1$/.test(l)) &&
+        left.some((l) => /^src\/Ids\.java: PROJ-T999-1$/.test(l)) &&
+        /PROJ-T999-3/.test(((ap.leftovers || {}).foreign || []).join(','))
+      )
+        ok('tms-cases apply: репозиторий из настроек; T999-1 не задевает T999-10; меняется только @TmsLink; заглушки в комментарии и константе — в leftovers.repo, чужая — в foreign');
+      else bad('tms-cases apply: ' + JSON.stringify({ ap, javaAfter, planAfter: planAfter.slice(0, 400), reportAfter }));
+
+      // Перед коммитом: изменены только строки @TmsLink.
+      const diffOk = tms(['check-diff', '--task', taskDir]);
+      if (diffOk.ok === true && (diffOk.files || []).join(',') === 'src/A.java')
+        ok('tms-cases check-diff: после apply в рабочей копии изменены только строки @TmsLink');
+      else bad('tms-cases check-diff после apply: ' + JSON.stringify(diffOk));
+      fs.writeFileSync(path.join(repo, 'src', 'New.java'), 'class New {}\n');
+      const diffNew = tms(['check-diff', '--task', taskDir]);
+      if (diffNew.ok === false && diffNew.status === 1 && (diffNew.violations || []).some((x) => /New\.java: новый файл/.test(x)))
+        ok('tms-cases check-diff: новый файл в рабочей копии — нарушение');
+      else bad('tms-cases check-diff с новым файлом: ' + JSON.stringify(diffNew));
+      fs.rmSync(path.join(repo, 'src', 'New.java'));
+      fs.writeFileSync(path.join(repo, 'src', 'A.java'), javaAfter.replace('// PROJ-T999-1 в комментарии', '// правка комментария'));
+      const diffLine = tms(['check-diff', '--task', taskDir]);
+      if (diffLine.ok === false && (diffLine.violations || []).some((x) => /A\.java: изменена строка не с @TmsLink/.test(x)))
+        ok('tms-cases check-diff: изменённая строка без @TmsLink — нарушение, коммита не будет');
+      else bad('tms-cases check-diff с посторонней правкой: ' + JSON.stringify(diffLine));
+
+      // pending: пока своя заглушка жива в коде (константа), этап не done —
+      // даже когда в плане их уже нет. Чужая T999-3 done не блокирует.
+      const pend1 = tms(['pending', '--task', taskDir]);
+      fs.writeFileSync(path.join(repo, 'src', 'Ids.java'), ids.replace('PROJ-T999-1', 'PROJ-T700'));
+      const pend2 = tms(['pending', '--task', taskDir]);
+      if (
+        (pend1.pending || []).join(',') === 'PROJ-T999-1' && ((pend1.pendingIn || {}).plan || []).length === 0 &&
+        (pend2.pending || []).length === 0 && /PROJ-T999-3/.test((pend2.foreignPlaceholders || []).join(','))
+      )
+        ok('tms-cases pending: своя заглушка в коде держит этап незавершённым при чистом плане; чужая — только предупреждение');
+      else bad('tms-cases pending по коду: ' + JSON.stringify({ pend1, pend2 }));
+
+      const again = tms(['apply', '--task', taskDir]);
+      if (again.ok && !(again.changed || []).length) ok('tms-cases: повторный apply ничего не меняет');
+      else bad('tms-cases повтор apply: ' + JSON.stringify(again.changed));
+    } finally {
+      runScript('core/scripts/scope.mjs', ['clear'], '', tmsWs);
+    }
+
+    // Образец: заглушки не проходят (ушли бы в Zephyr буквально), а
+    // заполненный образец — валидный конфиг: в нём есть все обязательные ключи.
+    const exText = fs.readFileSync(path.join(root, 'core/templates/tms.example.json'), 'utf8');
+    const exRaw = validateTmsConfig(JSON.parse(exText));
+    let n = 0;
+    const exFilled = validateTmsConfig(JSON.parse(exText.replace(/<[^>]+>/g, () => `значение ${++n}`)));
+    if (exRaw.errors.some((e) => /из образца/.test(e)) && !exFilled.errors.length)
+      ok('tms.example.json: незаполненный образец отвергается, заполненный — валидный конфиг');
+    else bad('tms.example.json: ' + JSON.stringify({ raw: exRaw.errors.slice(0, 3), filled: exFilled.errors }));
+
+    // Конвенции команды живут в её репозитории: в коде плагина их быть не должно.
+    const leaked = [];
+    const scan = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const pth = path.join(dir, e.name);
+        if (e.isDirectory()) scan(pth);
+        else if (e.name.endsWith('.mjs') && /Tiering|CI\d{8}|В работе \||'Автоматизирован'|'Новый функционал'/.test(fs.readFileSync(pth, 'utf8')))
+          leaked.push(path.relative(root, pth));
+      }
+    };
+    scan(path.join(root, 'core/scripts'));
+    if (!leaked.length) ok('core/scripts: нет значений полей Zephyr команды — они в .conveyor/tms.json репозитория автотестов');
+    else bad('в коде плагина остались конвенции команды: ' + leaked.join(', '));
+
+    // Сломанный план не выгружается: строка разъехалась на лишнюю колонку.
+    fs.writeFileSync(path.join(taskDir, 'autotest-plan.md'), plan.replace('Вызвать `a\\|b`', 'Вызвать a|b'));
+    const broken = tms(['parse', '--task', taskDir]);
+    if (broken.ok === false && broken.status === 1 && (broken.problems || []).some((x) => /число ячеек/.test(x)))
+      ok('tms-cases parse: неэкранированный «|» — ok:false с причиной, кейс не выгружается со сдвигом колонок');
+    else bad('tms-cases parse на сломанной строке: ' + JSON.stringify(broken.problems || broken.raw));
+  } finally {
+    fs.rmSync(tmsWs, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 }
 
 console.log('');

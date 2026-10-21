@@ -26,9 +26,10 @@
    `found`, `workspaceRoot`, `config`, `units`, `codebase`, `links`,
    `missingLinks`, `urlLinks`, `configErrors`, `fastMode`;
    `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch,
-   pipelineUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
+   pipelineUrl, tmsUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
    `repos.<ключ>.linkPipelineAutoTest`; заполнен только у `autoTest`, пустая
-   строка = джоба не настроена).
+   строка = джоба не настроена; `tmsUrl` — ссылка на тест-кейсы проекта в
+   Zephyr из `repos.autoTest.linkTMS`, пустая строка = TMS не настроена).
    Реакция:
    - `found:false` — останови этап: «здесь не инициализирован рабочий
      репозиторий conveyor, запустите /conveyor:setup»;
@@ -85,6 +86,7 @@
 | implement-plan | кодовая база по типу задачи + plan.md | код — ТОЛЬКО репозитории из plan.md + артефакты |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты задачи | — (только артефакты) |
 | implement-auto-test | автотесты (autoTest) + autotest-plan.md | автотесты + артефакты |
+| update-tms | агента нет; команда читает план, пишет в Zephyr через MCP | автотесты (запись открыта целиком; код меняет только скрипт — ID в `@TmsLink`, `check-diff` перед коммитом) + ID в плане/отчёте + meta.json |
 | run-auto-test | агента нет; команда читает ветку автотестов (теги) | — (только «Прогон в CI» отчёта + meta.json) |
 
 Колонки — про АГЕНТА: сама команда может читать кодовую базу для подготовки
@@ -141,6 +143,7 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 | `/conveyor:implement-plan` | разработчик | реализация в ветке задачи + ревью |
 | `/conveyor:create-autotest-plan` | QA | план автотестов по спецификации (сразу после спецификации, параллельно с разработкой) |
 | `/conveyor:implement-auto-test` | QA | реализация автотестов + ревью (параллельно с разработкой) |
+| `/conveyor:update-tms` | QA | тест-кейсы плана в Zephyr: создать новые, поправить существующие, ключи вместо заглушек в @TmsLink |
 | `/conveyor:run-auto-test` | QA | прогон автотестов в Jenkins на стенде (после реализации и автотестов) |
 | `/conveyor:task-status` | любой | сводка по задачам и намерениям |
 
@@ -149,6 +152,7 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 анализ/спецификация» → create-specification; «план» → create-plan;
 «реализуй/напиши код» → implement-plan; «план тестов/что тестировать» →
 create-autotest-plan; «напиши автотесты» → implement-auto-test;
+«заведи/обнови тест-кейсы в Jira/Zephyr/TMS» → update-tms;
 «запусти автотесты в Jenkins/CI, прогон на стенде» → run-auto-test;
 «статус/сводка задач» → task-status.
 

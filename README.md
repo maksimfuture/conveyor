@@ -6,8 +6,8 @@
 репозиториев: `core`, `api`, `common`, `config`):
 
 ```
-намерение (БА) → спецификация (СА: правки анализа + спека) ─┬→ план → реализация ──────────┬→ прогон в CI
-                                                            └→ план автотестов → автотесты ┘
+намерение (БА) → спецификация (СА: правки анализа + спека) ─┬→ план → реализация ────────────────────────┬→ прогон в CI
+                                                            └→ план автотестов → автотесты → кейсы в TMS ┘
 ```
 
 План автотестов и сами автотесты пишутся по спецификации, поэтому QA
@@ -80,6 +80,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 | `/conveyor:implement-plan` | разработчик | реализация в ветке задачи |
 | `/conveyor:create-autotest-plan` | инженер по автотестам | план автотестов по спецификации (сразу после спецификации, параллельно с разработкой) |
 | `/conveyor:implement-auto-test` | инженер по автотестам | реализация автотестов (сразу после плана автотестов, параллельно с разработкой) |
+| `/conveyor:update-tms` | инженер по автотестам | тест-кейсы плана в Zephyr через MCP Jira: создаёт новые, правит существующие, меняет заглушки `PROJ-T999-N` на ключи в плане, отчёте и `@TmsLink` |
 | `/conveyor:run-auto-test` | инженер по автотестам | прогон автотестов в Jenkins на стенде, итог — в отчёт (после реализации и автотестов) |
 | `/conveyor:task-status` | любой | сводка по задачам и намерениям |
 
@@ -124,7 +125,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
       "config": { "link": "repos/backend/config", "mainBranch": "main", "description": "конфигурации" }
     },
     "autoTest":        { "link": "repos/autotests",       "mainBranch": "main",
-                         "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
+                         "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/",
+                         "linkTMS": "https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=10000" }
   },
   "reviewRounds": "${CONVEYOR_REVIEW_ROUNDS}",
   "fast": "${CONVEYOR_FAST}",
@@ -187,6 +189,19 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   подбирает их в сессии по трём ролям (запуск сборки, статус, результаты
   тестов), при неоднозначности спрашивает, а если инструмента запуска нет —
   просто не запускает джобу и пишет это в отчёт.
+- **linkTMS** — ссылка на тест-кейсы проекта в Zephyr Scale (страница Test
+  Cases проекта в Jira, `…/secure/Tests.jspa#/v2/testCases?projectId=…`);
+  заполняется только у `autoTest`. Без неё `/conveyor:update-tms` не
+  запускается: по ссылке он знает, в какую Jira и в какой проект заводить
+  кейсы (ключ проекта берётся из ID тестов плана). Названия полей Zephyr и
+  их значения — префикс названия, приоритет и статус, «Вид тестирования»,
+  «Автоматизирован», «Уровень теста», постоянные поля и поля по типу задачи
+  (например «Команда», «АС») — конвенция команды, и живут они не в
+  `settings.json` и не в плагине, а в репозитории автотестов:
+  `.conveyor/tms.json` (образец — `core/templates/tms.example.json`).
+  Папку и владельца этап спрашивает в сессии. В Jira этап ходит через
+  MCP-сервер, которого подключает сам пользователь (см. INSTALL.md); имена
+  инструментов подбираются в сессии, как и у Jenkins.
 - **taskPrefix** — префикс идентификаторов задач (`TASK-42`).
 
 `.env` — личные настройки разработчика, он в `.gitignore` и **не обязателен**:
@@ -213,7 +228,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 | setup, task-status | — |
 | intent, create-specification | `repos/system-analysis` |
 | create-plan, implement-plan | `repos/frontend` (FE) либо ВСЕ репозитории бэкенда (BE): `repos/backend/{core,api,common,config}` |
-| create-autotest-plan, implement-auto-test, run-auto-test | `repos/autotests` |
+| create-autotest-plan, implement-auto-test, update-tms, run-auto-test | `repos/autotests` |
 
 Если нужная этапу рабочая копия не склонирована (или ссылка ведёт наружу /
 задана git-URL), этап останавливается на первом шаге и объясняет, что сделать.
@@ -297,6 +312,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 | implement-plan | код FE/BE | код FE/BE |
 | create-autotest-plan | автотесты (только чтение) + артефакты | — (только артефакты) |
 | implement-auto-test | автотесты | автотесты |
+| update-tms | агента нет (команда читает план, пишет в Zephyr через MCP) | автотесты: guard открывает запись целиком, код меняет только скрипт (ID в `@TmsLink`), перед коммитом `check-diff` проверяет, что изменены только эти строки; ID в плане и отчёте |
 | run-auto-test | агента нет (команда читает ветку автотестов) | — (только «Прогон в CI» отчёта) |
 
 Агенту передаются только пути его области; диффы чужих репозиториев готовит

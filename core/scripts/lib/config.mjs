@@ -124,6 +124,10 @@ export function readUnits(repos) {
       // применяется и применяться не должна — ради этого он и заведён
       // отдельным ключом, а не спрятан в link.
       pipelineUrl: ((e.linkPipelineAutoTest || '') + '').trim(),
+      // Ссылка на тест-кейсы проекта в Zephyr (repos.autoTest.linkTMS) —
+      // тоже URL, а не путь: по ней /conveyor:update-tms знает, в какую Jira
+      // и в какой проект заводить кейсы.
+      tmsUrl: ((e.linkTMS || '') + '').trim(),
     });
   };
 
@@ -220,6 +224,7 @@ export const STAGE_NAMES = [
   'implement-plan',
   'create-autotest-plan',
   'implement-auto-test',
+  'update-tms',
   'run-auto-test',
   'task-status',
 ];
@@ -411,8 +416,8 @@ export function codebaseUnits(cfg, taskType) {
 //   { found:true, workspaceRoot, config, fastMode,
 //     units, links, missingLinks, urlLinks, configErrors }
 //
-// units[] = { id, key, part, link, mainBranch, description, pipelineUrl }
-// links[<id юнита>] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl }
+// units[] = { id, key, part, link, mainBranch, description, pipelineUrl, tmsUrl }
+// links[<id юнита>] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl, tmsUrl }
 // inside — пригодна ли ссылка (см. isUsableLink); только такая даёт
 // рабочую копию (repoRootFor). missingLinks = юниты с пустой ссылкой;
 // urlLinks = юниты, у которых вместо пути git-URL (ошибка конфигурации:
@@ -497,6 +502,7 @@ export function readConfig(startDir = process.cwd()) {
       entry.link = value;
       entry.mainBranch = unit.mainBranch;
       entry.linkPipelineAutoTest = unit.pipelineUrl;
+      entry.linkTMS = unit.tmsUrl;
     }
 
     const url = isGitUrl(value);
@@ -511,6 +517,7 @@ export function readConfig(startDir = process.cwd()) {
       inside: isUsableLink(value, workspaceRoot),
       mainBranch: unit.mainBranch,
       pipelineUrl: unit.pipelineUrl,
+      tmsUrl: unit.tmsUrl,
     };
   }
 
@@ -559,6 +566,7 @@ export function requiredRepoKeys(stage, taskType) {
       return [code];
     case 'create-autotest-plan':
     case 'implement-auto-test':
+    case 'update-tms':
     case 'run-auto-test':
       return ['autoTest'];
     default:
@@ -607,6 +615,11 @@ export function stageWriteRepoKeys(stage, taskType) {
     case 'implement-plan':
       return [code];
     case 'implement-auto-test':
+      return ['autoTest'];
+    // update-tms меняет в автотестах ОДНО: заглушку в @TmsLink на ключ кейса
+    // из Zephyr. Сузить право записи до содержимого файла guard не умеет,
+    // поэтому замену делает скрипт (tms-cases.mjs apply), а не модель.
+    case 'update-tms':
       return ['autoTest'];
     // setup, task-status, intent, create-plan, create-autotest-plan, run-auto-test:
     // artifacts only — no repo writes.
@@ -758,6 +771,10 @@ export const STAGE_ARTIFACTS = {
   'implement-plan': ['plan.md'],
   'create-autotest-plan': ['autotest-plan.md'],
   'implement-auto-test': ['report-auto-test.md'],
+  // Выгрузка в TMS заменяет заглушки ID новых тестов (PROJ-T999-N) на ключи
+  // созданных кейсов — в ОБОИХ артефактах: иначе сверка отчёта с планом
+  // разойдётся по составу ID.
+  'update-tms': ['autotest-plan.md', 'report-auto-test.md'],
   'run-auto-test': ['report-auto-test.md'],
   'task-status': [],
 };

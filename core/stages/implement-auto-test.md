@@ -95,6 +95,8 @@ repos.autoTest.link, через resolve-config) и в артефакты зад�
    (`ciPending: true`) — это нормальный итог этапа: джобу в Jenkins
    запускает и раздел «Прогон в CI» дописывает `/conveyor:run-auto-test`.
    Сними рабочую область (`scope.mjs clear`). Следующий шаг —
+   `/conveyor:update-tms`: кейсы новых тестов заводятся в Zephyr, и
+   заглушки `PROJ-T999-N` в `@TmsLink` меняются на их ключи. После него —
    `/conveyor:run-auto-test`, когда завершён `implement-plan` и функционал
    развёрнут на стенде.
 
@@ -118,4 +120,5 @@ report-auto-test.md написан после цикла ревью и сошё�
 «ожидается прогон в CI» (`ciPending: true` — норма для этого этапа);
 цикл ревью пройден (коммит — после ревью;
 нерешённые blocker|major вынесены пользователю); решение о push принято.
-Следующий шаг — `/conveyor:run-auto-test`.
+Следующий шаг — `/conveyor:update-tms` (кейсы в Zephyr), затем
+`/conveyor:run-auto-test`.

@@ -27,6 +27,14 @@
    `docs/specs/tasks/<FE|BE>/<TASK-ID>/`: `stages['implement-auto-test'].done`,
    `stages['implement-plan'].done`, `report-auto-test.md`, `autotestBranch`.
    Не выполнено — остановка (см. «Ошибки»), рабочую область не ставь.
+   Затем проверь, заведены ли кейсы в TMS:
+   `node "<CONVEYOR_ROOT>/core/scripts/tms-cases.mjs" pending --task <папка задачи> --repo <копия автотестов>`
+   (конфиг TMS для этого не нужен).
+   Непустой `pending` — в плане или в коде (`pendingIn`) остались заглушки
+   `PROJ-T999-N`: сборка пройдёт, но её результаты не свяжутся ни с одним
+   кейсом в Zephyr. Это не блокер — спроси (AskUserQuestion): **сначала
+   `/conveyor:update-tms`** (этап останавливается без рабочей области) /
+   **прогнать так**.
 2. Установи рабочую область:
    `scope.mjs set --stage run-auto-test --type <FE|BE> --task <TASK-ID>`
    (запись в репозитории запрещена — только артефакты задачи). Найди рабочую

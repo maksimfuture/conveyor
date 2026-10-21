@@ -10,7 +10,8 @@
       "config": { "link": "repos/backend/config", "mainBranch": "main", "description": "конфигурации" }
     },
     "autoTest":        { "link": "repos/autotests",       "mainBranch": "main",
-                         "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/" }
+                         "linkPipelineAutoTest": "https://jenkins.example.com/job/MAM/job/autotest-web/",
+                         "linkTMS": "https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=10000" }
   },
   "reviewRounds": "${CONVEYOR_REVIEW_ROUNDS}",
   "fast": "${CONVEYOR_FAST}",

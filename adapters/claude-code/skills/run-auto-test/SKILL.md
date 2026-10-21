@@ -22,7 +22,10 @@ report-auto-test.md и autotestBranch.
 Кратко:
 1. resolve-config; задача из meta.json; проверь предусловие (implement-auto-test
    и implement-plan завершены, есть report-auto-test.md и autotestBranch) —
-   не выполнено → остановка без рабочей области.
+   не выполнено → остановка без рабочей области. `tms-cases.mjs pending
+   --task <папка задачи> --repo <копия>`: непустой `pending` (заглушки задачи в
+   плане или коде) —
+   предупреди и спроси: сначала /conveyor:update-tms или прогнать так.
 2. `scope.mjs set --stage run-auto-test --type <FE|BE> --task <TASK-ID>` —
    запись в репозитории запрещена, только артефакты; `git-ops locate` для
    автотестов. При завершении/остановке — `scope.mjs clear`.

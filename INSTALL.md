@@ -52,11 +52,11 @@ unexpected behavior») — подтвердите вводом `Y`.
 gigacode extensions list
 ```
 Ожидаемый вывод: `conveyor (<версия>)`, `Enabled (User): true`,
-`Enabled (Workspace): true` и 9 команд:
+`Enabled (Workspace): true` и 10 команд:
 `/conveyor:setup`, `/conveyor:intent`, `/conveyor:create-specification`,
 `/conveyor:create-plan`, `/conveyor:implement-plan`,
 `/conveyor:create-autotest-plan`, `/conveyor:implement-auto-test`,
-`/conveyor:run-auto-test`, `/conveyor:task-status`.
+`/conveyor:update-tms`, `/conveyor:run-auto-test`, `/conveyor:task-status`.
 
 Каталог установки команды определяют сами: шаг «Корень расширения» в начале
 каждой команды ищет `~/.gigacode/extensions/conveyor` и проверяет, что там
@@ -143,6 +143,32 @@ node <plugin>/core/scripts/repos-status.mjs
 Ничего из этого не настроено — `/conveyor:implement-auto-test` работает как
 обычно (тесты пишутся, коммитятся), а `/conveyor:run-auto-test` пишет в разделе «Прогон в CI» отчёта, что джоба с
 автотестами не запускалась.
+
+### Шаг 10. (Опционально) Тест-кейсы в Zephyr
+Этап `/conveyor:update-tms` заводит кейсы новых тестов в Zephyr Scale по
+таблице «Тест-кейсы» плана автотестов, сверяет и при необходимости правит
+уже существующие кейсы и меняет заглушки `PROJ-T999-N` на ключи кейсов в
+плане, отчёте и `@TmsLink` кода. Для этого нужны:
+
+1. **MCP-сервер Jira с инструментами Zephyr Scale** (создание, чтение,
+   правка кейсов; желательно — поиск и текущий пользователь), подключённый в
+   вашем клиенте. Имена инструментов нигде не прописаны — этап подбирает их
+   в сессии сам. Токен Jira живёт в конфигурации MCP-сервера.
+2. **Ссылка на тест-кейсы проекта** в `settings.json`:
+   `repos.autoTest.linkTMS` — страница Test Cases проекта в Jira, например
+   `https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=10000`.
+3. **Конвенции полей Zephyr** — файл `.conveyor/tms.json` в репозитории
+   автотестов (заводится MR в автотесты, один раз на команду). Образец —
+   `core/templates/tms.example.json`: названия кастомных полей и значения
+   для «НФ/Регресс», «автотест написан / в плане / нет», уровней, префикс
+   названия, приоритет и статус новых кейсов, постоянные поля и поля по
+   типу задачи FE/BE. Незаполненные `<…>` из образца этап не примет.
+   Папку и владельца этап спрашивает в сессии (владелец по умолчанию —
+   текущий пользователь Jira).
+
+Без ссылки, файла конвенций или MCP-сервера `/conveyor:update-tms` останавливается, ничего не меняя;
+`/conveyor:run-auto-test` работает и без него, но предупреждает, что
+результаты сборки не свяжутся с кейсами.
 
 Готово — можно запускать `/conveyor:intent`.
 

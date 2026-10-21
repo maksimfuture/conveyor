@@ -1,6 +1,6 @@
 ---
 name: implement-auto-test
-description: Реализует автотесты в репозитории автотестов по плану автотестов (autotest-plan.md). Запускать сразу после /conveyor:create-autotest-plan — разработку (implement-plan) ждать не нужно. Создаёт ветку автотестов, реализует кейсы, прогоняет их локально, после ревью пишет отчёт, коммитит и по подтверждению пушит ветку. Джобу в Jenkins не запускает — это делает следующий этап /conveyor:run-auto-test. Аргумент TASK-ID.
+description: Реализует автотесты в репозитории автотестов по плану автотестов (autotest-plan.md). Запускать сразу после /conveyor:create-autotest-plan — разработку (implement-plan) ждать не нужно. Создаёт ветку автотестов, реализует кейсы, прогоняет их локально, после ревью пишет отчёт, коммитит и по подтверждению пушит ветку. Кейсы в Zephyr не заводит — это делает следующий этап /conveyor:update-tms; джобу в Jenkins не запускает — это делает /conveyor:run-auto-test. Аргумент TASK-ID.
 ---
 
 Этап конвейера conveyor: реализация автотестов.
@@ -58,5 +58,6 @@ description: Реализует автотесты в репозитории а�
 7. Обнови meta.json: stages.implement-auto-test.done + review. Отчёт остаётся
    с маркером «ожидается прогон в CI» (`ciPending: true` — норма): джобу в
    Jenkins запускает и «Прогон в CI» дописывает `/conveyor:run-auto-test`.
-   `scope.mjs clear`. Следующий шаг — `/conveyor:run-auto-test` (когда
-   implement-plan завершён и функционал на стенде).
+   `scope.mjs clear`. Следующий шаг — `/conveyor:update-tms` (кейсы в
+   Zephyr, ключи вместо заглушек в @TmsLink), затем `/conveyor:run-auto-test`
+   (когда implement-plan завершён и функционал на стенде).

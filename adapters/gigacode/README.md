@@ -38,7 +38,7 @@ gigacode extensions install dist/gigacode
 GigaCode спросит подтверждение (security-предупреждение) — подтвердите. После
 этого:
 ```
-gigacode extensions list      # должно показать conveyor (2.0.0) и 9 команд
+gigacode extensions list      # должно показать conveyor (2.4.0) и 9 команд
 gigacode
 /conveyor:setup
 ```

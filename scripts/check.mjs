@@ -4192,6 +4192,18 @@ try {
             .join('; '),
       );
 
+    // Эталонный пример плана проходит валидатор — и с LF, и с CRLF: на
+    // Windows git отдаёт рабочую копию с CRLF, и построчные правила («Кейсы:
+    // ID» в «Что не автоматизируем») на `\r` раньше молча не срабатывали.
+    const exampleLf = fs
+      .readFileSync(path.join(root, 'docs/examples/autotest-plan-example.md'), 'utf8')
+      .replace(/\r\n?/g, '\n');
+    const exLf = va(exampleLf);
+    const exCrlf = va(exampleLf.replace(/\n/g, '\r\n'));
+    if (exLf.ok === true && exCrlf.ok === true)
+      ok('validate-artifact: пример плана автотестов валиден и с LF, и с CRLF');
+    else bad('validate-artifact: пример плана автотестов — ' + JSON.stringify({ lf: exLf.problems, crlf: exCrlf.problems }));
+
     // Состав обязательных разделов спрашиваем у самого валидатора: перенести
     // «Итого» вниз мало — раздел обязан остаться ОБЯЗАТЕЛЬНЫМ, иначе агент его
     // просто не напишет. Обратная сторона: удалённые по замечанию команды
@@ -5564,8 +5576,8 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       '',
       '| ID | Вид тестирования | Уровень | Название | Шаги | Ожидаемый результат | REQ-ID | Автотест |',
       '|---|---|---|---|---|---|---|---|',
-      '| PROJ-T999-1 | НФ | API | Создание `create` | 1) Создать задачу (200) 2) Вызвать `a\\|b` 3) Выгрузить логи | 1) Задача создана (200) 2) Ответ 200 3) Записи найдены | REQ-1 | да |',
-      '| PROJ-T999-10 | НФ | E2E | Форма | Открыть форму | Ошибка показана | REQ-2 | нет |',
+      '| PROJ-T999-1 | НФ | API | Создание `create` | 1) Создать задачу (200) 2) Вызвать `a\\|b` 3) Выгрузить логи | 1) Задача создана (200) 2) Ответ 200 3) Записи найдены | REQ-1, REQ-2 | да |',
+      '| PROJ-T999-10 | НФ | E2E | Форма | Открыть форму | Ошибка показана | НФТ: ответ < 2 с | нет |',
       '| PROJ-T113 | Регресс | UI | Старый кейс | 1) a 2) b | Всё хорошо | REQ-3 | да |',
       '',
       '## Автотесты',
@@ -5575,12 +5587,25 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       '| PROJ-T999-1 | НФ | API | `A.java` | создать | REQ-1 | [x] |',
       '| PROJ-T113 | Регресс | UI | `B.java` | без правок | REQ-3 | [ ] |',
       '',
-      '## Тестовые данные и окружение',
-      '- **Стенд:** ift',
-      '- **Данные и фикстуры:** <файлы>',
-      '',
     ].join('\n');
     fs.writeFileSync(path.join(taskDir, 'autotest-plan.md'), plan);
+    // Тексты требований для цели кейса — из спецификации задачи.
+    const spec = [
+      '# Спецификация: x (PROJ-7)',
+      '',
+      '## Функциональные требования',
+      '| REQ-ID | Формулировка | Источник (файл + раздел) | Приоритет |',
+      '|---|---|---|---|',
+      '| REQ-1 | Задача создаётся методом `create` | a.adoc | P1 |',
+      '| REQ-2 | Логи выгружаются | a.adoc | P2 |',
+      '| REQ-3 | Старое поведение сохраняется | a.adoc | P1 |',
+      '',
+      '## Нефункциональные требования',
+      '- нет',
+      '',
+    ].join('\n');
+    const specPath = path.join(taskDir, 'specification.md');
+    fs.writeFileSync(specPath, spec);
     fs.writeFileSync(path.join(taskDir, 'report-auto-test.md'), '| PROJ-T999-1 | ok |\n| PROJ-T999-10 | — |\n');
     // Заглушки в коде: в @TmsLink (меняются), в комментарии и константе
     // (скрипт их не трогает, но обязан показать) и чужая T999-3 (пришла из
@@ -5670,7 +5695,7 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       s1[2].expectedResult === 'Записи найдены' &&
       c1.testCase.name === 'В работе | Создание create' &&
       c1.testCase.title === 'Создание create' &&
-      c1.testCase.precondition === 'Стенд: ift'
+      !('precondition' in c1.testCase)
     )
       ok('tms-cases parse: linkTMS и projectId; шаги и ожидание по номерам; название и отдельно title без префикса (для поиска дубля)');
     else bad('tms-cases parse: шаги/поля — ' + JSON.stringify({ ok: p.ok, steps: s1, testCase: c1.testCase, raw: p.raw }));
@@ -5701,6 +5726,40 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
     if (c1.kind === 'new' && c113.kind === 'existing' && (p.pending || []).join(',') === 'PROJ-T999-1,PROJ-T999-10')
       ok('tms-cases parse: заглушки — new и в pending, настоящий ключ — existing');
     else bad('tms-cases parse: виды кейсов — ' + JSON.stringify({ c1: c1.kind, c113: c113.kind, pending: p.pending }));
+
+    // Цель кейса — тексты требований из спецификации, а не REQ-ID: в Zephyr
+    // их некому расшифровать. Поле — rich text: строки через `<br>` (перевод
+    // строки схлопнулся бы в пробел), текст экранирован. Ячейка без ID
+    // (нефункциональное требование) уходит как есть.
+    const obj1 = (c1.testCase || {}).objective || '';
+    const obj10 = (c10.testCase || {}).objective || '';
+    if (
+      obj1 === 'Создание create. Задача разработки: PROJ-7.<br>Требования:<br>- Задача создаётся методом create<br>- Логи выгружаются' &&
+      obj10 === 'Форма. Задача разработки: PROJ-7.<br>Требования:<br>- НФТ: ответ &lt; 2 с' &&
+      !/REQ-|\n/.test(JSON.stringify(p.cases.map((c) => c.testCase.objective)))
+    )
+      ok('tms-cases parse: цель кейса — тексты требований из specification.md через <br>, без REQ-ID; текст без ID — как есть');
+    else bad('tms-cases parse: цель кейса — ' + JSON.stringify(p.cases && p.cases.map((c) => c.testCase.objective)));
+    // Неизвестный REQ-ID и отсутствие спецификации — остановка; ячейка без
+    // требований вовсе — только предупреждение, кейс выгружается.
+    fs.writeFileSync(specPath, spec.replace(/\| REQ-2 \|[^\n]*\n/, ''));
+    const pUnknown = tms(['parse', '--task', taskDir]);
+    fs.rmSync(specPath);
+    const pNoSpec = tms(['parse', '--task', taskDir]);
+    fs.writeFileSync(specPath, spec);
+    const planPath = path.join(taskDir, 'autotest-plan.md');
+    fs.writeFileSync(planPath, plan.replace('| Всё хорошо | REQ-3 |', '| Всё хорошо | — |'));
+    const pNoReq = tms(['parse', '--task', taskDir]);
+    fs.writeFileSync(planPath, plan);
+    const c113NoReq = (pNoReq.cases || []).find((c) => c.id === 'PROJ-T113') || {};
+    if (
+      pUnknown.ok === false && (pUnknown.problems || []).some((x) => /PROJ-T999-1: требований REQ-2 нет в specification\.md/.test(x)) &&
+      pNoSpec.ok === false && /specification\.md/.test(pNoSpec.error || '') &&
+      pNoReq.ok === true && (pNoReq.warnings || []).some((x) => /PROJ-T113: в «REQ-ID» нет требований/.test(x)) &&
+      (c113NoReq.testCase || {}).objective === 'Старый кейс. Задача разработки: PROJ-7.'
+    )
+      ok('tms-cases parse: неизвестный REQ-ID и нет specification.md — ok:false; ячейка без требований — предупреждение');
+    else bad('tms-cases parse: проверка требований — ' + JSON.stringify({ pUnknown: pUnknown.problems || pUnknown, pNoSpec, pNoReq: pNoReq.warnings || pNoReq }));
 
     // record: ключ пишется в meta.json, один ключ — одной заглушке; кейс,
     // найденный поиском, помечается взятым и своим не становится.

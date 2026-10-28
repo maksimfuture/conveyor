@@ -84,17 +84,11 @@ permission_exclude_code», восстановленная по ревью: то�
 | MAMGM-T113 | Регресс | API | `src/test/resources/data/success/dictionary/DictionaryResultSuccess.json` | изменить: добавить `permissionExcludeCode` в элементы Permissions, иначе смоук `DictionarySuccessTest` упадёт на новом поле | REQ-1 | [ ] |
 - **Регресс: почему выбраны эти тесты** — `dbPermissionsCheckValuesTest` единственный сверяет состав `permissions` с эталоном, а это главный риск задачи; `dictionarySuccess` — регрессия API-контракта справочника, который теперь возвращает новое поле.
 
-## Тестовые данные и окружение
-- **Стенд:** API/DB `CONCURRENT` (соглашение базовых `BaseApiTest`/DB), ключ конфигурации `src/test/resources/test.properties`, эндпоинт `dictionaryEndpoint` через `TestConfigScope.TEST_CONFIG`.
-- **Данные и фикстуры:** эталон 60 записей `src/test/java/ru/sber/qa/help/dictionaries/web/AuthorityCode.java`; константы имён полей `DBTableFieldNames`; эталон ответа `DictionaryResultSuccess.json`.
-- **Предусловия окружения:** на стенде накатаны миграции `mam_db_service` `001..006` включительно; БД доступна PostgreSQL; API `/dictionary` развёрнут.
-
 ## Итого
 - **Уровни:** DB (основной), API (дополнительный); документные требования не автоматизируем.
 - **Кейсы:** 11 — покрыто автотестами 8, без автоматизации 3
 - **Автотесты:** 8 — НФ 6, регресс 2
 - **Файлов затронуто:** 3 — создать 1, изменить 2, без правок 1
-- **Тестовые данные и фикстуры:** меняются — эталон `DictionaryResultSuccess.json` и константа `DBTableFieldNames.PERMISSIONS_EXCLUDE_CODE`; данные БД не меняются
 - **Не автоматизируем:** 3 пункта
 
 ## Что не автоматизируем и почему

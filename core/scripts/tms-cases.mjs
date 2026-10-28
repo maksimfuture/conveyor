@@ -150,18 +150,42 @@ function buildSteps(stepsCell, expectedCell) {
   return out;
 }
 
-// Предусловие кейса — раздел плана «Тестовые данные и окружение»: стенд,
-// данные, предусловия окружения. Строки с незаполненным каркасом (`<…>`)
-// пропускаем: в Zephyr они были бы мусором.
-function precondition(planText) {
-  return sectionBody(planText, '## Тестовые данные')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^[-*]\s+/.test(l))
-    .map((l) => cleanCell(l.replace(/^[-*]\s+/, '').replace(/\*\*/g, '')))
-    .filter((l) => l && !/<[^>]+>/.test(l))
-    .join('\n');
+// Требования задачи: REQ-ID → формулировка из таблицы «Функциональные
+// требования» specification.md. В Zephyr REQ-ID — ссылка в никуда: документа,
+// где он определён, там нет, поэтому в кейс уходит сам текст требования.
+function requirements(specText) {
+  const body = sectionBody(specText, '## Функциональные требования');
+  const head = tableHead(body);
+  const idIdx = head.indexOf('REQ-ID');
+  const textIdx = head.indexOf('Формулировка');
+  if (idIdx < 0 || textIdx < 0) return null;
+  const out = {};
+  for (const r of tableRows(body)) {
+    const id = cleanCell(r[idIdx]);
+    if (id) out[id] = cleanCell(r[textIdx]);
+  }
+  return out;
 }
+
+// Ячейка REQ-ID плана → { ids, text }. ID — функциональные требования
+// (несколько через запятую); `REQ-5-note` за ID не считается. Остальное —
+// text: у нефункциональных требований и критериев приёмки в спецификации ID
+// нет, и в ячейке пишут суть («НФТ: ответ ≤ 2 с») — она уходит в цель как
+// есть. Одинокий прочерк — не текст.
+const REQ_REF = /\bREQ-\d+(?![\w-])/g;
+function reqRefs(cell) {
+  const src = cleanCell(cell);
+  const ids = [...new Set(src.match(REQ_REF) || [])];
+  const text = src
+    .replace(REQ_REF, '')
+    .replace(/^[\s,;—–-]+|[\s,;—–-]+$/g, '')
+    .replace(/\s*[,;]\s*[,;]\s*/g, ', ');
+  return { ids, text };
+}
+
+// Цель кейса в Zephyr — rich text (HTML): перевод строки там схлопывается в
+// пробел, поэтому строки разделяет `<br>`, а текст из плана экранируется.
+const html = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 function readTask(taskArg) {
   if (!taskArg || taskArg === true) fail('нужен аргумент --task <абсолютный путь к папке задачи>');
@@ -315,6 +339,13 @@ function cmdParse(a, pendingOnly) {
   if (missing.length) fail(`в таблице «Тест-кейсы» нет колонок: ${missing.join(', ')}`);
   const col = Object.fromEntries(CASE_COLUMNS.map((c) => [c, head.indexOf(c)]));
 
+  // Без спецификации цель кейса собрать не из чего: выгружать кейс с голыми
+  // REQ-ID нельзя — в Zephyr их никто не расшифрует.
+  const specPath = path.join(taskDir, 'specification.md');
+  if (!fs.existsSync(specPath)) fail(`нет specification.md в папке задачи: ${taskDir} — тексты требований брать неоткуда`);
+  const reqs = requirements(fs.readFileSync(specPath, 'utf8').replace(/\r\n/g, '\n'));
+  if (!reqs) fail('в specification.md нет таблицы «Функциональные требования» с колонками REQ-ID и Формулировка');
+
   // Статус автотеста по ID: «Автоматизирован: Да» ставим только тесту,
   // который реально написан ([x]). Строка «да» с `[ ]` — тест обещан, но не
   // сделан: в Zephyr это «На автоматизации».
@@ -328,7 +359,6 @@ function cmdParse(a, pendingOnly) {
   const usedKeys = new Set(Object.values(map));
   const prefixes = new Set();
   const cases = [];
-  const pre = precondition(plan);
 
   for (const r of rows) {
     if (r.length !== head.length) {
@@ -367,6 +397,14 @@ function cmdParse(a, pendingOnly) {
 
     const title = cleanCell(r[col['Название']]);
     const req = cleanCell(r[col['REQ-ID']]);
+    // REQ-ID, которого нет в спецификации, — битая ссылка: план расходится со
+    // спецификацией, выгружать нельзя. Ячейка без ID (нефункциональное
+    // требование, критерий приёмки) — норма, её текст уходит в цель как есть.
+    const ref = reqRefs(r[col['REQ-ID']]);
+    const unknown = ref.ids.filter((x) => !reqs[x]);
+    if (unknown.length) problems.push(`${id}: требований ${unknown.join(', ')} нет в specification.md`);
+    if (!ref.ids.length && !ref.text) warnings.push(`${id}: в «REQ-ID» нет требований — цель кейса без них`);
+    const reqTexts = [...ref.ids.filter((x) => reqs[x]).map((x) => reqs[x]), ...(ref.text ? [ref.text] : [])];
     const steps = buildSteps(r[col['Шаги']], r[col['Ожидаемый результат']]);
     if (!steps.length) problems.push(`${id}: пустые «Шаги»`);
 
@@ -400,8 +438,10 @@ function cmdParse(a, pendingOnly) {
         // по полному названию дубль тогда не найдётся.
         title,
         name: `${conf.namePrefix}${title}`,
-        objective: `${title}. Задача разработки: ${taskId}; требования: ${req}`,
-        precondition: pre,
+        objective: [
+          `${html(title)}. Задача разработки: ${html(taskId)}.`,
+          ...(reqTexts.length ? ['Требования:', ...reqTexts.map((x) => `- ${html(x)}`)] : []),
+        ].join('<br>'),
         issueLinks: [taskId],
         steps,
         customFields,

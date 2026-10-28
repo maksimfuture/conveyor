@@ -5,8 +5,8 @@ description: Переносит таблицу «Тест-кейсы» из auto
 
 Этап конвейера conveyor: тест-кейсы в TMS (Zephyr Scale).
 **Агент:** не требуется — всё делает скилл. **Предусловие:** завершён
-implement-auto-test (`meta.json → stages`), есть autotest-plan.md,
-report-auto-test.md и autotestBranch.
+implement-auto-test (`meta.json → stages`), есть specification.md,
+autotest-plan.md, report-auto-test.md и autotestBranch.
 
 **Корень плагина.** `${CLAUDE_PLUGIN_ROOT}` — Claude Code подставил сюда
 абсолютный путь при загрузке скилла. Ниже и во всех файлах этапа он обозначен
@@ -21,7 +21,8 @@ report-auto-test.md и autotestBranch.
 
 Кратко:
 1. resolve-config; задача из meta.json; проверь предусловие (implement-auto-test
-   завершён, есть autotest-plan.md, report-auto-test.md и autotestBranch) и
+   завершён, есть specification.md, autotest-plan.md, report-auto-test.md и
+   autotestBranch) и
    ссылку на тест-кейсы проекта `repos.autoTest.linkTMS` — не выполнено →
    остановка без рабочей области.
 2. `scope.mjs set --stage update-tms --type <FE|BE> --task <TASK-ID>`;
@@ -31,7 +32,10 @@ report-auto-test.md и autotestBranch.
    поля Zephyr берутся из `.conveyor/tms.json` репозитория автотестов; нет
    файла или он с ошибками → остановка с образцом
    `<CONVEYOR_ROOT>/core/templates/tms.example.json` (сам файл не создаёшь).
-   Дальше — кейсы с готовыми полями:
+   Цель кейса — тексты требований из specification.md по REQ-ID плана
+   (неизвестный REQ-ID → `ok:false`; текст без ID — как есть), строки
+   разделены `<br>` — передавай `objective` без изменений. Дальше — кейсы с
+   готовыми полями:
    `new` создать, `mapped`/`existing` сверить. Полей не сочиняй — бери из
    `testCase`; `null` не передавай.
 4. MCP-инструменты Zephyr подбери сам по ролям (создание, чтение, правка,

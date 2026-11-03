@@ -25,11 +25,11 @@ description: Инициализирует рабочий репозиторий 
    репозиторий инициализирован, переходи сразу к шагу 4.
 2. Спроси taskPrefix (по умолчанию TASK).
 3. Создай docs/specs/tasks/FE/, docs/specs/tasks/BE/, intents/, repos/;
-   settings.json и .env.example — СКОПИРУЙ файлы шаблонов механически (node -e
-   fs.copyFileSync из core/templates/settings.example.json и env.example; НЕ
-   по памяти), затем точечно поменяй taskPrefix при необходимости. Сам .env
-   не создавай — он не обязателен. Сверь ключи settings.json с шаблоном (см.
-   core/stages/setup.md, шаг 3).
+   settings.json и .env.example — СКОПИРУЙ файлы шаблонов механически
+   (`node "<CONVEYOR_ROOT>/core/scripts/setup-files.mjs" init`; НЕ по
+   памяти), затем точечно поменяй taskPrefix при необходимости. Сам .env
+   не создавай — он не обязателен. Сверь ключи settings.json с шаблоном:
+   `node "<CONVEYOR_ROOT>/core/scripts/setup-files.mjs" check-keys`.
 4. `.gitignore` — в обеих ролях: нужны строки `repos/` и `.env` (нет файла —
    создай, есть — допиши недостающие). При первичной инициализации закоммить
    settings.json вместе с .gitignore.

@@ -741,6 +741,12 @@ export function hasLegacyTasksDir(workspaceRoot) {
 // пути нельзя — принадлежность считает artifactDirFor через isInside.
 export const ARTIFACT_DIRS = [TASKS_DIR, 'intents'];
 
+// Каталог расширения GigaCode: оно ставится В рабочий репозиторий и
+// коммитится в него. Правка его агентом — порча конвейера всей команды через
+// git (переписанный стейдж или guard-скрипт), поэтому запрет действует ВСЕГДА,
+// и вне этапа тоже: расширение обновляется сборкой плагина, не моделью.
+export const EXTENSION_DIR = '.gigacode/extensions/conveyor';
+
 // Какой папке артефактов принадлежит АБСОЛЮТНЫЙ путь. Сверяем через isInside
 // (path.relative), а не сравнением строк: на Windows файловая система регистр
 // не различает, а realpathSync сохраняет регистр вызывающего — и запись в
@@ -868,6 +874,13 @@ export function checkWrite(targetPath, cfg) {
 
     const rel = path.relative(wsRoot, target);
     const relPosix = rel.split(path.sep).join('/');
+
+    if (isInside(target, path.join(wsRoot, ...EXTENSION_DIR.split('/')))) {
+      return {
+        allowed: false,
+        reason: `каталог расширения ${EXTENSION_DIR}/ не правится — он обновляется сборкой плагина (запрошено: ${rel})`,
+      };
+    }
     // Папка артефактов определяется ВЛОЖЕННОСТЬЮ пути, а не первым его
     // сегментом: папка задач лежит в docs/specs/tasks, и сверка по первому
     // сегменту либо не нашла бы её вовсе, либо (добавь мы `docs` в списки)

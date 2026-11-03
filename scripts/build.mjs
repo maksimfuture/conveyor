@@ -4,7 +4,7 @@
 // plugin/extension root resolves core/ after install (spec 3).
 //
 //   dist/claude-code/   = adapters/claude-code/* + core/   (Claude Code plugin)
-//   dist/gigacode/      = adapters/gigacode/*    + core/   (GigaCode extension)
+//   dist/gigacode/      = adapters/gigacode/*    + core/   (GigaCode extension; корень подставлен)
 //
 // The adapters/ split keeps platform-specific bits isolated; core/ is shared.
 //
@@ -71,6 +71,32 @@ function copyDir(src, dest) {
   }
 }
 
+// Корень расширения GigaCode ПОСТОЯНЕН: оно лежит в рабочем репозитории, путь
+// — от его корня. Поэтому в dist/gigacode плейсхолдер `<CONVEYOR_ROOT>` из
+// общих текстов ядра заменяется настоящим путём при сборке, и модели нечего
+// подставлять. В Claude Code путь известен только при загрузке скилла —
+// там плейсхолдер остаётся.
+const GIGACODE_ROOT = '.gigacode/extensions/conveyor';
+
+// Тексты ядра общие, но кое-где платформам нужны разные абзацы: они обёрнуты
+// в `<!-- only:<цель> -->` … `<!-- /only -->`. Чужие блоки вырезаются целиком,
+// у своих снимаются только маркеры.
+function transformMd(text, target) {
+  let t = text.replace(/^<!-- only:([a-z-]+) -->\r?\n([\s\S]*?)^<!-- \/only -->\r?\n/gm, (_, who, body) =>
+    who === target ? body : '',
+  );
+  if (target === 'gigacode') t = t.split('<CONVEYOR_ROOT>').join(GIGACODE_ROOT);
+  return t;
+}
+
+function transformTree(dir, target) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) transformTree(p, target);
+    else if (entry.name.endsWith('.md')) fs.writeFileSync(p, transformMd(fs.readFileSync(p, 'utf8'), target));
+  }
+}
+
 function buildTarget(name, adapterDir) {
   const out = path.join(dist, name);
   rmrf(out);
@@ -79,6 +105,7 @@ function buildTarget(name, adapterDir) {
   copyDir(adapterDir, out);
   // nested core/
   copyDir(core, path.join(out, 'core'));
+  transformTree(out, name);
   return out;
 }
 
@@ -136,5 +163,5 @@ if (!built) {
 }
 console.log('\nУстановка Claude Code: скопируйте dist/claude-code как плагин');
 console.log('(.claude-plugin/plugin.json, skills/, agents/, hooks/, core/).');
-console.log('Установка GigaCode: gigacode extensions install dist/gigacode');
-console.log('(манифест gigacode-extension.json; ручной cp не регистрирует расширение).');
+console.log('Установка GigaCode: скопируйте dist/gigacode в рабочий репозиторий');
+console.log('как .gigacode/extensions/conveyor и закоммитьте (см. INSTALL.md, шаг 4).');

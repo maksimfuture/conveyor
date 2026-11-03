@@ -327,7 +327,7 @@ function main() {
           'deny',
           `conveyor: «${t}» — устройство cmd.exe; в этой оболочке такой редирект СОЗДАЁТ файл. ` +
             'Отбрасывайте вывод в /dev/null; существование файла проверяйте инструментами ' +
-            'платформы или node -e "process.exit(require(\'fs\').existsSync(\'<путь>\')?0:1)".',
+            'платформы (Read/Glob) — не node -e: в GigaCode inline-код запрещён политикой.',
         );
       }
       if (hasSubstitution(t)) {

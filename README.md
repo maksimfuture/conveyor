@@ -41,7 +41,7 @@ conveyor/
 │                         #   validate-task-folder, repos-status, migrate-workspace
 ├── adapters/
 │   ├── claude-code/      #   плагин Claude Code (skills, agents, hooks)
-│   └── gigacode/         #   расширение GigaCode CLI (gigacode-extension.json)
+│   └── gigacode/         #   расширение GigaCode CLI (skills, agents, команды-обёртки)
 └── scripts/build.mjs     # сборка dist/claude-code и dist/gigacode
 ```
 
@@ -60,12 +60,13 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 
 - **Claude Code:** используйте `dist/claude-code/` как плагин (внутри —
   `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/`, `core/`).
-- **GigaCode CLI:** установите штатной командой
-  `gigacode extensions install dist/gigacode` (подтвердите
-  security-предупреждение), затем `gigacode` — команды `/conveyor:*`
-  появятся (`gigacode extensions list`). Ручное `cp -r` НЕ регистрирует
-  расширение. Манифест — `gigacode-extension.json` (иное имя GigaCode молча
-  пропускает). Подробности — `adapters/gigacode/README.md`.
+- **GigaCode CLI:** положите `dist/gigacode/` В рабочий репозиторий —
+  `.gigacode/extensions/conveyor/` — и закоммитьте; запускайте `gigacode`
+  из корня рабочего репозитория (`gigacode extensions list` покажет
+  `/conveyor:*`). Глобальная установка в `~/.gigacode` не работает: политика
+  GigaCode не даёт агенту запускать скрипты вне проекта. Внутри расширения —
+  скиллы этапов, агенты ролей и команды-обёртки; подробности —
+  `adapters/gigacode/README.md`.
 
 Требуется Node.js ≥ 14 и git в PATH.
 
@@ -91,6 +92,10 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 Задачу заводит `/conveyor:create-specification`: аналитик запускает его по
 `INTENT-ID` (новая задача) или по `TASK-ID` (продолжение начатой), указывает
 тип (`FE`, `BE` или `FE-BE` — тогда заводятся две связанные задачи) и номер.
+Без intent'а — по ключу задачи Jira и постановкой текстом в чате:
+`/conveyor:create-specification MAMGM-238 BE <постановка>`. TASK-ID тогда —
+ключ Jira (номер не спрашивается), постановка сохраняется в
+`meta.json → request` и заменяет intent в обеих фазах этапа.
 
 ### Роли (агенты)
 
@@ -290,7 +295,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   `clean -f` и прочие `push` → запрос подтверждения.
 
 В **GigaCode CLI** перехватчиков нет — те же guard-скрипты вызываются самими
-командами (см. `adapters/gigacode/QWEN.md`), а git всегда идёт через
+командами (см. `adapters/gigacode/GIGACODE.md`), а git всегда идёт через
 `git-ops.mjs` (в нём нет `push`/`--force`). Это осознанная деградация: там
 защита срабатывает только в точках, где команда её вызвала.
 

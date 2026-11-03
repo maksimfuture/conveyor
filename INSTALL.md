@@ -27,7 +27,8 @@ cd путь/к/conveyor        # каталог, где лежат core/, adapte
 node scripts/build.mjs
 ```
 Появится `dist/gigacode/` — готовое расширение (манифест
-`gigacode-extension.json`, `QWEN.md`, `commands/conveyor/*`, вложенный `core/`).
+`gigacode-extension.json`, контекст `GIGACODE.md`, скиллы этапов `skills/*`,
+агенты ролей `agents/*`, команды `commands/conveyor/*`, вложенный `core/`).
 
 ### Шаг 3. (Опционально) Прогнать самопроверку
 ```
@@ -35,33 +36,55 @@ node scripts/check.mjs
 ```
 Должно закончиться строкой «Все проверки пройдены».
 
-### Шаг 4. Установить расширение штатной командой GigaCode
-```
-gigacode extensions install dist/gigacode
-```
-GigaCode покажет security-предупреждение («Extensions may introduce
-unexpected behavior») — подтвердите вводом `Y`.
-Команда сама скопирует файлы в `~/.gigacode/extensions/conveyor/` и
-ЗАРЕГИСТРИРУЕТ расширение в реестре.
+### Шаг 4. Положить расширение в рабочий репозиторий и закоммитить
+Расширение ставится НЕ в домашний каталог, а В рабочий (фасадный)
+репозиторий — `<рабочий репозиторий>/.gigacode/extensions/conveyor/` — и
+коммитится в него. Причина — политика GigaCode: агенту запрещено запускать
+файлы вне проекта (`~/.gigacode/extensions/…`) и inline-код (`node -e`), а
+скрипты ядра внутри проекта он запускать может. Заодно у всей команды одна
+версия конвейера, а обновление — обычный MR.
 
-> Не копируйте вручную (`cp -r`) — ручное копирование не регистрирует
-> расширение, и в списке команд оно не появится.
+Рабочего репозитория ещё нет — заведите пустой (`git init <каталог>`):
+структуру в нём создаст `/conveyor:setup` на шаге 6.
+
+Делает один человек (тимлид), остальные получают расширение через `git pull`:
+```
+cd <рабочий репозиторий>
+rm -rf .gigacode/extensions/conveyor
+mkdir -p .gigacode/extensions
+cp -r <путь/к/conveyor>/dist/gigacode .gigacode/extensions/conveyor
+git add .gigacode/extensions/conveyor
+git commit -m "feature: conveyor <версия> для GigaCode"
+```
+Каталог удаляется перед копированием, чтобы не остались файлы, удалённые в
+новой версии. `.gigacode/` в `.gitignore` попадать не должен.
+
+Стояла прежняя глобальная установка — снимите её, иначе GigaCode увидит два
+расширения `conveyor`:
+```
+gigacode extensions uninstall conveyor
+```
 
 ### Шаг 5. Проверить, что расширение встало
+Из корня рабочего репозитория:
 ```
 gigacode extensions list
 ```
-Ожидаемый вывод: `conveyor (<версия>)`, `Enabled (User): true`,
-`Enabled (Workspace): true` и 10 команд:
+Ожидаемый вывод: `conveyor (3.0.0)`, `Enabled (Workspace): true` и 10 команд:
 `/conveyor:setup`, `/conveyor:intent`, `/conveyor:create-specification`,
 `/conveyor:create-plan`, `/conveyor:implement-plan`,
 `/conveyor:create-autotest-plan`, `/conveyor:implement-auto-test`,
 `/conveyor:update-tms`, `/conveyor:run-auto-test`, `/conveyor:task-status`.
 
-Каталог установки команды определяют сами: шаг «Корень расширения» в начале
-каждой команды ищет `~/.gigacode/extensions/conveyor` и проверяет, что там
-лежит ядро плагина. Не нашёл — этап останавливается и спрашивает каталог у
-вас, а не гадает.
+Расширения нет в списке — значит, ваша версия GigaCode не подхватывает
+проектные расширения простым наличием каталога; посмотрите в
+`gigacode extensions install --help`, как поставить расширение в область
+проекта (workspace), и сообщите в канал конвейера.
+
+Каталог установки команды знают заранее: корень расширения —
+`.gigacode/extensions/conveyor` относительно корня рабочего репозитория,
+поэтому GigaCode нужно запускать именно из него. Агенты этот каталог не
+правят: guard-writes запрещает запись в него и вне этапа.
 
 ### Шаг 6. Запустить GigaCode в рабочем репозитории и инициализировать его
 Рабочий репозиторий (workspace) — отдельный git-репозиторий команды с
@@ -173,11 +196,9 @@ node <plugin>/core/scripts/repos-status.mjs
 Готово — можно запускать `/conveyor:intent`.
 
 ### Обновление / удаление
-```
-gigacode extensions uninstall conveyor          # снять
-node scripts/build.mjs                           # пересобрать после правок
-gigacode extensions install dist/gigacode        # поставить заново
-```
+Обновление — повторить шаги 2 и 4 (пересобрать и заменить каталог
+`.gigacode/extensions/conveyor` в рабочем репозитории) и закоммитить через MR.
+Удаление — `git rm -r .gigacode/extensions/conveyor` и коммит.
 
 ---
 
@@ -227,8 +248,9 @@ Claude Code плагином не считает и путь плагина в S
 
 | Симптом | Причина и решение |
 |---|---|
-| `gigacode extensions list` не показывает conveyor; при установке был `Only gigacode-extension.json is supported` | Манифест назван неверно. Он ОБЯЗАН быть `gigacode-extension.json`. Проверьте `dist/gigacode/gigacode-extension.json`, пересоберите (`node scripts/build.mjs`) и поставьте через `gigacode extensions install`. |
-| Команды `/conveyor:*` не появились | Расширение скопировано вручную (`cp -r`) — оно не зарегистрировано. Снимите (`gigacode extensions uninstall conveyor`) и поставьте через `gigacode extensions install dist/gigacode`. |
+| `gigacode extensions list` не показывает conveyor | Проверьте, что GigaCode запущен из корня рабочего репозитория и в нём есть `.gigacode/extensions/conveyor/gigacode-extension.json` (манифест ОБЯЗАН называться так: при другом имени GigaCode молча пропускает расширение). Всё на месте, а расширения нет — шаг 5, абзац про область проекта. |
+| Этап встаёт: «политика блокирует» запуск `node …` или `node -e` | Расширение стоит глобально (`~/.gigacode/extensions`) или устарело. Снимите глобальное (`gigacode extensions uninstall conveyor`) и положите текущую сборку в рабочий репозиторий (шаг 4). |
+| Скрипт не найден: `.gigacode/extensions/conveyor/core/scripts/…` | GigaCode запущен не из корня рабочего репозитория либо агент ушёл `cd` в другой каталог — путь к ядру относительный. Перезапустите GigaCode из корня. |
 | Скрипты падают: `node: command not found` | Нет Node.js в PATH. Установите Node.js ≥ 14. |
 | При запуске команды — «Здесь не инициализирован рабочий репозиторий conveyor» | Не выполнен `/conveyor:setup` в этом каталоге, либо нет `settings.json`. Запустите `/conveyor:setup`. |
 | Этап останавливается: рабочая копия не склонирована | В `repos/<каталог>` пусто. Склонируйте туда репозиторий (шаг 7) — плагин этого не делает. Состояние всех копий покажет `/conveyor:setup`. |

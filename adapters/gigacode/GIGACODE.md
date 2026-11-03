@@ -4,25 +4,26 @@
 анализ, фронтенд, бэкенд, автотесты; бэкенд обычно разложен на несколько
 репозиториев — `core`, `api`, `common`, `config`). Их рабочие копии лежат ВНУТРИ рабочего
 репозитория — в `repos/*`; клонирует их себе сам разработчик, плагин НИЧЕГО
-не клонирует. Команды регистрируются как `/conveyor:*`. Манифест расширения —
-`gigacode-extension.json`.
+не клонирует. Манифест расширения — `gigacode-extension.json`.
+
+Устройство расширения: команды `/conveyor:*` — тонкие обёртки, каждая
+запускает скилл этапа `conveyor-<этап>` (`skills/<этап>/SKILL.md`); роли —
+агенты GigaCode (`agents/*.md`); ядро (стейджи, промпты ролей, шаблоны,
+скрипты) — в `core/`. Скилл этапа без команды не запускай: этап меняет
+репозитории и ведёт ветки, его стартует только человек.
 
 ## Общий протокол выполнения команды
-`<CONVEYOR_ROOT>` — АБСОЛЮТНЫЙ путь к каталогу установки расширения; всё ядро
-в `<CONVEYOR_ROOT>/core/`. Это ПЛЕЙСХОЛДЕР, а не переменная окружения:
-переменной `CONVEYOR_ROOT` не существует, `$` с фигурными скобками раскроется
-в ПУСТУЮ строку, и `node` уйдёт искать файл в корне диска. Настоящий путь
-печатает шаг «Корень расширения» в начале каждой команды — подставляй
-напечатанное буквально во все команды и пути.
+Расширение установлено В рабочий репозиторий (он же проект GigaCode) и
+закоммичено в него: корень расширения — `.gigacode/extensions/conveyor`, всё
+ядро — в `.gigacode/extensions/conveyor/core/`. Пути — ОТНОСИТЕЛЬНО корня
+рабочего репозитория (каталога с settings.json), поэтому команды запускай из
+него, не уходя `cd` в другие каталоги: относительный путь из чужого каталога
+не найдётся. Каталог
+расширения агенты НЕ правят — его обновляют сборкой плагина.
 
-Каталог установки лежит ВНЕ текущего проекта (по умолчанию
-`~/.gigacode/extensions/conveyor`). Если файловый инструмент ограничен
-каталогом проекта и файлы этапа не читает — читай их оболочкой:
-`cat "<CONVEYOR_ROOT>/core/stages/_common.md"`.
-
-После шага «Корень расширения» каждая команда (кроме `setup` и `task-status`):
+Каждая команда (кроме `setup` и `task-status`):
 1. Первым делом получает конфигурацию:
-   `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`. В ответе поля
+   `node ".gigacode/extensions/conveyor/core/scripts/resolve-config.mjs"`. В ответе поля
    `found`, `workspaceRoot`, `config`, `units`, `codebase`, `links`,
    `missingLinks`, `urlLinks`, `configErrors`, `fastMode`;
    `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch,
@@ -52,20 +53,21 @@
    вызываются по каждой.
 2. Устанавливает рабочую область — момент и аргументы задаёт шаг 1 файла
    этапа (после определения типа/TASK-ID):
-   `node "<CONVEYOR_ROOT>/core/scripts/scope.mjs" set --stage <этап>
+   `node ".gigacode/extensions/conveyor/core/scripts/scope.mjs" set --stage <этап>
    --type FE|BE|FE-BE [--task TASK-ID]` (--type обязателен — от него зависит
    область записи; --task опционален; повторный set перезаписывает область).
    У этапа `intent` типа задачи ещё нет: `set --stage intent --task
    <INTENT-ID>` без `--type`. При завершении И при досрочной остановке
    этапа — `scope.mjs clear`.
-3. Читает и выполняет ТОЧНО `<CONVEYOR_ROOT>/core/stages/_common.md` и
-   `<CONVEYOR_ROOT>/core/stages/<команда>.md`.
-4. Роли-агентов (business-analyst, system-analyst, frontend/backend-developer,
-   qa-autotest-engineer, reviewer) запускает как СУБАГЕНТОВ с телом промпта из
-   `<CONVEYOR_ROOT>/core/prompts/<агент>.md`, передавая контекст в промпте
+3. Читает и выполняет ТОЧНО `.gigacode/extensions/conveyor/core/stages/_common.md` и
+   `.gigacode/extensions/conveyor/core/stages/<команда>.md`.
+4. Роли (business-analyst, system-analyst, frontend/backend-developer,
+   qa-autotest-engineer, reviewer) запускает как СУБАГЕНТОВ — одноимённых
+   агентов расширения; тело роли агент читает сам из
+   `.gigacode/extensions/conveyor/core/prompts/<агент>.md`. Контекст передавай в задании
    (субагент не видит сессию). Если этап производит артефакт — вставь в
    промпт агента ПОЛНЫЙ текст шаблона из
-   `<CONVEYOR_ROOT>/core/templates/<имя>.md` (не ссылку!): агент заполняет
+   `.gigacode/extensions/conveyor/core/templates/<имя>.md` (не ссылку!): агент заполняет
    каркас, не меняя структуру разделов. Также проверь в корне рабочей копии
    файлы соглашений (`.gigacode/rules/*.md`, `GIGACODE.md`, `CLAUDE.md`,
    `AGENTS.md`) и вставь их текст в промпт агента (до ~200 строк; длиннее —
@@ -98,10 +100,10 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 ## Защита (важно: в GigaCode нет хуков-перехватчиков)
 В Claude Code запись и git-операции перехватывают хуки. В GigaCode
 перехватчиков нет, поэтому защита исполняется САМОЙ командой:
-- **git — только через** `<CONVEYOR_ROOT>/core/scripts/git-ops.mjs` (в нём
+- **git — только через** `.gigacode/extensions/conveyor/core/scripts/git-ops.mjs` (в нём
   нет `push`/`--force` — они структурно невозможны);
 - **перед записью файла** вызывай
-  `node "<CONVEYOR_ROOT>/core/scripts/guard-writes.mjs"` с JSON
+  `node ".gigacode/extensions/conveyor/core/scripts/guard-writes.mjs"` с JSON
   `{"cwd":"<рабочий репозиторий>","tool_input":{"file_path":"<путь>"}}` на
   stdin; если ответ `permissionDecision:"deny"` — не пиши, объясни;
 - **перед git-командой** аналогично вызывай `guard-bash.mjs` с
@@ -115,7 +117,7 @@ Guard-скрипты (см. ниже) при активной рабочей о�
   ИСХОДНИКИ пиши исключительно в рабочую копию кодовой базы; файл кода в
   `docs/specs/tasks/` — ошибка (guard-writes её блокирует). Перед
   `stages.<этап>.done = true` прогоняй
-  `node "<CONVEYOR_ROOT>/core/scripts/validate-task-folder.mjs" --task
+  `node ".gigacode/extensions/conveyor/core/scripts/validate-task-folder.mjs" --task
   <папка задачи>` и убирай из папки задачи всё постороннее;
 - вызов guard-скрипта — это ВСЯ проверка (dry-run). НИКОГДА не создавай
   пробные файлы («test-write.txt» и т.п.) для «проверки записи» — ни в
@@ -125,8 +127,10 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 - НИКАКИХ cmd.exe-идиом в оболочке: `dir /b`, `> nul`, `del`, `copy`,
   `type` НЕ работают в bash-подобной оболочке — `> nul` СОЗДАЁТ файл nul
   (guard это блокирует). Отбрасывай вывод в `/dev/null`; существование
-  файла проверяй инструментами платформы (Read/Glob) или
-  `node -e "process.exit(require('fs').existsSync('<путь>')?0:1)"`;
+  файла проверяй инструментами платформы (Read/Glob). `node -e` не
+  используй — inline-код запрещён политикой GigaCode;
+- каталог расширения `.gigacode/extensions/conveyor/` не правь никогда
+  (guard-writes его блокирует): расширение обновляется сборкой плагина;
 - `push`/MR — только по явному подтверждению пользователя.
 
 Деградация честная: в Claude Code защита ловит любое действие модели

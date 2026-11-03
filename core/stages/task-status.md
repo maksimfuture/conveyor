@@ -12,7 +12,8 @@
 2. Прочитай `docs/specs/tasks/FE/*/meta.json` и
    `docs/specs/tasks/BE/*/meta.json`, а также список папок `intents/*/`.
 3. Без TASK-ID — две таблицы:
-   - задачи: TASK-ID, тип, title, intentId, прогресс этапов (например, 3/7),
+   - задачи: TASK-ID, тип, title, intentId (у задачи без intent'а с
+     `meta.json → request` — «без intent'а»), прогресс этапов (например, 3/7),
      следующий этап, ветки, связанная задача (для FE-BE пар);
    - intent'ы, на которые НЕ ссылается ни одна задача («заведён, задача не
      создана»). Обратный индекс строй по `meta.json → intentId`, в самом

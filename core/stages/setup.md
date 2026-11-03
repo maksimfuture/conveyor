@@ -19,8 +19,9 @@
 
 ## Алгоритм
 1. Определи роль запуска: есть ли `settings.json` в текущем каталоге?
-   Существование файлов проверяй инструментами платформы (Read/Glob) или
-   `node -e "...fs.existsSync..."` — не shell-командами (`dir`, `> nul`).
+   Существование файлов проверяй инструментами платформы (Read/Glob) — не
+   shell-командами (`dir`, `> nul`) и не `node -e` (в GigaCode inline-код
+   запрещён политикой).
    - **есть** — репозиторий уже инициализирован: НЕ трогай ни его, ни
      остальную структуру; скажи, что инициализация уже сделана, и переходи
      сразу к шагу 4 — это роль «диагностика окружения»;
@@ -33,19 +34,17 @@
      `repos/`;
    - `settings.json` и `.env.example` — СКОПИРУЙ ФАЙЛЫ шаблонов МЕХАНИЧЕСКИ
      (НЕ набирай содержимое по памяти — потеряешь новые ключи):
-     `node -e "const f=require('fs'),r=process.argv[1];f.copyFileSync(r+'/core/templates/settings.example.json','settings.json');f.copyFileSync(r+'/core/templates/env.example','.env.example')" "<CONVEYOR_ROOT>"`
-     Корень плагина передавай ИМЕННО аргументом (`process.argv[1]`), а не
-     подставляй внутрь JS-строки: на Windows это путь с обратными слэшами,
-     и JS разберёт их как escape (`\U`, `\t`) — команда упадёт с ENOENT на
-     пути, которого ты не писал. В аргументе escape не действует.
-     Затем, если пользователь выбрал не-дефолтный taskPrefix, — точечная
+     `node "<CONVEYOR_ROOT>/core/scripts/setup-files.mjs" init`
+     (из корня рабочего репозитория; скрипт копирует settings.example.json →
+     settings.json и env.example → .env.example, готовые файлы не
+     перезаписывает). Затем, если пользователь выбрал не-дефолтный taskPrefix, — точечная
      правка ТОЛЬКО этого значения в скопированном settings.json.
    Сам `.env` не создавай: он не обязателен (в нём только личные
    `CONVEYOR_REVIEW_ROUNDS` и `CONVEYOR_FAST`), а без него действуют
    умолчания. Ссылки на репозитории и основные ветки живут в `settings.json`.
    Самопроверка: сверь ключи созданного settings.json с шаблоном —
-   `node -e "const r=process.argv[1];const a=Object.keys(require(r+'/core/templates/settings.example.json')),b=Object.keys(require('./settings.json'));const m=a.filter(k=>!b.includes(k));if(m.length){console.log('missing:',m.join(','));process.exit(1)}" "<CONVEYOR_ROOT>"`
-   — при missing дополни файл недостающими ключами из шаблона.
+   `node "<CONVEYOR_ROOT>/core/scripts/setup-files.mjs" check-keys`
+   — при непустом `missing` дополни файл недостающими ключами из шаблона.
 4. `.gitignore` — в ОБЕИХ ролях, до диагностики. Он должен появиться ДО
    того, как в `repos/` появятся рабочие копии (иначе первый же `git status`
    затянет чужие рабочие деревья целиком), а при диагностике это

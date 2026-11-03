@@ -428,12 +428,15 @@ console.log('hooks.json — включение защиты:');
   const uniq = new Set(manifests.map(([, m]) => m.version));
   if (uniq.size === 1) ok('манифесты: версия одна во всех трёх (' + [...uniq][0] + ')');
   else bad('манифесты: версии разошлись — ' + versions.join(', '));
-  // Мажорную требуем ровно 2: конвейер 2.x несовместим с рабочими
+  // Мажорную требуем ровно 3. Конвейер 2.x+ несовместим с рабочими
   // репозиториями 1.x (schemaVersion, состав этапов, settings.json), и версия
-  // — то, по чему человек решает, нужна ли ему migrate-workspace.
-  const wrongMajor = manifests.filter(([, m]) => !/^2\.\d+\.\d+$/.test(String(m.version)));
-  if (!wrongMajor.length) ok('манифесты: версия мажорная 2 (конвейер 2.x)');
-  else bad('манифесты: не 2.x — ' + wrongMajor.map(([rel, m]) => `${rel}=${m.version}`).join(', '));
+  // — то, по чему человек решает, нужна ли ему migrate-workspace. 3.x
+  // работает с теми же рабочими репозиториями, что 2.x; мажорная поднята из-за
+  // смены установки GigaCode (расширение — в рабочем репозитории, скиллы и
+  // агенты): глобально поставленная 2.x под политикой GigaCode не работает.
+  const wrongMajor = manifests.filter(([, m]) => !/^3\.\d+\.\d+$/.test(String(m.version)));
+  if (!wrongMajor.length) ok('манифесты: версия мажорная 3 (конвейер 3.x)');
+  else bad('манифесты: не 3.x — ' + wrongMajor.map(([rel, m]) => `${rel}=${m.version}`).join(', '));
 
   // Описание проверяем у двух манифестов, которые платформа показывает
   // человеку. package.json — служебный (private), его описание никуда не идёт.
@@ -494,19 +497,65 @@ for (const a of ['business-analyst', 'system-analyst', 'frontend-developer', 'ba
   else ok(`agent ${a} → core/prompts/${a}.md`);
 }
 
-// 2a) GigaCode adapter: every skill has a matching /conveyor command
+// 2a) GigaCode adapter: этап — скилл conveyor-<этап>, команда /conveyor:<этап>
+// — тонкая обёртка над ним, роли — агенты расширения. Манифест обязан
+// объявить файл контекста, агентов и скиллы: без contextFileName GigaCode
+// не грузит протокол вовсе, и этап идёт без правил защиты.
 console.log('GigaCode-адаптер:');
-if (!exists('adapters/gigacode/QWEN.md')) bad('нет adapters/gigacode/QWEN.md');
-else ok('adapters/gigacode/QWEN.md');
+if (!exists('adapters/gigacode/GIGACODE.md')) bad('нет adapters/gigacode/GIGACODE.md');
+else ok('adapters/gigacode/GIGACODE.md');
+if (exists('adapters/gigacode/QWEN.md')) bad('остался adapters/gigacode/QWEN.md — файл контекста теперь GIGACODE.md');
+{
+  const ext = JSON.parse(fs.readFileSync(path.join(root, 'adapters/gigacode/gigacode-extension.json'), 'utf8'));
+  const wrong = [
+    ['contextFileName', 'GIGACODE.md'],
+    ['agents', 'agents'],
+    ['skills', 'skills'],
+  ].filter(([k, v]) => ext[k] !== v);
+  if (!wrong.length) ok('gigacode-extension.json: contextFileName, agents, skills объявлены');
+  else bad('gigacode-extension.json: не объявлено — ' + wrong.map(([k, v]) => `${k}=${v}`).join(', '));
+}
 for (const s of skills) {
-  const rel = `adapters/gigacode/commands/conveyor/${s}.md`;
-  if (!exists(rel)) bad(`gigacode: нет команды ${s}`);
+  const skillRel = `adapters/gigacode/skills/${s}/SKILL.md`;
+  const cmdRel = `adapters/gigacode/commands/conveyor/${s}.md`;
+  if (!exists(skillRel)) bad(`gigacode: нет скилла ${s}`);
+  else {
+    const txt = fs.readFileSync(path.join(root, skillRel), 'utf8');
+    if (new RegExp(`^---\\r?\\nname: conveyor-${s}\\r?\\n`).test(txt) && /description:/.test(txt) && txt.includes(`core/stages/${s}.md`))
+      ok(`gigacode скилл conveyor-${s} → core/stages/${s}.md`);
+    else bad(`gigacode скилл ${s}: нет frontmatter name/description или ссылки на стейдж`);
+  }
+  if (!exists(cmdRel)) bad(`gigacode: нет команды ${s}`);
+  else {
+    const txt = fs.readFileSync(path.join(root, cmdRel), 'utf8');
+    // Обёртка, а не копия тела: два текста этапа разъедутся при первой правке.
+    const body = txt.replace(/^---[\s\S]*?\n---\r?\n/, '');
+    if (txt.startsWith('---') && /description:/.test(txt) && body.includes(`conveyor-${s}`) && body.includes(`skills/${s}/SKILL.md`) && !body.includes('core/stages/'))
+      ok(`gigacode команда ${s} → скилл conveyor-${s}`);
+    else bad(`gigacode команда ${s}: не обёртка над скиллом conveyor-${s}`);
+  }
+}
+for (const a of ['business-analyst', 'system-analyst', 'frontend-developer', 'backend-developer', 'qa-autotest-engineer', 'reviewer']) {
+  const rel = `adapters/gigacode/agents/${a}.md`;
+  if (!exists(rel)) bad(`gigacode: нет агента ${a}`);
   else {
     const txt = fs.readFileSync(path.join(root, rel), 'utf8');
-    if (txt.startsWith('---') && /description:/.test(txt) && txt.includes(`core/stages/${s}.md`))
-      ok(`gigacode команда ${s} → core/stages/${s}.md`);
-    else bad(`gigacode команда ${s}: нет frontmatter description или ссылки на стейдж`);
+    if (new RegExp(`^---\\r?\\nname: ${a}\\r?\\n`).test(txt) && txt.includes(`core/prompts/${a}.md`))
+      ok(`gigacode агент ${a} → core/prompts/${a}.md`);
+    else bad(`gigacode агент ${a}: нет frontmatter name или ссылки на core/prompts/${a}.md`);
   }
+}
+// В Claude Code у reviewer и business-analyst нет Edit в `tools`. В GigaCode
+// поля `tools` нет: имена инструментов там другие, и с неверным списком агент
+// остался бы без инструментов вовсе. Хуков тоже нет, поэтому запрет правок
+// обязан стоять в карточке текстом, включая правку оболочкой.
+{
+  const loose = ['reviewer', 'business-analyst'].filter((a) => {
+    const txt = fs.readFileSync(path.join(root, `adapters/gigacode/agents/${a}.md`), 'utf8').replace(/\s+/g, ' ');
+    return !/НЕ правишь/.test(txt) || !/оболочкой/.test(txt);
+  });
+  if (!loose.length) ok('gigacode: reviewer и business-analyst — запрет правок (и оболочкой) записан в карточке');
+  else bad('gigacode: в карточке нет запрета правок: ' + loose.join(', '));
 }
 
 // 2a-bis) Корень плагина: одна нотация и явный источник пути.
@@ -551,24 +600,84 @@ console.log('Корень плагина — нотация и источник 
   // Откуда берётся НАСТОЯЩИЙ путь. Claude Code подставляет его только в тело
   // SKILL.md (`${CLAUDE_PLUGIN_ROOT}`); в файлах core/ подстановки нет — их
   // модель читает с диска как обычные файлы. В GigaCode подстановки нет вовсе,
-  // поэтому путь добывает сама команда — шагом «Корень расширения» в начале
-  // КАЖДОЙ команды: QWEN.md лежит в каталоге расширения и в фасадный проект
-  // может не попасть, полагаться на него нельзя.
+  // но расширение ставится В рабочий репозиторий, поэтому корень — постоянный
+  // относительный путь: адаптер пишет его буквально, а в общие тексты ядра его
+  // подставляет сборка (build.mjs). Плейсхолдера в адаптере GigaCode быть не
+  // должно — модели там нечего подставлять. Путь называет каждый скилл этапа
+  // (GIGACODE.md грузится не всегда — например, у скилла, прочитанного
+  // обёрткой с диска).
   const noSource = [];
-  const noStop = [];
   for (const s of skills) {
     const sk = fs.readFileSync(path.join(root, `adapters/claude-code/skills/${s}/SKILL.md`), 'utf8');
     if (!/\$\{CLAUDE_PLUGIN_ROOT\}/.test(sk)) noSource.push(`skills/${s}`);
-    const cmd = fs.readFileSync(path.join(root, `adapters/gigacode/commands/conveyor/${s}.md`), 'utf8');
-    if (!/Корень расширения/.test(cmd) || !/homedir\(\)/.test(cmd)) noSource.push(`gigacode/${s}`);
-    // Ветка «не нашёл» — вторая половина шага, и она размножена по восьми
-    // файлам: потеряется в одной — этап пойдёт гадать путь вместо остановки.
-    if (!/NOT_FOUND/.test(cmd)) noStop.push(`gigacode/${s}`);
+    const gsk = fs.readFileSync(path.join(root, `adapters/gigacode/skills/${s}/SKILL.md`), 'utf8');
+    if (!/\*\*Корень расширения\*\* — `\.gigacode\/extensions\/conveyor`/.test(gsk.replace(/\s+/g, ' '))) noSource.push(`gigacode/${s}`);
   }
-  if (!noSource.length) ok(`путь корня добывается в каждой команде обоих адаптеров (${skills.length} x 2)`);
-  else bad('команда не добывает путь корня: ' + noSource.join(', '));
-  if (!noStop.length) ok('ветка «корень не найден» — остановка с вопросом — есть в каждой команде GigaCode');
-  else bad('в команде нет ветки «корень не найден»: ' + noStop.join(', '));
+  const placeholderInGiga = mdFiles
+    .filter((f) => path.relative(root, f).split(path.sep).join('/').startsWith('adapters/gigacode/'))
+    .filter((f) => fs.readFileSync(f, 'utf8').includes('CONVEYOR_ROOT'))
+    .map((f) => path.relative(root, f).split(path.sep).join('/'));
+  if (!placeholderInGiga.length) ok('адаптер GigaCode пишет корень буквально — плейсхолдера CONVEYOR_ROOT в нём нет');
+  else bad('в адаптере GigaCode остался плейсхолдер CONVEYOR_ROOT: ' + placeholderInGiga.join(', '));
+  if (!noSource.length) ok(`путь корня назван в каждом скилле обоих адаптеров (${skills.length} x 2)`);
+  else bad('скилл не называет путь корня: ' + noSource.join(', '));
+
+  // Путь корня в GigaCode утверждается, а не вычисляется: GigaCode, запущенный
+  // из подкаталога, его не найдёт, и первый `node` упадёт с MODULE_NOT_FOUND
+  // без объяснения причины. Поэтому каждый скилл ПРОВЕРЯЕТ наличие ядра по
+  // этому пути и при отсутствии останавливает этап с вопросом.
+  const noStop = skills.filter((s) => {
+    const gsk = fs.readFileSync(path.join(root, `adapters/gigacode/skills/${s}/SKILL.md`), 'utf8').replace(/\s+/g, ' ');
+    return !/\.gigacode\/extensions\/conveyor\/core\/stages\/_common\.md`\. Файла нет — останови этап/.test(gsk);
+  });
+  if (!noStop.length) ok('ветка «ядро не найдено по пути корня» — остановка с вопросом — есть в каждом скилле GigaCode');
+  else bad('скилл GigaCode не проверяет наличие ядра по пути корня: ' + noStop.join(', '));
+
+  // Политика GigaCode запрещает inline-интерпретацию (`node -e`) и команды со
+  // ссылкой на ~/.gigacode: этап, предписывающий их, встаёт на первом шаге.
+  // Ядро общее с Claude Code, поэтому запрет — на весь текст, что читает модель:
+  // строки code fence-блоков и inline-спаны. Fence-блоки вырезаем ДО поиска
+  // спанов: тройные backtick сбивают парность одинарных, и всё после первого
+  // блока проверялось бы со сдвигом. Упоминание пути в тексте («глобальная
+  // установка в `~/.gigacode` не работает») — не предписание: ловим команды.
+  const SHELL_VERB = /^(node|cat|cp|ls|cd|bash|sh|rm|mkdir|gigacode)\s/;
+  const forbidden = (cmd) =>
+    /^node\s+-e\s+["']/.test(cmd) || /homedir\(\)/.test(cmd) || (SHELL_VERB.test(cmd) && /~\/\.gigacode/.test(cmd));
+  const commandsIn = (txt) => {
+    const fenceRe = /^\s*```[^\n]*\n([\s\S]*?)^\s*```/gm;
+    const out = [];
+    for (const m of txt.matchAll(fenceRe)) out.push(...m[1].split('\n').map((l) => l.trim()));
+    for (const m of txt.replace(fenceRe, '').matchAll(/`([^`\n]+)`/g)) out.push(m[1].trim());
+    return out;
+  };
+  const inline = [];
+  for (const file of mdFiles) {
+    const rel = path.relative(root, file).split(path.sep).join('/');
+    for (const c of commandsIn(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')))
+      if (forbidden(c)) inline.push(`${rel}: ${c.slice(0, 50)}`);
+  }
+  // Тексты отказов guard-скриптов модель исполняет так же буквально, как стейдж.
+  (function walkMjs(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walkMjs(abs);
+      else if (e.name.endsWith('.mjs') && /node -e\s+\\?["']/.test(fs.readFileSync(abs, 'utf8')))
+        inline.push(`${path.relative(root, abs).split(path.sep).join('/')}: node -e в тексте скрипта`);
+    }
+  })(path.join(root, 'core'));
+  if (!inline.length) ok('ни один этап и скрипт не предписывает `node -e` и команды с ~/.gigacode (запрещены политикой GigaCode)');
+  else bad('предписан `node -e` или команда с ~/.gigacode: ' + inline.join('; '));
+
+  // Детектор выше сам по себе ломался на fence-блоках — держим его на образцах.
+  {
+    const probe = (txt) => commandsIn(txt).some(forbidden);
+    const afterFence = '```\nnode scripts/build.mjs\n```\nДалее `node -e "x()"` и всё.';
+    const inFence = 'Текст\n```\ncp -r dist ~/.gigacode/extensions/conveyor\n```\n';
+    const mention = 'Глобальная установка (`~/.gigacode/extensions`) не работает; `node -e` не используй.';
+    if (probe(afterFence) && probe(inFence) && !probe(mention))
+      ok('детектор `node -e`/~/.gigacode: ловит команду после fence и внутри fence, не ловит упоминание');
+    else bad('детектор `node -e`/~/.gigacode: ' + JSON.stringify({ afterFence: probe(afterFence), inFence: probe(inFence), mention: probe(mention) }));
+  }
 }
 
 // 2b) Review loop wired into the three producing stages
@@ -963,6 +1072,40 @@ console.log('Стейдж create-specification — две фазы:');
     );
 }
 
+// 2g-bis) create-specification без intent'а: задача по ключу Jira, постановка
+// текстом в чате. Ломается тихо в трёх местах. Постановка, не сохранённая в
+// meta.json, теряется на фазе B после обрыва: та идёт в другой сессии, где
+// чата нет. Без подтверждения опечатка в ключе заведённой задачи заводит
+// вторую задачу и переигрывает правки анализа. Ветка по INTENT-ID у задачи без
+// intent'а называлась бы «null-analysis». Скиллы читаются ДО стейджа, поэтому
+// режим обязан быть назван и в них.
+console.log('create-specification — запуск без intent:');
+{
+  const flat = (rel) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\s+/g, ' ');
+  const stage = flat('core/stages/create-specification.md');
+  const problems = [];
+  if (!/meta\.json → request/.test(stage)) problems.push('постановка не сохраняется в meta.json → request');
+  if (!/ключ[^.]{0,40}Jira/.test(stage)) problems.push('не сказано, что TASK-ID новой задачи без intent — ключ Jira');
+  if (!/подтверждение[^.]{0,80}без intent/.test(stage)) problems.push('нет подтверждения перед заведением задачи без intent');
+  if (!/<ID>-analysis/.test(stage) || /--branch <INTENT-ID>-analysis/.test(stage)) problems.push('ветка анализа не обобщена до <ID>-analysis');
+  if (!/request\.text\S* \(читай его из meta\.json/.test(stage)) problems.push('фаза B не читает постановку из meta.json');
+  // Число в начале постановки («3 экрана…») читалось бы как [номер].
+  if (!/позиции `\[номер\]` НЕТ/.test(stage) || !/постановка ЦЕЛИКОМ/.test(stage))
+    problems.push('не сказано, что у задачи без intent нет позиции [номер] и всё после типа — постановка');
+  // Опечатку в ключе заведённой задачи подтверждают не глядя, если не видно,
+  // какие задачи уже есть.
+  if (!/СПИСОК уже заведённых задач с тем же префиксом/.test(stage)) problems.push('в подтверждении нет списка заведённых задач проекта');
+  for (const rel of [
+    'adapters/claude-code/skills/create-specification/SKILL.md',
+    'adapters/gigacode/skills/create-specification/SKILL.md',
+  ]) {
+    const sk = flat(rel);
+    if (!/без intent/.test(sk) || !/meta\.json → request/.test(sk)) problems.push(`${rel}: режим без intent не назван`);
+  }
+  if (!problems.length) ok('create-specification: новая задача без intent — ключ Jira, подтверждение, постановка в meta.json, ветка <ID>-analysis');
+  else bad('create-specification без intent — ' + problems.join('; '));
+}
+
 // 2h) Скилл и команда — то, что модель читает ПЕРЕД стейджем. Пересказ старого
 // контракта (feature.md как предусловие, `--since`, analysisShaAtFeature)
 // уводит её на удалённый маршрут ещё до чтения самого стейджа.
@@ -971,7 +1114,7 @@ console.log('Скилл и команда create-specification — без ста
   const stale = [];
   for (const rel of [
     'adapters/claude-code/skills/create-specification/SKILL.md',
-    'adapters/gigacode/commands/conveyor/create-specification.md',
+    'adapters/gigacode/skills/create-specification/SKILL.md',
   ]) {
     const txt = fs.readFileSync(path.join(root, rel), 'utf8');
     for (const token of ['feature.md', 'create-feature', '--since', 'analysisShaAtFeature'])
@@ -988,7 +1131,7 @@ console.log('Скилл и команда create-specification — без ста
   const noTaskId = [
     'core/stages/create-specification.md',
     'adapters/claude-code/skills/create-specification/SKILL.md',
-    'adapters/gigacode/commands/conveyor/create-specification.md',
+    'adapters/gigacode/skills/create-specification/SKILL.md',
   ].filter((rel) => !/INTENT-ID\s*\|\s*TASK-ID/.test(fs.readFileSync(path.join(root, rel), 'utf8')));
   const tsAdvice = (
     fs
@@ -1209,7 +1352,7 @@ console.log('Этап create-autotest-plan — план по специфика�
   const rels = [
     'core/stages/create-autotest-plan.md',
     'adapters/claude-code/skills/create-autotest-plan/SKILL.md',
-    'adapters/gigacode/commands/conveyor/create-autotest-plan.md',
+    'adapters/gigacode/skills/create-autotest-plan/SKILL.md',
   ];
   const absent = rels.filter((rel) => !exists(rel));
   if (absent.length) bad('create-autotest-plan: нет файлов этапа: ' + absent.join(', '));
@@ -1668,50 +1811,21 @@ console.log('Стейдж setup — инициализация и диагнос
   // Каталоги ищем в САМОМ шаге создания структуры, а не по всему файлу: тот же
   // список перечислен в DoD, и по всему файлу проверка проходит даже когда шаг
   // каталог больше не создаёт.
-  const initStep = stepWith('copyFileSync');
+  const initStep = stepWith('setup-files.mjs" init');
   const dirs = [`${TASKS_DIR}/FE`, `${TASKS_DIR}/BE`, 'intents/', 'repos/'].filter((d) => !initStep.includes(d));
-  const copies = /copyFileSync/.test(flat) && /settings\.example\.json/.test(flat) && /env\.example/.test(flat);
+  const copies = /setup-files\.mjs" init/.test(flat) && /settings\.example\.json/.test(flat) && /env\.example/.test(flat);
   const byHand = /(НЕ набирай|не набирай)[^.]{0,80}памяти/i.test(flat);
-  const selfCheck = /Object\.keys/.test(flat) && /missing/.test(flat);
+  const selfCheck = /setup-files\.mjs" check-keys/.test(flat) && /missing/.test(flat);
   if (!dirs.length && copies && byHand && selfCheck)
-    ok('stage setup: структура каталогов создаётся, шаблоны копируются файлами, состав ключей сверяется');
+    ok('stage setup: структура каталогов создаётся, шаблоны копируются скриптом, состав ключей сверяется');
   else
     bad(
       'stage setup: инициализация — ' +
         [
           dirs.length ? `не названы каталоги: ${dirs.join(', ')}` : null,
-          copies ? null : 'шаблоны не копируются через copyFileSync (settings.example.json, env.example)',
+          copies ? null : 'шаблоны не копируются через setup-files.mjs init (settings.example.json, env.example)',
           byHand ? null : 'нет запрета набирать шаблон по памяти',
-          selfCheck ? null : 'нет самопроверки состава ключей скопированного settings.json',
-        ]
-          .filter(Boolean)
-          .join('; '),
-    );
-
-  // Корень плагина, подставленный ВНУТРЬ JS-строки (`copyFileSync('<корень>/…')`),
-  // на Windows ломается молча: путь приходит с обратными слэшами, и JS съедает
-  // их как escape — `C:\Users\…\test-ai` превращается в `C:Users…` с табуляцией
-  // вместо `\t`, а copyFileSync падает с ENOENT на пути, которого никто не
-  // писал. Корень отдаём аргументом (`process.argv`), где никакой escape не
-  // действует, и обозначаем `<CONVEYOR_ROOT>` — той же нотацией, что и весь
-  // остальной плагин, включая соседний шаг диагностики.
-  const eCmds = [...flat.matchAll(/node -e "([^"]*)"((?: "[^"]*")*)/g)].map((m) => ({ script: m[1], args: m[2] }));
-  const rootCmds = eCmds.filter((c) => /core\/(templates|scripts)\//.test(c.script));
-  const rootInString = rootCmds.filter((c) => /CONVEYOR_ROOT/.test(c.script)).length;
-  const rootByArg = rootCmds.filter((c) => /process\.argv/.test(c.script) && /<CONVEYOR_ROOT>/.test(c.args)).length;
-  const shellRoot = /\$\{CONVEYOR_ROOT\}/.test(flat);
-  if (rootCmds.length && !rootInString && rootByArg === rootCmds.length && !shellRoot)
-    ok('stage setup: корень плагина в `node -e` передаётся аргументом (process.argv), а не внутрь JS-строки');
-  else
-    bad(
-      'stage setup: корень плагина в командах — ' +
-        [
-          rootCmds.length ? null : 'нет ни одной команды node -e, читающей файл плагина',
-          rootInString ? 'корень подставляется внутрь JS-строки — на Windows обратные слэши съест escape' : null,
-          !rootCmds.length || rootByArg === rootCmds.length
-            ? null
-            : 'корень не передан аргументом "<CONVEYOR_ROOT>" и не прочитан из process.argv',
-          shellRoot ? 'корень записан как переменная оболочки — она раскроется в пустоту' : null,
+          selfCheck ? null : 'нет самопроверки состава ключей (setup-files.mjs check-keys)',
         ]
           .filter(Boolean)
           .join('; '),
@@ -2394,6 +2508,10 @@ console.log('Собранный дистрибутив:');
         'gigacode/gigacode-extension.json',
         'gigacode/commands/conveyor/intent.md',
         'gigacode/commands/conveyor/create-autotest-plan.md',
+        'gigacode/GIGACODE.md',
+        'gigacode/skills/intent/SKILL.md',
+        'gigacode/agents/business-analyst.md',
+        'gigacode/core/scripts/setup-files.mjs',
         ...targets.flatMap((t) => needCore.map((p) => `${t}/${p}`)),
       ];
       const absent = need.filter((p) => !fs.existsSync(path.join(outRoot, ...p.split('/'))));
@@ -2416,6 +2534,31 @@ console.log('Собранный дистрибутив:');
               [extra.length ? 'лишние: ' + extra.join(', ') : null, lost.length ? 'потеряны: ' + lost.join(', ') : null]
                 .filter(Boolean)
                 .join('; '),
+          );
+      }
+
+      // Состав совпадает, но тексты сборка меняет: в GigaCode корень расширения
+      // постоянен и подставляется вместо плейсхолдера, а абзацы чужой
+      // платформы (`<!-- only:<цель> -->`) вырезаются. Остался плейсхолдер в
+      // dist/gigacode — модель снова должна угадывать путь; остался чужой
+      // абзац — ей противоречат два правила о корне сразу.
+      {
+        const mdOf = (t) => listFiles(path.join(outRoot, t)).filter((p) => p.endsWith('.md'));
+        const read = (t, p) => fs.readFileSync(path.join(outRoot, t, ...p.split('/')), 'utf8');
+        const gigaPh = mdOf('gigacode').filter((p) => read('gigacode', p).includes('<CONVEYOR_ROOT>'));
+        const markers = targets.flatMap((t) => mdOf(t).filter((p) => /^<!-- \/?only/m.test(read(t, p))).map((p) => `${t}/${p}`));
+        const common = (t) => read(t, 'core/stages/_common.md');
+        const split =
+          /Корень расширения — `\.gigacode\/extensions\/conveyor`/.test(common('gigacode')) &&
+          !/ПЛЕЙСХОЛДЕР/.test(common('gigacode')) &&
+          /`<CONVEYOR_ROOT>` — АБСОЛЮТНЫЙ путь/.test(common('claude-code')) &&
+          !/Корень расширения — /.test(common('claude-code'));
+        if (!gigaPh.length && !markers.length && split)
+          ok('сборка: в dist/gigacode корень подставлен, абзацы чужой платформы вырезаны, в dist/claude-code плейсхолдер на месте');
+        else
+          bad(
+            'сборка: тексты по платформам — ' +
+              JSON.stringify({ placeholderInGigacode: gigaPh, markersLeft: markers, commonSplit: split }),
           );
       }
 
@@ -2547,16 +2690,16 @@ console.log('README и INSTALL — соответствие коду:');
   else bad('README/INSTALL — ' + problems.join('; '));
 }
 
-// 2t) QWEN.md — это ВЕСЬ системный промпт GigaCode: хуков там нет, стейджи
+// 2t) GIGACODE.md — это ВЕСЬ системный промпт GigaCode: хуков там нет, стейджи
 // модель читает уже после него, и всё, что здесь написано, она исполняет
 // буквально. Поэтому проверяем не стиль, а то, что тихо ломает прогон:
 // пропущенную причину останова на первом шаге (правило по несуществующему
 // полю не сработает НИКОГДА — этап пойдёт дальше на несуществующей рабочей
 // копии), состав таблиц (этап, которого нет в таблице команд, модель не
 // предложит) и каталоги записи в «Защите».
-console.log('QWEN.md — протокол GigaCode:');
+console.log('GIGACODE.md — протокол GigaCode:');
 {
-  const qwen = fs.readFileSync(path.join(root, 'adapters/gigacode/QWEN.md'), 'utf8');
+  const qwen = fs.readFileSync(path.join(root, 'adapters/gigacode/GIGACODE.md'), 'utf8');
   const flat = (s) => s.replace(/\s+/g, ' ');
   const section = (name) => qwen.split(/^## /m).find((s) => s.startsWith(name)) || '';
   // Первая ячейка каждой строки таблицы (без шапки и разделителя).
@@ -2631,8 +2774,8 @@ console.log('QWEN.md — протокол GigaCode:');
   // старого репозитория он остаётся только в setup.md и migrate-workspace).
   if (/\.cache/.test(qwen)) problems.push('упомянут .cache/ (каталог 1.x)');
 
-  if (!problems.length) ok('QWEN.md: протокол, таблицы этапов/команд и каталоги записи — по ядру');
-  else bad('QWEN.md — ' + problems.join('; '));
+  if (!problems.length) ok('GIGACODE.md: протокол, таблицы этапов/команд и каталоги записи — по ядру');
+  else bad('GIGACODE.md — ' + problems.join('; '));
 }
 
 // 2u) Скилл setup слабая модель читает ПЕРВЫМ и часто вместо стейджа: его
@@ -2778,12 +2921,12 @@ try {
       );
   }
 
-  // То же для QWEN.md: это ВЕСЬ системный промпт GigaCode, и перечисленные в
+  // То же для GIGACODE.md: это ВЕСЬ системный промпт GigaCode, и перечисленные в
   // нём поля `links.<ключ>` модель считает существующими. Поле, которого
   // resolve-config не отдаёт, — обещание пустоты: правило, написанное по нему,
   // не сработает никогда. Сверяем перечень с ключами реального ответа.
   {
-    const qwenMd = fs.readFileSync(path.join(root, 'adapters/gigacode/QWEN.md'), 'utf8');
+    const qwenMd = fs.readFileSync(path.join(root, 'adapters/gigacode/GIGACODE.md'), 'utf8');
     // `links` индексируется id РАБОЧЕЙ КОПИИ (`frontend`, `backend.api`), не
     // ключом настроек, — принимаем оба написания заголовка, чтобы проверка
     // осталась про состав полей, а не про формулировку.
@@ -2797,10 +2940,10 @@ try {
     // разбирать форму настроек сама и споткнётся на группе.
     const namesUnits = /`units\b/.test(qwenMd) && /`codebase\./.test(qwenMd);
     if (fields.length && !ghosts.length && !forgotten.length && namesUnits)
-      ok('QWEN.md: поля links.<id> — те, что resolve-config действительно отдаёт; units/codebase названы');
+      ok('GIGACODE.md: поля links.<id> — те, что resolve-config действительно отдаёт; units/codebase названы');
     else
       bad(
-        'QWEN.md: контракт resolve-config разошёлся со скриптом — ' +
+        'GIGACODE.md: контракт resolve-config разошёлся со скриптом — ' +
           (listed === undefined
             ? 'перечень не найден'
             : `нет в ответе: ${ghosts.join(', ') || '(нет)'}; не названы: ${forgotten.join(', ') || '(нет)'}` +
@@ -3968,6 +4111,72 @@ try {
     runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
   } finally {
     fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+
+  // Расширение GigaCode закоммичено в рабочий репозиторий: переписанный
+  // моделью стейдж или guard-скрипт уехал бы всей команде через git. Запрет —
+  // ВСЕГДА, и без активного этапа (вне этапа остальной фасад писать можно).
+  {
+    const extFile = path.join(tmp, '.gigacode', 'extensions', 'conveyor', 'core', 'stages', '_common.md');
+    const guardExt = (stage) => {
+      if (stage) runScript('core/scripts/scope.mjs', ['set', '--stage', stage, '--type', 'FE'], '', tmp);
+      const out = execFileSync('node', [path.join(root, 'core/scripts/guard-writes.mjs')], {
+        input: JSON.stringify({ cwd: tmp, tool_input: { file_path: extFile } }),
+        encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PROJECT_DIR: tmp },
+      }).trim();
+      if (stage) runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+      return out ? JSON.parse(out).hookSpecificOutput.permissionDecision : 'allow';
+    };
+    const freeDecision = guardExt(null);
+    const stageDecision = guardExt('create-plan');
+    if (freeDecision === 'deny' && stageDecision === 'deny')
+      ok('guard-writes: каталог расширения .gigacode/extensions/conveyor закрыт и вне этапа, и на этапе');
+    else bad(`guard-writes: каталог расширения открыт для записи — вне этапа ${freeDecision}, на этапе ${stageDecision}`);
+  }
+
+  // setup-files.mjs заменил в /setup два `node -e` (их запрещает политика
+  // GigaCode). Гарантии те же: шаблоны копируются файлами, готовый
+  // settings.json команды не затирается, потерянный ключ виден в missing.
+  {
+    const sfWs = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-setup-files-'));
+    try {
+      const sf = (cmd) => {
+        const r = spawnSync('node', [path.join(root, 'core/scripts/setup-files.mjs'), cmd], { cwd: sfWs, encoding: 'utf8' });
+        return { code: r.status, out: JSON.parse(r.stdout || '{}') };
+      };
+      const tpl = fs.readFileSync(path.join(root, 'core/templates/settings.example.json'), 'utf8');
+      const init = sf('init');
+      const copied = init.code === 0 && fs.readFileSync(path.join(sfWs, 'settings.json'), 'utf8') === tpl && fs.existsSync(path.join(sfWs, '.env.example'));
+      const fresh = sf('check-keys');
+      const own = { taskPrefix: 'MAMGM' };
+      const ownEnv = 'CONVEYOR_FAST=true\n';
+      fs.writeFileSync(path.join(sfWs, 'settings.json'), JSON.stringify(own));
+      fs.writeFileSync(path.join(sfWs, '.env.example'), ownEnv);
+      const again = sf('init');
+      const kept =
+        again.out.skipped.includes('settings.json') &&
+        again.out.skipped.includes('.env.example') &&
+        fs.readFileSync(path.join(sfWs, 'settings.json'), 'utf8') === JSON.stringify(own) &&
+        fs.readFileSync(path.join(sfWs, '.env.example'), 'utf8') === ownEnv;
+      const lost = sf('check-keys');
+      // settings.json с BOM (Windows-редактор) остальной плагин читает —
+      // check-keys обязан тоже, а не объявлять его битым.
+      fs.writeFileSync(path.join(sfWs, 'settings.json'), '﻿' + tpl);
+      const bom = sf('check-keys');
+      // null и массив разбираются, но настройками не являются: причина обязана
+      // быть «не объект», а не «не разбирается как JSON».
+      const shapes = ['null', '[]'].map((body) => {
+        fs.writeFileSync(path.join(sfWs, 'settings.json'), body);
+        return sf('check-keys');
+      });
+      const shapeOk = shapes.every((r) => r.code === 1 && /не объект настроек/.test(r.out.error || ''));
+      if (copied && fresh.code === 0 && kept && lost.code === 1 && lost.out.missing.includes('repos') && bom.code === 0 && shapeOk)
+        ok('setup-files: init не затирает готовые файлы; check-keys называет недостающие ключи, читает BOM и отличает «не объект» от «не JSON»');
+      else bad('setup-files: ' + JSON.stringify({ copied, fresh, kept, lost, bom, shapes }));
+    } finally {
+      fs.rmSync(sfWs, { recursive: true, force: true });
+    }
   }
 
   // ---- быстрый режим (CONVEYOR_FAST) ----

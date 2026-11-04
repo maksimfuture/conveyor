@@ -25,7 +25,7 @@
 import fs from 'node:fs';
 import { parsePlanRepos } from './lib/plan-repos.mjs';
 import { readConfig, unitIds, codebaseUnits } from './lib/config.mjs';
-import { TMS_ID, TMS_CELL, sectionBody, tableHead, tableRows } from './lib/md-table.mjs';
+import { TMS_ID, TMS_CELL, REQ_REF, sectionBody, tableHead, tableRows } from './lib/md-table.mjs';
 
 // Значение флага — только токен, который сам не является флагом. Иначе
 // `--workspace --plan x` отдаёт workspace = "--plan": readConfig пойдёт от
@@ -130,6 +130,21 @@ function ids(text) {
 // одним ID.
 function rowIds(body) {
   return tableRows(body).map((r) => r[0] || '');
+}
+
+// Ссылки вместо текста в колонках `names`: REQ-N и ID кейсов. Шаг кейса в
+// Zephyr читают без плана и без спецификации — «сверить с REQ-12» или «как
+// в PROJ-T282» там никто не расшифрует. Возвращает ID строк-нарушителей.
+// REQ_REF и TMS_ID — с флагом g (для match); для test нужны экземпляры без
+// состояния, иначе lastIndex переживает вызов.
+const REQ_ONE = new RegExp(REQ_REF.source);
+const CASE_ONE = new RegExp(TMS_ID.source);
+function rowsWithRefs(body, names) {
+  const head = tableHead(body);
+  const idx = names.map((n) => head.indexOf(n)).filter((i) => i >= 0);
+  return tableRows(body)
+    .filter((r) => idx.some((i) => REQ_ONE.test(r[i] || '') || CASE_ONE.test(r[i] || '')))
+    .map((r) => r[0] || '?');
 }
 
 // Заполнена ли колонка `name` у каждой строки. Колонки нет в шапке — про это
@@ -246,6 +261,17 @@ const STRUCTURAL = {
         'у кейса пустая ячейка: «Вид тестирования», «Название», «Шаги», «Ожидаемый результат», ' +
         '«REQ-ID» и «Автотест» ' +
         'заполнены у каждой строки — описывать кейс больше негде',
+    },
+    // Шаг и ожидание — текст, который можно выполнить, читая один кейс:
+    // /conveyor:update-tms переносит их в Zephyr как есть, а там нет ни
+    // спецификации (REQ-12), ни соседних кейсов (PROJ-T282). Требование
+    // адресует колонка «REQ-ID», чужой кейс чужой проверкой не заменить.
+    {
+      test: (t) => !rowsWithRefs(sectionBody(t, '## Тест-кейсы'), ['Шаги', 'Ожидаемый результат']).length,
+      problem: (t) =>
+        `в «Шагах» или «Ожидаемом результате» кейсов ${rowsWithRefs(sectionBody(t, '## Тест-кейсы'), ['Шаги', 'Ожидаемый результат']).join(', ')} ` +
+        'стоят ссылки (REQ-N, ID кейсов) вместо текста: шаг пишется словами — что сделать и что увидеть; ' +
+        'требование — в колонке «REQ-ID», чужой кейс его проверкой не заменить (в Zephyr шаг читают без плана)',
     },
     // Автотесты — то, что реально будет написано кодом, и именно их состав
     // сверяется с отчётом о прогоне.
@@ -452,7 +478,9 @@ const missingSections = REQUIRED[args.type].filter((h) => !text.includes(h));
 
 const problems = [];
 for (const rule of STRUCTURAL[args.type] || []) {
-  if (!rule.test(text)) problems.push(rule.problem);
+  // problem — строка либо функция от текста: правилу, нашедшему конкретные
+  // строки, незачем пересказывать их общими словами.
+  if (!rule.test(text)) problems.push(typeof rule.problem === 'function' ? rule.problem(text) : rule.problem);
 }
 
 // План: раскладка по репозиториям. Разбор — общий с /implement-plan

@@ -101,6 +101,35 @@ export function reposEntryKind(entry) {
   return 'repo';
 }
 
+// Ключи записи репозитория в settings.json. Белый список, а не точечные
+// проверки: опечатка в любом ключе (`linkPipelineAutotest`) иначе молчит, и
+// человек смотрит на заполненный файл, а этап — на пустое значение.
+export const UNIT_KEYS = ['link', 'mainBranch', 'description'];
+// Только у autoTest: джоба автотестов в CI и настройки TMS.
+export const AUTOTEST_KEYS = ['linkPipelineAutoTest', 'tms'];
+// repos.autoTest.tms — настройки /conveyor:update-tms:
+//   linkTMS — страница Test Cases проекта в Jira (из неё projectId);
+//   mcpTMS  — ИМЯ MCP-сервера Jira/Zephyr, как он подключён в клиенте.
+// Имя сервера задаётся явно: этап берёт инструменты только у него и не
+// перебирает серверы сессии по описаниям.
+export const TMS_KEYS = ['linkTMS', 'mcpTMS'];
+
+function readTmsEntry(id, tms, errors) {
+  if (tms !== undefined && !isPlainObject(tms)) {
+    errors.push(`repos.${id}.tms задан не объектом (${JSON.stringify(tms)}) — нужен { "linkTMS": "...", "mcpTMS": "..." }`);
+  }
+  const src = isPlainObject(tms) ? tms : {};
+  for (const key of Object.keys(src)) {
+    if (!TMS_KEYS.includes(key)) {
+      errors.push(`repos.${id}.tms.${key} — неизвестный ключ, плагин его не использует. Допустимые: ${TMS_KEYS.join(', ')}`);
+    }
+  }
+  return {
+    linkTMS: ((src.linkTMS || '') + '').trim(),
+    mcpTMS: ((src.mcpTMS || '') + '').trim(),
+  };
+}
+
 // Плоский список юнитов по объекту repos + ошибки конфигурации.
 // Ошибки НЕ бросаются: конфигурацию читают guard-хуки, и падение здесь
 // отключило бы защиту целиком. Непонятная запись деградирует до юнита с
@@ -124,11 +153,26 @@ export function readUnits(repos) {
       // применяется и применяться не должна — ради этого он и заведён
       // отдельным ключом, а не спрятан в link.
       pipelineUrl: ((e.linkPipelineAutoTest || '') + '').trim(),
-      // Ссылка на тест-кейсы проекта в Zephyr (repos.autoTest.linkTMS) —
-      // тоже URL, а не путь: по ней /conveyor:update-tms знает, в какую Jira
-      // и в какой проект заводить кейсы.
-      tmsUrl: ((e.linkTMS || '') + '').trim(),
+      // Настройки TMS (repos.autoTest.tms) — тоже только у autoTest; у
+      // остальных юнитов поле есть ради одинаковой формы, но пустое.
+      tms: key === 'autoTest' ? readTmsEntry(id, e.tms, errors) : { linkTMS: '', mcpTMS: '' },
     });
+    const allowed = key === 'autoTest' ? [...UNIT_KEYS, ...AUTOTEST_KEYS] : UNIT_KEYS;
+    for (const k of Object.keys(e)) {
+      if (allowed.includes(k)) continue;
+      // Бывший repos.autoTest.linkTMS: не читать молча — иначе
+      // /conveyor:update-tms скажет «TMS не настроена», а человек будет
+      // смотреть на заполненный settings.json. Переносит migrate-workspace.
+      if (k === 'linkTMS') {
+        errors.push(
+          `repos.${id}.linkTMS больше не читается — ссылка на тест-кейсы переехала в ` +
+            `repos.autoTest.tms: { "linkTMS": "...", "mcpTMS": "<имя MCP-сервера>" }; ` +
+            'перенос делает core/scripts/migrate-workspace.mjs',
+        );
+      } else {
+        errors.push(`repos.${id}.${k} — неизвестный ключ, плагин его не использует. Допустимые: ${allowed.join(', ')}`);
+      }
+    }
   };
 
   for (const key of REPO_KEYS) {
@@ -416,8 +460,10 @@ export function codebaseUnits(cfg, taskType) {
 //   { found:true, workspaceRoot, config, fastMode,
 //     units, links, missingLinks, urlLinks, configErrors }
 //
-// units[] = { id, key, part, link, mainBranch, description, pipelineUrl, tmsUrl }
-// links[<id юнита>] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl, tmsUrl }
+// units[] = { id, key, part, link, mainBranch, description, pipelineUrl, tms }
+// links[<id юнита>] = { value, isGitUrl, path, inside, mainBranch, pipelineUrl, tms }
+// tms = { linkTMS, mcpTMS } из repos.autoTest.tms — те же имена, что в
+// settings.json (пустые строки = TMS не настроена); у прочих юнитов пусто.
 // inside — пригодна ли ссылка (см. isUsableLink); только такая даёт
 // рабочую копию (repoRootFor). missingLinks = юниты с пустой ссылкой;
 // urlLinks = юниты, у которых вместо пути git-URL (ошибка конфигурации:
@@ -502,7 +548,7 @@ export function readConfig(startDir = process.cwd()) {
       entry.link = value;
       entry.mainBranch = unit.mainBranch;
       entry.linkPipelineAutoTest = unit.pipelineUrl;
-      entry.linkTMS = unit.tmsUrl;
+      if (unit.key === 'autoTest') entry.tms = { ...unit.tms };
     }
 
     const url = isGitUrl(value);
@@ -517,7 +563,7 @@ export function readConfig(startDir = process.cwd()) {
       inside: isUsableLink(value, workspaceRoot),
       mainBranch: unit.mainBranch,
       pipelineUrl: unit.pipelineUrl,
-      tmsUrl: unit.tmsUrl,
+      tms: unit.tms,
     };
   }
 

@@ -35,7 +35,10 @@
 1. Получи конфигурацию:
    `node "<CONVEYOR_ROOT>/core/scripts/resolve-config.mjs"`
    Разбери JSON: `found`, `workspaceRoot`, `config`, `units`, `codebase`,
-   `links`, `missingLinks`, `urlLinks`, `configErrors`, `fastMode`.
+   `links`, `missingLinks`, `urlLinks`, `configErrors`, `fastMode`
+   (`links.autoTest.tms` = `{ linkTMS, mcpTMS }` — настройки TMS из
+   `repos.autoTest.tms`, те же имена, что в settings.json; нужны только
+   update-tms).
 2. Если `found:false` — останови этап: «Здесь не инициализирован рабочий
    репозиторий conveyor. Запустите /setup».
 3. Останови этап, если рабочая копия, нужная ЭТОМУ этапу (таблица «Какая

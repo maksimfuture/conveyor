@@ -27,10 +27,12 @@
    `found`, `workspaceRoot`, `config`, `units`, `codebase`, `links`,
    `missingLinks`, `urlLinks`, `configErrors`, `fastMode`;
    `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch,
-   pipelineUrl, tmsUrl }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
+   pipelineUrl, tms }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
    `repos.<ключ>.linkPipelineAutoTest`; заполнен только у `autoTest`, пустая
-   строка = джоба не настроена; `tmsUrl` — ссылка на тест-кейсы проекта в
-   Zephyr из `repos.autoTest.linkTMS`, пустая строка = TMS не настроена).
+   строка = джоба не настроена; `tms` = `{ linkTMS, mcpTMS }` из
+   `repos.autoTest.tms` — ссылка на тест-кейсы проекта в Zephyr и имя
+   MCP-сервера Jira/Zephyr, те же имена, что в settings.json; заполнены
+   только у `autoTest`, пустые строки = TMS не настроена).
    Реакция:
    - `found:false` — останови этап: «здесь не инициализирован рабочий
      репозиторий conveyor, запустите /conveyor:setup»;

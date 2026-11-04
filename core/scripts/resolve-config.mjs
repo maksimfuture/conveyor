@@ -5,6 +5,8 @@
 // Prints a JSON object to stdout:
 //   { found, workspaceRoot, config, fastMode, units, codebase,
 //     links, missingLinks, urlLinks, configErrors }
+// `links.autoTest.tms` = { linkTMS, mcpTMS } — настройки TMS из
+// repos.autoTest.tms (пустые строки = не настроено).
 // Exit code is always 0 — callers branch on `found` / `missingLinks`, so this
 // script never itself breaks a skill. Secrets stay in .env; the printed
 // `config` contains resolved values but is meant for in-session use, not disk.

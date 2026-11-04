@@ -17,8 +17,9 @@ description: Переносит таблицу «Тест-кейсы» из auto
 GIGACODE.md (resolve-config → правила защиты), затем выполни ТОЧНО
 `.gigacode/extensions/conveyor/core/stages/update-tms.md`.
 
-Агент не нужен: разбор плана (`tms-cases.mjs parse`), вызовы MCP Jira/Zephyr,
-запись ключей (`tms-cases.mjs record`) и замену заглушек (`tms-cases.mjs
-apply`) делает сама команда. Хуков в GigaCode нет: рабочую область ставь
+Агент не нужен: разбор плана (`tms-cases.mjs parse`), вызовы MCP Jira/Zephyr
+(только у сервера, названного в `settings.json → repos.autoTest.tms.mcpTMS`;
+другие серверы не перебирай), запись ключей (`tms-cases.mjs record`) и замену
+заглушек (`tms-cases.mjs apply`) делает сама команда. Хуков в GigaCode нет: рабочую область ставь
 до первой записи — `apply` и `record` сами сверяются с ней. Цикл ревью на
 этом этапе НЕ запускается.

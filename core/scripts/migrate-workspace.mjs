@@ -197,6 +197,23 @@ if (!isObject(settings)) {
         repo.mainBranch = branch;
         settingsChanges.push(`settings.repos.${key}.mainBranch -> ${branch}`);
       }
+      // 3.x: ссылка на тест-кейсы переехала из repos.autoTest.linkTMS в
+      // repos.autoTest.tms.linkTMS, рядом с именем MCP-сервера (mcpTMS).
+      // Имя сервера взять неоткуда — заводим пустым и называем в warnings:
+      // без него /conveyor:update-tms не запустится.
+      if (key === 'autoTest' && 'linkTMS' in repo) {
+        const tms = isObject(repo.tms) ? repo.tms : (repo.tms = {});
+        const oldLink = typeof repo.linkTMS === 'string' ? repo.linkTMS.trim() : '';
+        if (oldLink && !(typeof tms.linkTMS === 'string' && tms.linkTMS.trim())) tms.linkTMS = oldLink;
+        if (!('mcpTMS' in tms)) tms.mcpTMS = '';
+        delete repo.linkTMS;
+        settingsChanges.push('settings.repos.autoTest.linkTMS -> settings.repos.autoTest.tms.linkTMS');
+        if (!(typeof tms.mcpTMS === 'string' && tms.mcpTMS.trim()))
+          warnings.push(
+            'autoTest.tms.mcpTMS пуст — впишите имя MCP-сервера Jira/Zephyr, как он подключён в клиенте: ' +
+              'без него /conveyor:update-tms не запустится',
+          );
+      }
     }
   }
   if ('repoCache' in settings) {

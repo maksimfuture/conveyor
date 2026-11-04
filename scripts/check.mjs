@@ -4232,6 +4232,85 @@ try {
       );
   }
 
+  // repos.autoTest.tms: ссылка на тест-кейсы и ИМЯ MCP-сервера Jira/Zephyr,
+  // одна форма — те же имена в settings.json, в config и в links. Имя
+  // задаётся явно, чтобы этап не перебирал серверы сессии. Ключи записи
+  // репозитория — белый список: опечатка и старый repos.autoTest.linkTMS
+  // попадают в configErrors, а не молчат (заполненный по-старому
+  // settings.json иначе выглядел бы как «TMS не настроена»).
+  {
+    const tmsWs = path.join(tmp, 'ws-tms-cfg');
+    fs.mkdirSync(tmsWs, { recursive: true });
+    const tmsUrl = 'https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=10000';
+    fs.writeFileSync(
+      path.join(tmsWs, 'settings.json'),
+      JSON.stringify({
+        taskPrefix: 'TASK',
+        repos: {
+          frontend: { link: 'repos/frontend', tms: {} },
+          autoTest: {
+            link: 'repos/autotests',
+            mainBranch: 'main',
+            linkTMS: 'old',
+            linkPipelineAutotest: 'typo',
+            tms: { linkTMS: ` ${tmsUrl} `, mcpTMS: ' jira ', extra: 1 },
+          },
+        },
+      }),
+    );
+    const c = JSON.parse(runScript('core/scripts/resolve-config.mjs', [tmsWs]));
+    const errs = (c.configErrors || []).join('\n');
+    const at = c.links.autoTest.tms || {};
+    if (
+      at.linkTMS === tmsUrl && at.mcpTMS === 'jira' &&
+      c.config.repos.autoTest.tms.linkTMS === tmsUrl && c.config.repos.autoTest.tms.mcpTMS === 'jira' &&
+      !('tms' in c) && !('tmsUrl' in c.links.autoTest) &&
+      c.links.frontend.tms.linkTMS === '' &&
+      /repos\.autoTest\.linkTMS больше не читается/.test(errs) &&
+      /repos\.autoTest\.tms\.extra — неизвестный ключ/.test(errs) &&
+      /repos\.autoTest\.linkPipelineAutotest — неизвестный ключ/.test(errs) &&
+      /repos\.frontend\.tms — неизвестный ключ/.test(errs)
+    )
+      ok('config: repos.autoTest.tms — одна форма (linkTMS, mcpTMS) в config и links; старый linkTMS, опечатка в ключе и tms у frontend — в configErrors');
+    else bad('config: repos.autoTest.tms — ' + JSON.stringify({ at, cfg: c.config.repos.autoTest, errs }));
+    const emptyWs = path.join(tmp, 'ws-tms-empty');
+    fs.mkdirSync(emptyWs, { recursive: true });
+    fs.writeFileSync(
+      path.join(emptyWs, 'settings.json'),
+      JSON.stringify({ taskPrefix: 'TASK', repos: { autoTest: { link: 'repos/autotests', mainBranch: 'main' } } }),
+    );
+    const e = JSON.parse(runScript('core/scripts/resolve-config.mjs', [emptyWs]));
+    const et = e.links.autoTest.tms || {};
+    if (et.linkTMS === '' && et.mcpTMS === '' && !(e.configErrors || []).some((x) => /tms/.test(x)))
+      ok('config: без repos.autoTest.tms — пустые linkTMS/mcpTMS (TMS не настроена), без ошибок конфигурации');
+    else bad('config: без repos.autoTest.tms — ' + JSON.stringify({ tms: et, errs: e.configErrors }));
+
+    // migrate-workspace переносит старый ключ сам: сухой прогон только
+    // называет перенос, --apply переписывает файл и заводит пустой mcpTMS с
+    // предупреждением — имя сервера взять неоткуда.
+    const migWs = path.join(tmp, 'ws-tms-migrate');
+    fs.mkdirSync(migWs, { recursive: true });
+    const oldSettings = {
+      taskPrefix: 'TASK',
+      repos: { autoTest: { link: 'repos/autotests', mainBranch: 'main', linkTMS: ` ${tmsUrl} ` } },
+    };
+    fs.writeFileSync(path.join(migWs, 'settings.json'), JSON.stringify(oldSettings, null, 2));
+    const dryTms = JSON.parse(runScript('core/scripts/migrate-workspace.mjs', [migWs]));
+    const stillOld = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8'));
+    const applyTms = JSON.parse(runScriptFull('core/scripts/migrate-workspace.mjs', [migWs, '--apply']).stdout);
+    const migrated = JSON.parse(fs.readFileSync(path.join(migWs, 'settings.json'), 'utf8')).repos.autoTest;
+    if (
+      (dryTms.changes || []).some((x) => /linkTMS -> settings\.repos\.autoTest\.tms\.linkTMS/.test(x)) &&
+      'linkTMS' in stillOld.repos.autoTest &&
+      applyTms.ok === true &&
+      !('linkTMS' in migrated) &&
+      migrated.tms && migrated.tms.linkTMS === tmsUrl && migrated.tms.mcpTMS === '' &&
+      (applyTms.warnings || []).some((x) => /mcpTMS пуст/.test(x))
+    )
+      ok('migrate: repos.autoTest.linkTMS -> tms.linkTMS, mcpTMS заведён пустым с предупреждением; сухой прогон файл не трогает');
+    else bad('migrate: linkTMS — ' + JSON.stringify({ dry: dryTms.changes, migrated, warnings: applyTms.warnings }));
+  }
+
   // validate-artifact: неполный артефакт (нет разделов) → ok:false
   const artPath = path.join(tmp, 'plan-test.md');
   fs.writeFileSync(artPath, '# План\n## Краткое резюме подхода\nчто-то\n');
@@ -4399,6 +4478,21 @@ try {
           ]
             .filter(Boolean)
             .join('; '),
+      );
+
+    // 4) в «Шагах»/«Ожидаемом результате» ссылка вместо текста: REQ-N или ID
+    //    другого кейса. В Zephyr шаг читают без плана — ссылку некому раскрыть.
+    const reqInStep = va(tplText.replace('| 1) <шаг> 2) <шаг> |', '| 1) сверить с REQ-1 2) <шаг> |'));
+    const caseInExpected = va(tplText.replace('| <что ожидаем> | REQ-1 |', '| как в PROJ-T282 | REQ-1 |'));
+    // В сообщении — ID строк-нарушителей, а не общий текст.
+    const refRe = /кейсов PROJ-T999-1 стоят ссылки \(REQ-N, ID кейсов\)/;
+    const cleanTpl = va(tplText);
+    if (caught(reqInStep, refRe) && caught(caseInExpected, refRe) && !(cleanTpl.problems || []).some((p) => refRe.test(p)))
+      ok('validate-artifact: REQ-N или ID кейса в «Шагах»/«Ожидаемом результате» — план возвращается; шаблон без ссылок проходит');
+    else
+      bad(
+        'validate-artifact: ссылки в шагах — ' +
+          JSON.stringify({ reqInStep: reqInStep.problems, caseInExpected: caseInExpected.problems, clean: cleanTpl.problems }),
       );
 
     // Эталонный пример плана проходит валидатор — и с LF, и с CRLF: на
@@ -5768,7 +5862,10 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
           autoTest: {
             link: 'repos/autotests',
             mainBranch: 'main',
-            linkTMS: 'https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=329301',
+            tms: {
+              linkTMS: 'https://jira.example.com/secure/Tests.jspa#/v2/testCases?projectId=329301',
+              mcpTMS: ' jira ',
+            },
           },
         },
       }),
@@ -5898,6 +5995,7 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       p.projectKey === 'PROJ' &&
       p.projectId === '329301' &&
       /Tests\.jspa/.test(p.tmsUrl || '') &&
+      p.tmsMcp === 'jira' &&
       s1.length === 3 &&
       s1[0].description === 'Создать задачу (200)' &&
       s1[1].description === 'Вызвать a|b' &&
@@ -5906,7 +6004,7 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       c1.testCase.title === 'Создание create' &&
       !('precondition' in c1.testCase)
     )
-      ok('tms-cases parse: linkTMS и projectId; шаги и ожидание по номерам; название и отдельно title без префикса (для поиска дубля)');
+      ok('tms-cases parse: repos.autoTest.tms — linkTMS, projectId и mcpTMS; шаги и ожидание по номерам; название и отдельно title без префикса (для поиска дубля)');
     else bad('tms-cases parse: шаги/поля — ' + JSON.stringify({ ok: p.ok, steps: s1, testCase: c1.testCase, raw: p.raw }));
     const s10 = (c10.testCase || {}).steps || [];
     if (s10.length === 1 && s10[0].expectedResult === 'Ошибка показана')
@@ -5969,6 +6067,24 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
     )
       ok('tms-cases parse: неизвестный REQ-ID и нет specification.md — ok:false; ячейка без требований — предупреждение');
     else bad('tms-cases parse: проверка требований — ' + JSON.stringify({ pUnknown: pUnknown.problems || pUnknown, pNoSpec, pNoReq: pNoReq.warnings || pNoReq }));
+    // Ссылки внутри шага — REQ-N и ID другого кейса — ok:false: в Zephyr шаг
+    // читают без плана, а подставлять формулировку скрипт не вправе (шаг,
+    // изменённый не как в плане, — другой кейс). Одна политика с валидатором.
+    fs.writeFileSync(planPath, plan.replace('1) Создать задачу (200) 2) Вызвать', '1) Создать задачу по REQ-1 (200) 2) Вызвать'));
+    const pReqStep = tms(['parse', '--task', taskDir]);
+    fs.writeFileSync(planPath, plan.replace('| Ошибка показана |', '| Ошибка показана, как в PROJ-T282 |'));
+    const pCaseRef = tms(['parse', '--task', taskDir]);
+    fs.writeFileSync(planPath, plan);
+    const stepReq = (((pReqStep.cases || []).find((c) => c.id === 'PROJ-T999-1') || {}).testCase || {}).steps || [];
+    if (
+      pReqStep.ok === false &&
+      (pReqStep.problems || []).some((x) => /PROJ-T999-1: в «Шагах»\/«Ожидаемом результате» REQ-1/.test(x)) &&
+      (stepReq[0] || {}).description === 'Создать задачу по REQ-1 (200)' &&
+      pCaseRef.ok === false &&
+      (pCaseRef.problems || []).some((x) => /PROJ-T999-10: .*ссылки на кейсы PROJ-T282/.test(x))
+    )
+      ok('tms-cases parse: REQ-N в шаге и ID кейса в ожидании — ok:false, текст шага не подменяется');
+    else bad('tms-cases parse: ссылки в шагах — ' + JSON.stringify({ ok: pReqStep.ok, problems: pReqStep.problems, steps: stepReq, caseRef: pCaseRef.problems || pCaseRef }));
 
     // record: ключ пишется в meta.json, один ключ — одной заглушке; кейс,
     // найденный поиском, помечается взятым и своим не становится.

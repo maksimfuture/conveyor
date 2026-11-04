@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readConfig, readJsonFile, checkWrite } from './lib/config.mjs';
-import { TMS_CELL, sectionBody, tableHead, tableRows } from './lib/md-table.mjs';
+import { TMS_CELL, TMS_ID, REQ_REF, sectionBody, tableHead, tableRows } from './lib/md-table.mjs';
 import { readTmsConfig, TMS_CONFIG_PATH, TMS_CONFIG_EXAMPLE } from './lib/tms-config.mjs';
 
 // Заглушка нового теста: ключ проекта, `T999` и сквозной номер по плану.
@@ -128,6 +128,17 @@ function splitNumbered(text) {
   return out;
 }
 
+// Ссылки в тексте шага — REQ-N и ID кейсов. В Zephyr шаг читают без плана
+// и без спецификации, а подставить формулировку вместо ID скрипт не вправе:
+// шаг, изменённый не как в плане, — уже другой кейс. Это problems: план
+// чинит автор, а не выгрузка.
+function stepRefs(text) {
+  return {
+    reqs: [...new Set(text.match(REQ_REF) || [])],
+    cases: [...new Set(text.match(TMS_ID) || [])],
+  };
+}
+
 // Шаги кейса: действие из «Шагов», ожидание того же номера — из «Ожидаемого
 // результата». Ожидание без номера (одной фразой) — к последнему шагу: это
 // итог сценария. Лишние пункты ожидания (номеров больше, чем шагов) тоже
@@ -168,11 +179,10 @@ function requirements(specText) {
 }
 
 // Ячейка REQ-ID плана → { ids, text }. ID — функциональные требования
-// (несколько через запятую); `REQ-5-note` за ID не считается. Остальное —
-// text: у нефункциональных требований и критериев приёмки в спецификации ID
-// нет, и в ячейке пишут суть («НФТ: ответ ≤ 2 с») — она уходит в цель как
-// есть. Одинокий прочерк — не текст.
-const REQ_REF = /\bREQ-\d+(?![\w-])/g;
+// (несколько через запятую, REQ_REF из md-table). Остальное — text: у
+// нефункциональных требований и критериев приёмки в спецификации ID нет, и
+// в ячейке пишут суть («НФТ: ответ ≤ 2 с») — она уходит в цель как есть.
+// Одинокий прочерк — не текст.
 function reqRefs(cell) {
   const src = cleanCell(cell);
   const ids = [...new Set(src.match(REQ_REF) || [])];
@@ -326,8 +336,10 @@ function cmdParse(a, pendingOnly) {
     });
   const conf = tmsConfig.config;
   const { kind: fKind, automated: fAuto, level: fLevel } = conf.fields;
-  const tmsUrl = (auto && auto.tmsUrl) || null;
-  if (!tmsUrl) warnings.push('не задана ссылка на тест-кейсы проекта (settings.json → repos.autoTest.linkTMS)');
+  const tmsUrl = (auto && auto.tms && auto.tms.linkTMS) || null;
+  const tmsMcp = (auto && auto.tms && auto.tms.mcpTMS) || null;
+  if (!tmsUrl) warnings.push('не задана ссылка на тест-кейсы проекта (settings.json → repos.autoTest.tms.linkTMS)');
+  if (!tmsMcp) warnings.push('не задано имя MCP-сервера Jira/Zephyr (settings.json → repos.autoTest.tms.mcpTMS)');
   // projectId из ссылки вида …/Tests.jspa#/v2/testCases?projectId=329301 —
   // часть MCP-серверов Zephyr адресует проект им, а не ключом.
   const projectId = ((tmsUrl || '').match(/[?&]projectId=(\d+)/) || [])[1] || null;
@@ -401,12 +413,31 @@ function cmdParse(a, pendingOnly) {
     // спецификацией, выгружать нельзя. Ячейка без ID (нефункциональное
     // требование, критерий приёмки) — норма, её текст уходит в цель как есть.
     const ref = reqRefs(r[col['REQ-ID']]);
-    const unknown = ref.ids.filter((x) => !reqs[x]);
+    // `in`, а не истинность: требование с пустой формулировкой — есть в
+    // спецификации, это претензия к ней, а не «битая ссылка» плана.
+    const unknown = ref.ids.filter((x) => !(x in reqs));
     if (unknown.length) problems.push(`${id}: требований ${unknown.join(', ')} нет в specification.md`);
     if (!ref.ids.length && !ref.text) warnings.push(`${id}: в «REQ-ID» нет требований — цель кейса без них`);
-    const reqTexts = [...ref.ids.filter((x) => reqs[x]).map((x) => reqs[x]), ...(ref.text ? [ref.text] : [])];
+    const reqTexts = [...ref.ids.filter((x) => x in reqs).map((x) => reqs[x]), ...(ref.text ? [ref.text] : [])];
     const steps = buildSteps(r[col['Шаги']], r[col['Ожидаемый результат']]);
     if (!steps.length) problems.push(`${id}: пустые «Шаги»`);
+    // Шаги и ожидания — только текстом (см. stepRefs): та же политика, что
+    // у validate-artifact для плана.
+    {
+      const reqRefsInSteps = new Set();
+      const caseRefs = new Set();
+      for (const s of steps) {
+        for (const field of ['description', 'expectedResult']) {
+          const ref = stepRefs(s[field]);
+          ref.reqs.forEach((x) => reqRefsInSteps.add(x));
+          ref.cases.forEach((x) => caseRefs.add(x));
+        }
+      }
+      if (reqRefsInSteps.size)
+        problems.push(`${id}: в «Шагах»/«Ожидаемом результате» ${[...reqRefsInSteps].join(', ')} — шаг пишется текстом, требование адресует колонка «REQ-ID»`);
+      if (caseRefs.size)
+        problems.push(`${id}: в «Шагах»/«Ожидаемом результате» ссылки на кейсы ${[...caseRefs].join(', ')} — в Zephyr их никто не раскроет, опишите проверку текстом`);
+    }
 
     const customFields = {
       [fKind.name]: kindValue,
@@ -461,6 +492,9 @@ function cmdParse(a, pendingOnly) {
     type,
     projectKey,
     tmsUrl,
+    // Имя MCP-сервера, у которого этап берёт инструменты (settings.json →
+    // repos.autoTest.tms.mcpTMS); другие серверы сессии он не перебирает.
+    tmsMcp,
     projectId,
     tmsConfig: { path: tmsConfig.path },
     // Приоритет и статус — только для НОВЫХ кейсов; не заданы в конфиге —

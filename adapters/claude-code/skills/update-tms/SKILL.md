@@ -23,8 +23,9 @@ autotest-plan.md, report-auto-test.md и autotestBranch.
 1. resolve-config; задача из meta.json; проверь предусловие (implement-auto-test
    завершён, есть specification.md, autotest-plan.md, report-auto-test.md и
    autotestBranch) и
-   ссылку на тест-кейсы проекта `repos.autoTest.linkTMS` — не выполнено →
-   остановка без рабочей области.
+   `repos.autoTest.tms` settings.json — `linkTMS` (тест-кейсы проекта) и
+   `mcpTMS` (имя MCP-сервера Jira/Zephyr); в ответе resolve-config это
+   `links.autoTest.tms` — не выполнено → остановка без рабочей области.
 2. `scope.mjs set --stage update-tms --type <FE|BE> --task <TASK-ID>`;
    `git-ops locate` + `clean-check` (грязная копия → остановка) + `git-ops branch`
    на autotestBranch. При завершении/остановке — `scope.mjs clear`.
@@ -38,9 +39,11 @@ autotest-plan.md, report-auto-test.md и autotestBranch.
    готовыми полями:
    `new` создать, `mapped`/`existing` сверить. Полей не сочиняй — бери из
    `testCase`; `null` не передавай.
-4. MCP-инструменты Zephyr подбери сам по ролям (создание, чтение, правка,
-   поиск, шаги, связь с задачей, текущий пользователь); несколько кандидатов —
-   спроси; нет создания при новых кейсах — остановка; curl/REST не годится.
+4. Инструменты — ТОЛЬКО сервера `links.autoTest.tms.mcpTMS` (`mcp__<имя>__*`); другие
+   серверы не перебирай. Разложи его инструменты по ролям (создание, чтение,
+   правка, поиск, шаги, связь с задачей, текущий пользователь); несколько
+   кандидатов — спроси; сервера в сессии нет или нет создания при новых
+   кейсах — остановка; curl/REST не годится.
 5. Спроси владельца (по умолчанию текущий пользователь Jira) и папку для
    новых кейсов (первыми вариантами — папки существующих кейсов плана).
 6. Сверь существующие кейсы: поле автоматизации только ПОВЫШАЙ

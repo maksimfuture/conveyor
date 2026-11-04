@@ -61,10 +61,13 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 - **Claude Code:** используйте `dist/claude-code/` как плагин (внутри —
   `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/`, `core/`).
 - **GigaCode CLI:** положите `dist/gigacode/` В рабочий репозиторий —
-  `.gigacode/extensions/conveyor/` — и закоммитьте; запускайте `gigacode`
-  из корня рабочего репозитория (`gigacode extensions list` покажет
-  `/conveyor:*`). Глобальная установка в `~/.gigacode` не работает: политика
-  GigaCode не даёт агенту запускать скрипты вне проекта. Внутри расширения —
+  `.gigacode/extensions/conveyor/` — и закоммитьте; каждый разработчик один
+  раз регистрирует каталог ссылкой
+  (`gigacode extensions link "$PWD/.gigacode/extensions/conveyor"`) и
+  запускает `gigacode` из корня рабочего репозитория
+  (`gigacode extensions list` покажет `/conveyor:*`). Копия в `~/.gigacode`
+  не работает: политика GigaCode не даёт агенту запускать скрипты вне
+  проекта. Внутри расширения —
   скиллы этапов, агенты ролей и команды-обёртки; подробности —
   `adapters/gigacode/README.md`.
 

@@ -42,9 +42,13 @@ rm -rf .gigacode/extensions/conveyor
 mkdir -p .gigacode/extensions
 cp -r <путь/к/conveyor>/dist/gigacode .gigacode/extensions/conveyor
 git add .gigacode/extensions/conveyor && git commit -m "feature: conveyor <версия>"
+gigacode extensions link "$PWD/.gigacode/extensions/conveyor"   # каждый разработчик, один раз
 gigacode extensions list      # должно показать conveyor (3.0.0) и 10 команд
 ```
-Подробно, с проверкой и устранением проблем — [INSTALL.md](../../INSTALL.md).
+GigaCode не подхватывает каталог в проекте сам — он читает только
+`~/.gigacode/extensions`, поэтому каталог регистрируется ссылкой (`link`);
+в Git Bash путь — только с прямыми слэшами. Подробно, с проверкой и
+устранением проблем — [INSTALL.md](../../INSTALL.md).
 Требуется Node.js ≥ 14 и git в PATH.
 
 Корень расширения постоянен — `.gigacode/extensions/conveyor`, путь ОТНОСИТЕЛЬНО

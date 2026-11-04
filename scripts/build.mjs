@@ -164,4 +164,5 @@ if (!built) {
 console.log('\nУстановка Claude Code: скопируйте dist/claude-code как плагин');
 console.log('(.claude-plugin/plugin.json, skills/, agents/, hooks/, core/).');
 console.log('Установка GigaCode: скопируйте dist/gigacode в рабочий репозиторий');
-console.log('как .gigacode/extensions/conveyor и закоммитьте (см. INSTALL.md, шаг 4).');
+console.log('как .gigacode/extensions/conveyor, закоммитьте и зарегистрируйте ссылкой:');
+console.log('gigacode extensions link "$PWD/.gigacode/extensions/conveyor" (см. INSTALL.md, шаги 4–5).');

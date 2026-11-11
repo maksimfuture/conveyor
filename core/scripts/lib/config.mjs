@@ -822,11 +822,16 @@ export const STAGE_ARTIFACTS = {
   // остатки», раздел «Ревью».
   'implement-plan': ['plan.md'],
   'create-autotest-plan': ['autotest-plan.md'],
-  'implement-auto-test': ['report-auto-test.md'],
+  // Реализация автотестов отмечает колонку «Статус» в плане (`[ ]` → `[x]`),
+  // как implement-plan — шаги в plan.md. Отчёта на этом этапе нет: его пишет
+  // run-auto-test, когда есть результаты сборки.
+  'implement-auto-test': ['autotest-plan.md'],
   // Выгрузка в TMS заменяет заглушки ID новых тестов (PROJ-T999-N) на ключи
-  // созданных кейсов — в ОБОИХ артефактах: иначе сверка отчёта с планом
-  // разойдётся по составу ID.
+  // созданных кейсов. Отчёта к этому этапу обычно ещё нет; он в списке на
+  // случай повтора после прогона — иначе сверка отчёта с планом разошлась бы
+  // по составу ID.
   'update-tms': ['autotest-plan.md', 'report-auto-test.md'],
+  // Отчёт о прогоне производит ЭТОТ этап — целиком, по фактам сборки.
   'run-auto-test': ['report-auto-test.md'],
   'task-status': [],
 };

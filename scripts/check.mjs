@@ -1344,8 +1344,8 @@ console.log('Промпт system-analyst — две фазы этапа create-s
 // то, что получилось в коде, вместо того чтобы ловить расхождение с
 // требованиями. Второе: покрытие критериев приёмки — единственная
 // содержательная проверка артефакта, потому что (третье) цикла ревью здесь
-// нет, он остаётся на /conveyor:implement-auto-test, где тесты реально
-// прогоняются. Скилл и команду модель читает ДО стейджа, поэтому смотрим все
+// нет, он остаётся на /conveyor:implement-auto-test, где появляется код
+// тестов. Скилл и команду модель читает ДО стейджа, поэтому смотрим все
 // три файла этапа.
 console.log('Этап create-autotest-plan — план по спецификации, без диффа и без ревью:');
 {
@@ -1590,53 +1590,94 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
           .join('; '),
     );
 
-  // Отчёт агент пишет ПОСЛЕ прогона и по фактам, которые передал скилл: в
-  // Jenkins агенту ходить нечем (MCP-инструменты ему не переданы), а curl из
-  // Bash обошёл бы и разрешение пользователя, и выбранные им теги.
+  // В Jenkins агенту ходить нечем (MCP-инструменты ему не переданы), а curl
+  // из Bash обошёл бы и разрешение пользователя, и выбранные им теги. Отчёт о
+  // прогоне агент не пишет вовсе: его составляет скилл /run-auto-test по
+  // фактам сборки. Тесты агент тоже не запускает — только собирает: этап идёт
+  // параллельно с разработкой, и тест, «починенный» под то, что есть на
+  // стенде, закрепил бы старое поведение.
   const promptFlat = promptRaw.replace(/\s+/g, ' ');
   const agentNoCi = /(не ход\w+|не запускай\w*)[^.]{0,80}(CI|Jenkins)/i.test(promptFlat);
   const factsFromSkill = /(факт\w*|данны\w*)[^.]{0,160}сборк\w*/i.test(promptFlat) && /скилл/i.test(implSect);
-  if (agentNoCi && factsFromSkill)
-    ok('qa-autotest-engineer: в CI не ходит, факты о сборке для отчёта получает от скилла');
+  const agentNoReport = /`report-auto-test\.md` ты НЕ пишешь/.test(implSect);
+  const agentNoRun = /БЕЗ ЗАПУСКА ТЕСТОВ/.test(implSect) && /тесты НЕ запускай/.test(implSect) && /НЕ подгоняй/.test(implSect);
+  const agentReturns = /расхождени\S* с планом/i.test(implSect) && /(ok|`ok`)[^.]{0,40}failed[^.]{0,40}blocked/.test(implSect);
+  if (agentNoCi && factsFromSkill && agentNoReport && agentNoRun && agentReturns)
+    ok('qa-autotest-engineer: тесты собирает, но не запускает; отчёт не пишет; в CI не ходит; возвращает сборку и расхождения с планом');
   else
     bad(
-      'qa-autotest-engineer: границы CI — ' +
+      'qa-autotest-engineer: границы этапа реализации — ' +
         [
           agentNoCi ? null : 'не запрещён поход в Jenkins/CI',
-          factsFromSkill ? null : 'не сказано, откуда берутся факты о сборке',
+          factsFromSkill ? null : 'не сказано, кто получает факты о сборке в CI',
+          agentNoReport ? null : 'не сказано, что report-auto-test.md агент НЕ пишет',
+          agentNoRun ? null : 'не предписана сборка БЕЗ ЗАПУСКА ТЕСТОВ (и запрет подгонять тест под старое поведение)',
+          agentReturns ? null : 'агент не возвращает итог сборки (ok/failed/blocked) и расхождения с планом',
         ]
           .filter(Boolean)
           .join('; '),
     );
 
   // Порядок сверяем по НОМЕРАМ шагов алгоритма, а не по позиции слова в
-  // тексте: «джоба» упоминается и там, где её только записывают в отчёт.
+  // тексте: «джоба» упоминается и там, где её только называют следующим этапом.
+  // На этапе нет ни запуска тестов, ни отчёта: написанное проверяют сборка,
+  // ревью и сверка плана с КОДОМ — она стоит после ревью (правки ревью могут
+  // и добавить, и убрать тест) и до push (джоба собирает теги из тестов
+  // ветки, потерянный тест — это ещё и недостающий тег).
   const stepsOf = (raw) => (raw.split(/^## /m).find((s) => s.startsWith('Алгоритм')) || '').split(/\n(?=\d+\. )/);
   const algoSteps = stepsOf(stageRaw);
   const stepIdx = (re, steps = algoSteps) => steps.findIndex((s) => re.test(s));
+  const iBuild = stepIdx(/собирает тестовый код без запуска тестов/i);
   const iReview = stepIdx(/Цикл ревью/i);
-  const iReport = stepIdx(/Отчёт \(без прогона в CI\)/i);
-  const iPush = stepIdx(/push/i);
-  const foundA = [iReview, iReport, iPush].every((i) => i !== -1);
-  const reportAfterReview = foundA && iReview < iReport;
-  const pushAfterReport = foundA && iReport < iPush;
-  const reportStep = foundA ? algoSteps[iReport] : '';
-  const planCheckEarly = /validate-artifact/.test(reportStep) && /--plan/.test(reportStep);
-  const pendingNormal = /ожидается прогон в CI/i.test(stage) && /ciPending: true/.test(stage);
+  const iCoverage = stepIdx(/Сверка плана с кодом/i);
+  // Шаг push узнаём по вопросу пользователю: само слово «push» есть и в шаге
+  // сверки («до коммита и push»).
+  const iPush = stepIdx(/запушить сейчас/i);
+  const foundA = [iBuild, iReview, iCoverage, iPush].every((i) => i !== -1);
+  const buildBeforeReview = foundA && iBuild < iReview;
+  const coverageAfterReview = foundA && iReview < iCoverage;
+  const pushAfterCoverage = foundA && iCoverage < iPush;
+  const coverageStep = foundA ? algoSteps[iCoverage] : '';
+  const coverageByScript =
+    /tms-cases\.mjs" coverage/.test(coverageStep) && /--base/.test(coverageStep) && /unexplained/.test(coverageStep);
+  const metaFacts = /`build`/.test(stage) && /`deviations`/.test(stage);
   const algoA = algoSteps.join('\n');
+  // Ни отчёта, ни запуска тестов, ни остатков прежней схемы (маркер ожидания).
+  const noReportInA =
+    !/validate-artifact[^\n]*report-auto-test/.test(algoA) &&
+    !/ожидается прогон в CI|ciPending/.test(stageRaw) &&
+    /`report-auto-test\.md` на этом этапе НЕ создаётся/.test(flatten(sect(stageRaw, 'DoD')));
+  const noRunInA = /НЕ запускаются/.test(stage) && !/Прогон тестов локально|локальн\S* прогон/i.test(stageRaw);
   const noJenkinsInA = !/Запусти сборку|TAGS|autoTestJob|3 минут/.test(algoA);
   const handsOver = /run-auto-test/.test(sect(stageRaw, 'DoD'));
-  if (foundA && reportAfterReview && pushAfterReport && planCheckEarly && pendingNormal && noJenkinsInA && handsOver)
-    ok('implement-auto-test: ревью → отчёт (сверка с планом, маркер ожидания) → push; джобу не запускает, передаёт run-auto-test');
+  if (
+    foundA &&
+    buildBeforeReview &&
+    coverageAfterReview &&
+    pushAfterCoverage &&
+    coverageByScript &&
+    metaFacts &&
+    noReportInA &&
+    noRunInA &&
+    noJenkinsInA &&
+    handsOver
+  )
+    ok(
+      'implement-auto-test: код и сборка без запуска тестов → ревью → сверка плана с кодом (tms-cases coverage) → push; ' +
+        'отчёт не пишет и джобу не запускает, передаёт run-auto-test',
+    );
   else
     bad(
-      'implement-auto-test: порядок и граница с CI — ' +
+      'implement-auto-test: порядок и границы этапа — ' +
         [
-          foundA ? null : 'шаги алгоритма не опознаны (ревью / отчёт / push)',
-          reportAfterReview ? null : 'отчёт формируется раньше цикла ревью',
-          pushAfterReport ? null : 'push описан раньше отчёта',
-          planCheckEarly ? null : 'сверка отчёта с планом не идёт в шаге отчёта (до сборки)',
-          pendingNormal ? null : 'не сказано, что маркер «ожидается прогон в CI» / ciPending: true — норма этапа',
+          foundA ? null : 'шаги алгоритма не опознаны (сборка без запуска / ревью / сверка плана с кодом / push)',
+          buildBeforeReview ? null : 'сборка тестового кода описана после цикла ревью',
+          coverageAfterReview ? null : 'сверка плана с кодом идёт раньше цикла ревью',
+          pushAfterCoverage ? null : 'push описан раньше сверки плана с кодом',
+          coverageByScript ? null : 'сверка не через tms-cases.mjs coverage (--base, разбор unexplained)',
+          metaFacts ? null : 'не сказано писать в meta.json `build` и `deviations`',
+          noReportInA ? null : 'на этапе остался отчёт (validate-artifact report-auto-test / маркер ожидания) либо DoD не говорит, что отчёт НЕ создаётся',
+          noRunInA ? null : 'на этапе остался локальный прогон тестов',
           noJenkinsInA ? null : 'в алгоритме остались запуск джобы / TAGS / autoTestJob / опрос',
           handsOver ? null : 'DoD не называет следующим шагом run-auto-test',
         ]
@@ -1649,13 +1690,27 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
   const jStand = stepIdx(/на стенде\?/i, runSteps);
   const jChecks = stepIdx(/Можно ли запускать джобу/i, runSteps);
   const jRun = stepIdx(/Запусти сборку/i, runSteps);
-  const jFinal = stepIdx(/Дописать «Прогон в CI»/i, runSteps);
+  const jFinal = stepIdx(/Отчёт о прогоне/i, runSteps);
   const foundB = [jStand, jChecks, jRun, jFinal].every((i) => i !== -1);
   const standFirst = foundB && jStand < jChecks && jStand < jRun;
   const pushedChecked =
     foundB && /git-ops\.mjs" pushed/.test(runSteps[jChecks]) && /checkFailed/.test(runSteps[jChecks]) && jChecks < jRun;
   const finalAfterRun = foundB && jRun < jFinal;
-  const pendingGate = /ciPending: false/.test(run) && /ожидается прогон в CI/i.test(run);
+  // Отчёт пишет ЭТОТ этап — целиком, скиллом, по шаблону и фактам: строки из
+  // плана, расхождения и ревью из meta.json, статусы из сборки. И сверяет его
+  // с планом. Маркера ожидания («отчёт написан, сборки не было») больше нет.
+  const finalStep = foundB ? runSteps[jFinal] : '';
+  const reportWhole =
+    /templates\/report-auto-test\.md/.test(finalStep) &&
+    /СКИЛЛ, не агент/.test(finalStep) &&
+    /deviations/.test(finalStep) &&
+    /stages\['implement-auto-test'\]\.review/.test(finalStep) &&
+    /нет данных/.test(finalStep);
+  const reportChecked =
+    /validate-artifact\.mjs"[^\n]*--type report-auto-test --plan/.test(finalStep) && /planMismatch\.missing/.test(finalStep);
+  const noPendingMarker = !/ciPending|ожидается прогон в CI/.test(runRaw);
+  const runPre = flatten((runRaw.replace(/\r\n/g, '\n').match(/\*\*Предусловие:\*\*[\s\S]*?(?=\n\n)/) || [''])[0]);
+  const reportNotRequired = !/report-auto-test\.md/.test(runPre) && /autotest-plan\.md/.test(runPre);
   const askRun = /(разрешени|спроси)\w*[^.]{0,120}(запуск|джоб)/i.test(run);
   const askTags = /тег\w*[^.]{0,160}(друг|отредактир|измен)/i.test(run);
   const poll = /(3 минут|три минут)/i.test(run);
@@ -1668,14 +1723,17 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
     /(подбер|подбир|определ|выбер)\w*[^.]{0,80}инструмент/i.test(run) ||
     /инструмент\w*[^.]{0,120}(подбер|подбир|определ|выбер)/i.test(run);
   const noToolsFallback = /инструмент\w*[^.]{0,80}нет[^.]{0,80}не запуска/i.test(run);
-  const rerun = /ПОВТОРНОМ запуске[^.]{0,250}заменяются целиком/i.test(run);
+  const rerun = /ПОВТОРНОМ запуске[^.]{0,250}переписывается целиком/i.test(run);
   const noPush = /не пушит/i.test(run);
   if (
     foundB &&
     standFirst &&
     pushedChecked &&
     finalAfterRun &&
-    pendingGate &&
+    reportWhole &&
+    reportChecked &&
+    noPendingMarker &&
+    reportNotRequired &&
     askRun &&
     askTags &&
     poll &&
@@ -1687,25 +1745,60 @@ console.log('qa-autotest-engineer и implement-auto-test — артефакт au
   )
     ok(
       'run-auto-test: «функционал на стенде?» → проверка push (git-ops pushed) → разрешение → теги → ' +
-        'сборка (опрос раз в 3 минуты) → «Прогон в CI» дописан (повтор перезаписывает); отказ не отменяет отчёт',
+        'сборка (опрос раз в 3 минуты) → отчёт о прогоне написан скиллом и сверен с планом (повтор переписывает); ' +
+        'отказ не отменяет отчёт',
     );
   else
     bad(
       'run-auto-test: прогон в CI — ' +
         [
-          foundB ? null : 'шаги алгоритма не опознаны (стенд / проверки / запуск сборки / дописывание)',
+          foundB ? null : 'шаги алгоритма не опознаны (стенд / проверки / запуск сборки / отчёт о прогоне)',
           standFirst ? null : 'вопрос «функционал на стенде?» не стоит перед запуском',
           pushedChecked ? null : 'push не проверяется через git-ops pushed (с разбором checkFailed) до запуска',
-          finalAfterRun ? null : '«Прогон в CI» дописывается раньше сборки',
-          pendingGate ? null : 'нет проверки ciPending: false после дописывания',
+          finalAfterRun ? null : 'отчёт о прогоне пишется раньше сборки',
+          reportWhole
+            ? null
+            : 'шаг отчёта не называет шаблон, автора (скилл), источники (deviations, review из meta.json) и статус «нет данных»',
+          reportChecked ? null : 'отчёт не сверяется с планом (validate-artifact --plan, planMismatch.missing)',
+          noPendingMarker ? null : 'в стейдже остался маркер ожидания (ciPending / «ожидается прогон в CI»)',
+          reportNotRequired ? null : 'предусловие всё ещё требует report-auto-test.md (или не требует autotest-plan.md)',
           askRun ? null : 'не спрашивается разрешение на запуск джобы',
           askTags ? null : 'пользователю не предлагается изменить теги',
           poll ? null : 'не указан опрос статуса раз в 3 минуты',
           refusedStillReports ? null : 'не сказано, что при отказе причина всё равно идёт в отчёт',
           picksTools ? null : 'этап не подбирает MCP-инструменты сам',
           noToolsFallback ? null : 'не описан случай «подходящих инструментов нет»',
-          rerun ? null : 'не описан повторный запуск (строки раздела заменяются целиком)',
+          rerun ? null : 'не описан повторный запуск (отчёт переписывается целиком)',
           noPush ? null : 'не сказано, что этап сам не пушит',
+        ]
+          .filter(Boolean)
+          .join('; '),
+    );
+}
+
+// update-tms стоит МЕЖДУ реализацией автотестов и прогоном, и отчёта к нему
+// обычно нет. А у задач, начатых по прежней схеме, отчёт лежит — написанный до
+// прогона, с маркером ожидания, который валидатор больше не принимает. Этап,
+// валидирующий такой отчёт, останавливался бы на задачах в работе; этап,
+// требующий отчёт в предусловии, не запускался бы на новых.
+console.log('update-tms — отчёт о прогоне не требуется и не валидируется:');
+{
+  const rels = ['core/stages/update-tms.md', 'adapters/claude-code/skills/update-tms/SKILL.md'];
+  const texts = rels.map((rel) => [rel, fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n')]);
+  const validates = texts.filter(([, t]) => /--type report-auto-test/.test(t)).map(([rel]) => rel);
+  const stageText = texts[0][1];
+  const pre = (stageText.match(/\*\*Предусловие:\*\*[\s\S]*?(?=\n\n)/) || [''])[0].replace(/\s+/g, ' ');
+  const notRequired = /`specification\.md` и `autotest-plan\.md`/.test(pre) && /он не нужен/.test(pre);
+  const saysWhy = /НЕ валидируй/.test(stageText);
+  if (!validates.length && notRequired && saysWhy)
+    ok('update-tms: отчёт не в предусловии и не валидируется (в том числе отчёт прежней схемы у задач в работе)');
+  else
+    bad(
+      'update-tms: отчёт о прогоне — ' +
+        [
+          validates.length ? `валидация отчёта осталась в ${validates.join(', ')}` : null,
+          notRequired ? null : 'предусловие требует report-auto-test.md',
+          saysWhy ? null : 'в стейдже не сказано, что отчёт НЕ валидируется',
         ]
           .filter(Boolean)
           .join('; '),
@@ -3656,7 +3749,10 @@ try {
       { stage: 'create-plan', type: 'FE', own: `${task1}/plan.md`, foreign: `${task1}/specification.md` },
       { stage: 'implement-plan', type: 'FE', own: `${task1}/plan.md`, foreign: `${task1}/autotest-plan.md` },
       { stage: 'create-autotest-plan', type: 'FE', own: `${task1}/autotest-plan.md`, foreign: `${task1}/report-auto-test.md` },
-      { stage: 'implement-auto-test', type: 'FE', own: `${task1}/report-auto-test.md`, foreign: `${task1}/plan.md` },
+      // Реализация автотестов отмечает «Статус» в плане; отчёт о прогоне —
+      // артефакт run-auto-test, и заводить его этапом раньше нельзя.
+      { stage: 'implement-auto-test', type: 'FE', own: `${task1}/autotest-plan.md`, foreign: `${task1}/report-auto-test.md` },
+      { stage: 'run-auto-test', type: 'FE', own: `${task1}/report-auto-test.md`, foreign: `${task1}/autotest-plan.md` },
     ];
     const broken = [];
     for (const c of artefactCases) {
@@ -4405,8 +4501,11 @@ try {
   // placeholders — /create-plan.
   {
     const reviewStages = ['create-specification', 'implement-plan', 'implement-auto-test'];
-    // Этапы, которые ПРАВЯТ готовый артефакт, а не производят его по шаблону:
-    // run-auto-test дописывает «Прогон в CI», update-tms меняет ID тестов.
+    // update-tms ПРАВИТ готовые артефакты (меняет ID тестов), а не производит
+    // их по шаблону. run-auto-test отчёт производит, но раздел «Ревью»
+    // заполняет из meta.json — итогом ревью этапа implement-auto-test: чем
+    // заполнить, у него есть, хотя сам он цикл не гоняет. implement-auto-test
+    // правит план только в колонке «Статус».
     const appendStages = ['run-auto-test', 'update-tms'];
     const offenders = [];
     for (const [stage, arts] of Object.entries(STAGE_ARTIFACTS)) {
@@ -4775,10 +4874,10 @@ try {
   // пользователя, незапушенная ветка или ненастроенная джоба — то есть
   // прогон, которого не было.
   //
-  // Третье состояние — ожидание: отчёт написан после ревью, сборки ещё не
-  // было. Оно законно (иначе этап не смог бы написать отчёт до прогона), но
-  // обязано быть отличимо от финального ОТДЕЛЬНЫМ полем: по одному ok:true
-  // этап закрылся бы по отчёту, в котором на месте сборки стоит маркер.
+  // Третьего состояния — «ожидается прогон в CI» — больше нет: отчёт пишет
+  // /run-auto-test, и к этому моменту сборка либо была, либо известно, почему
+  // её нет. Маркер ожидания в разделе — отчёт, написанный этапом раньше
+  // положенного, и валидацию он не проходит.
   {
     const ciPath = path.join(tmp, 'report-ci.md');
     const ciTpl = fs.readFileSync(path.join(root, 'core/templates/report-auto-test.md'), 'utf8');
@@ -4795,31 +4894,38 @@ try {
     const emptyCi = vaCi(ciTpl.slice(0, ciFrom) + '## Прогон в CI\n\n' + ciTpl.slice(ciTo + 1));
     const emptyCiCaught = emptyCi.ok === false && emptyCi.problems.some((p) => /не запускал/i.test(p));
 
-    // Шаблон несёт маркер ожидания: таким отчёт выходит из-под агента до сборки.
-    const pendingCi = vaCi(ciTpl);
-    const pendingCaught = pendingCi.ok === true && pendingCi.ciPending === true;
+    // Маркер ожидания на месте сборки и статуса — прежняя схема: не проходит.
+    const pendingCi = vaCi(
+      ciTpl
+        .replace(/^- \*\*Сборка:\*\*.*$/m, '- **Сборка:** ожидается прогон в CI')
+        .replace(/^- \*\*Статус:\*\*.*$/m, '- **Статус:** ожидается прогон в CI'),
+    );
+    const pendingCaught = pendingCi.ok === false && pendingCi.problems.some((p) => /не запускал/i.test(p));
 
-    // Тот же отчёт после сборки: маркер заменён номером и статусом.
+    // Сборка была: номер и статус.
     const finalCi = vaCi(
       ciTpl
-        .replace('#<номер> — <ссылка на сборку> / «ожидается прогон в CI»', '#417 — https://ci.example/job/at/417')
+        .replace('#<номер> — <ссылка на сборку>', '#417 — https://ci.example/job/at/417')
         .replace(/^- \*\*Статус:\*\*.*$/m, '- **Статус:** SUCCESS'),
     );
-    const finalCaught = finalCi.ok === true && finalCi.ciPending === false;
+    // Сборки не было: причина прямым текстом.
+    const skippedCi = vaCi(
+      ciTpl
+        .replace(/^- \*\*Сборка:\*\*.*$/m, '- **Сборка:** —')
+        .replace(/^- \*\*Статус:\*\*.*$/m, '- **Статус:** джоба с автотестами не запускалась: функционал ещё не на стенде'),
+    );
+    const finalCaught = finalCi.ok === true && skippedCi.ok === true && !('ciPending' in finalCi);
 
     if (noCiSectionCaught && emptyCiCaught && pendingCaught && finalCaught)
-      ok(
-        'validate-artifact: «Прогон в CI» — сборка, причина её отсутствия либо ожидание (ciPending отличает ' +
-          'промежуточный отчёт от финального)',
-      );
+      ok('validate-artifact: «Прогон в CI» — сборка либо причина её отсутствия; маркер ожидания не проходит');
     else
       bad(
         'validate-artifact: «Прогон в CI» — ' +
           [
             noCiSectionCaught ? null : 'отчёт без раздела прошёл: ' + JSON.stringify(noCiSection.missingSections),
             emptyCiCaught ? null : 'пустой раздел прошёл: ' + JSON.stringify(emptyCi.problems),
-            pendingCaught ? null : 'отчёт с маркером ожидания: ' + JSON.stringify(pendingCi),
-            finalCaught ? null : 'отчёт с готовой сборкой: ' + JSON.stringify(finalCi),
+            pendingCaught ? null : 'отчёт с маркером ожидания прошёл: ' + JSON.stringify(pendingCi.problems),
+            finalCaught ? null : 'отчёт со сборкой / с причиной её отсутствия: ' + JSON.stringify([finalCi, skippedCi]),
           ]
             .filter(Boolean)
             .join('; '),
@@ -6196,6 +6302,202 @@ console.log('update-tms: разбор плана, учёт ключей, зам�
       else bad('tms-cases повтор apply: ' + JSON.stringify(again.changed));
     } finally {
       runScript('core/scripts/scope.mjs', ['clear'], '', tmsWs);
+    }
+
+    // coverage — сверка таблицы «Автотесты» плана с КОДОМ рабочей копии
+    // (/conveyor:implement-auto-test): отчёта на том этапе нет, и потерянный
+    // автотест больше не поймать сверкой отчёта с планом. Своя задача; коммит
+    // и ветку, нужные блоку, он за собой убирает.
+    {
+      const covTask = path.join(tmsWs, ...TASKS_DIR.split('/'), 'FE', 'PROJ-9');
+      fs.mkdirSync(covTask, { recursive: true });
+      const covMetaPath = path.join(covTask, 'meta.json');
+      const covPlanPath = path.join(covTask, 'autotest-plan.md');
+      const covMeta = (stage) =>
+        fs.writeFileSync(
+          covMetaPath,
+          JSON.stringify({
+            schemaVersion: 2,
+            taskId: 'PROJ-9',
+            type: 'FE',
+            tmsCases: { 'PROJ-T999-22': 'PROJ-T822' },
+            stages: { 'implement-auto-test': stage || {} },
+          }),
+        );
+      covMeta();
+      const planHead = '| ID | Вид тестирования | Уровень | Класс | Реализация | REQ-ID | Статус |';
+      const covPlan = (rows, head = planHead) =>
+        fs.writeFileSync(covPlanPath, ['## Автотесты', '', head, '|---|---|---|---|---|---|---|', ...rows, ''].join('\r\n'));
+      const fullPlan = [
+        '| PROJ-T999-21 | НФ | API | `src/Cov.java` | создать | REQ-1 | [x] |',
+        '| PROJ-T822 | НФ | API | `src/Cov.java` | создать | REQ-2 | [x] |',
+        '| PROJ-T501 | Регресс | UI | `src/Keep.java` | переиспользуется без правок: только прогон | REQ-3 | [x] |',
+      ];
+      covPlan(fullPlan);
+
+      const src = (name) => path.join(repo, 'src', name);
+      const covFiles = ['Old.java', 'Keep.java', 'Moved.java', 'Moved2.java', 'Cov.java'];
+      const headBefore = g('rev-parse', 'HEAD').trim();
+      const statusBefore = g('status', '--porcelain');
+      // Основная ветка: тесты, существовавшие до задачи.
+      fs.writeFileSync(src('Old.java'), 'class Old {\n  @TmsLink("PROJ-T502") void p() {}\n}\n');
+      fs.writeFileSync(src('Keep.java'), 'class Keep {\n  @TmsLink("PROJ-T501") void o() {}\n  @TmsLink("PROJ-T504") void m() {}\n}\n');
+      fs.writeFileSync(src('Moved.java'), 'class Moved {\n  @TmsLink("PROJ-T505") void z() {}\n}\n');
+      g('add', '-A');
+      g('commit', '-q', '-m', 'перед веткой задачи');
+      g('branch', '-f', 'cov-base');
+      // Ветка задачи:
+      //  - новый файл (ещё не в git) с двумя тестами плана и одним сверх плана;
+      //  - тест сверх плана, дописанный в существующий класс;
+      //  - переформатированная аннотация чужого теста (PROJ-T502) и чужой тест,
+      //    перенесённый в другой класс (PROJ-T505): оба были до ветки.
+      fs.writeFileSync(
+        src('Cov.java'),
+        'class Cov {\n  @TmsLink("PROJ-T999-21") void a() {}\n  @TmsLink("PROJ-T822") void b() {}\n  @TmsLink("PROJ-T999-30") void x() {}\n}\n',
+      );
+      fs.writeFileSync(
+        src('Old.java'),
+        'class Old {\n  @TmsLink(value = "PROJ-T502") void p() {}\n}\nclass Old2 {\n  @TmsLink(value = "PROJ-T503") void q() {}\n}\n',
+      );
+      fs.rmSync(src('Moved.java'));
+      fs.writeFileSync(src('Moved2.java'), 'class Moved2 {\n  @TmsLink("PROJ-T505") void z() {}\n}\n');
+
+      const cov = (extraArgs = ['--base', 'cov-base']) => tms(['coverage', '--task', covTask, '--repo', repo, ...extraArgs]);
+      const ids = (list) => (list || []).map((e) => e.id).sort().join(',');
+      const byId = (res, id) => (res.extra || []).find((e) => e.id === id) || {};
+
+      // Всё по плану написано и отмечено; сверх плана — два теста без причины.
+      // Переформатированный PROJ-T502 и перенесённый PROJ-T505 «сверх плана»
+      // не считаются; нетронутый регресс «без правок» — норма.
+      const c1 = cov();
+      const extraFound =
+        c1.ok === false && c1.status === 1 &&
+        c1.planned === 3 && c1.implemented === 3 &&
+        !(c1.missing || []).length && !(c1.unticked || []).length && !(c1.untouched || []).length &&
+        ids(c1.extra) === 'PROJ-T503,PROJ-T999-30' &&
+        (c1.unexplained || []).slice().sort().join(',') === 'PROJ-T503,PROJ-T999-30' &&
+        byId(c1, 'PROJ-T999-30').placeholder === true && byId(c1, 'PROJ-T503').placeholder === false;
+
+      // Причины названы — сверка зелёная.
+      covMeta({ deviations: { 'PROJ-T999-30': 'сверх плана: вынесена общая проверка', 'PROJ-T503': 'сверх плана: регресс' } });
+      const c2 = cov();
+      const explained =
+        c2.ok === true && !(c2.unexplained || []).length && ids(c2.extra) === 'PROJ-T503,PROJ-T999-30' &&
+        (c2.staleDeviations || ['?']).length === 0;
+
+      // Потерянный тест (ID нет в коде), строка без [x] и тест, который план
+      // велел ИЗМЕНИТЬ, а ветка не тронула: ID у него в коде был и до ветки,
+      // и одно его наличие ничего не доказывает.
+      const morePlan = [
+        ...fullPlan,
+        '| PROJ-T999-23 | НФ | API | `src/Cov.java` | создать | REQ-4 | [x] |',
+        '| PROJ-T999-24 | НФ | API | `src/Cov.java` | создать | REQ-5 | [ ] |',
+        '| PROJ-T504 | Регресс | UI | `src/Keep.java` | изменить: добавить проверку статуса | REQ-6 | [x] |',
+      ];
+      covPlan(morePlan);
+      const c3 = cov();
+      const lostCaught =
+        c3.ok === false &&
+        (c3.missing || []).join(',') === 'PROJ-T999-23,PROJ-T999-24' &&
+        (c3.unticked || []).join(',') === 'PROJ-T999-24' &&
+        (c3.untouched || []).join(',') === 'PROJ-T504' &&
+        (c3.unexplained || []).join(',') === 'PROJ-T999-23,PROJ-T999-24,PROJ-T504' &&
+        c3.implemented === 3;
+      covMeta({
+        deviations: {
+          'PROJ-T999-30': 'x',
+          'PROJ-T503': 'x',
+          'PROJ-T999-23': 'не реализован: нет тестовых данных',
+          'PROJ-T999-24': 'не реализован: вынесен в отдельную задачу',
+          'PROJ-T504': 'не изменён: проверка уже есть',
+        },
+      });
+      const c4 = cov();
+      const lostExplained = c4.ok === true && (c4.missing || []).length === 2 && c4.implemented === 3;
+      // Тест дописали — причина при нём устарела, и сверка её называет: иначе
+      // она ушла бы в «Расхождение с планом» отчёта.
+      fs.appendFileSync(src('Keep.java'), '// проверка статуса добавлена\n');
+      const c4b = cov();
+      const staleNamed =
+        c4b.ok === true && !(c4b.untouched || []).length && (c4b.staleDeviations || []).join(',') === 'PROJ-T504' && c4b.implemented === 4;
+
+      // Причина записана под заглушкой, а в плане уже ключ из tmsCases.
+      covPlan(['| PROJ-T822 | НФ | API | `src/Cov.java` | создать | REQ-2 | [ ] |']);
+      covMeta({ deviations: { 'PROJ-T999-22': 'не отмечен: ждёт ревью', 'PROJ-T999-30': 'x', 'PROJ-T503': 'x', 'PROJ-T999-21': 'x' } });
+      const c5 = cov();
+      const aliasOk =
+        c5.ok === true && (c5.unticked || []).join(',') === 'PROJ-T822' &&
+        ((c5.tests || [])[0] || {}).deviation === 'не отмечен: ждёт ревью' &&
+        (c5.staleDeviations || ['?']).length === 0;
+
+      // Без --base ветка не сверяется — и об этом сказано, а поля не врут нулями.
+      covPlan(fullPlan);
+      covMeta();
+      const c6 = cov([]);
+      const noBase =
+        c6.ok === true && c6.extra === null && c6.untouched === null && c6.staleDeviations === null &&
+        (c6.warnings || []).some((w) => /--base/.test(w));
+      // --base передан, но общей точки нет: половина сверки не выполнена, и это
+      // ok:false, а не предупреждение, которое этап не читает.
+      const c7 = cov(['--base', 'no-such-branch']);
+      const badBase =
+        c7.ok === false && c7.status === 1 && c7.extra === null &&
+        (c7.problems || []).some((p) => /общая точка/.test(p)) && !(c7.unexplained || []).length;
+
+      // Сверка ничего не пишет: ни в план, ни в meta.json, ни отчёта.
+      const metaBefore = fs.readFileSync(covMetaPath, 'utf8');
+      cov();
+      const readOnly = fs.readFileSync(covMetaPath, 'utf8') === metaBefore && !fs.existsSync(path.join(covTask, 'report-auto-test.md'));
+
+      // Ошибки входа — ok:false с названной причиной, а не падение.
+      covMeta({ deviations: ['PROJ-T503'] });
+      const eDev = cov();
+      covMeta();
+      covPlan(fullPlan.map((r) => r.replace(/ \| \[x\] \|$/, ' |')), planHead.replace(' | Статус |', ' |'));
+      const eStatus = cov();
+      fs.rmSync(covPlanPath);
+      const ePlan = cov();
+      covPlan(fullPlan);
+      const eRepo = tms(['coverage', '--task', covTask, '--repo', outside, '--base', 'cov-base']);
+      const errorsNamed =
+        eDev.ok === false && /deviations/.test(eDev.error || '') &&
+        eStatus.ok === false && /Статус/.test(eStatus.error || '') &&
+        ePlan.ok === false && /autotest-plan\.md/.test(ePlan.error || '') &&
+        eRepo.ok === false && /рабочая копия/.test(eRepo.error || '');
+
+      // Убираем за собой: коммит, ветку и файлы блока. Рабочая копия обязана
+      // вернуться ровно в то состояние, в котором блок её получил.
+      g('reset', '-q', '--mixed', headBefore);
+      for (const f of covFiles) fs.rmSync(src(f), { force: true });
+      g('branch', '-q', '-D', 'cov-base');
+      const cleaned =
+        g('status', '--porcelain') === statusBefore && g('rev-parse', 'HEAD').trim() === headBefore && !/cov-base/.test(g('branch', '--list'));
+
+      if (extraFound && explained && lostCaught && lostExplained && staleNamed && aliasOk && noBase && badBase && readOnly && errorsNamed && cleaned)
+        ok(
+          'tms-cases coverage: план сверяется с кодом — потерянный тест, строка без [x] и нетронутый веткой тест ловятся; ' +
+            'сверх плана — только новые @TmsLink (перенос и переформатирование не считаются); причина в deviations ' +
+            'снимает блок, устаревшая — названа; несверенная ветка — ok:false; ничего не пишет',
+        );
+      else
+        bad(
+          'tms-cases coverage: ' +
+            [
+              extraFound ? null : 'тесты сверх плана: ' + JSON.stringify(c1),
+              explained ? null : 'расхождения с причинами не прошли: ' + JSON.stringify(c2),
+              lostCaught ? null : 'потерянный / неотмеченный / нетронутый тест: ' + JSON.stringify(c3),
+              lostExplained ? null : 'нереализованные с причиной: ' + JSON.stringify(c4),
+              staleNamed ? null : 'устаревшая причина не названа: ' + JSON.stringify(c4b),
+              aliasOk ? null : 'причина под заглушкой при ключе в плане: ' + JSON.stringify(c5),
+              noBase ? null : 'без --base: ' + JSON.stringify(c6),
+              badBase ? null : 'несуществующая основная ветка: ' + JSON.stringify(c7),
+              readOnly ? null : 'сверка что-то записала',
+              errorsNamed ? null : 'ошибки входа: ' + JSON.stringify({ eDev, eStatus, ePlan, eRepo }),
+              cleaned ? null : 'блок не убрал за собой коммит/ветку/файлы: ' + JSON.stringify(g('status', '--porcelain')),
+            ]
+              .filter(Boolean)
+              .join('; '),
+        );
     }
 
     // Образец: заглушки не проходят (ушли бы в Zephyr буквально), а

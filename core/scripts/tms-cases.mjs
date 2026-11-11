@@ -24,6 +24,13 @@
 //   apply      --task <папка задачи> [--repo <копия автотестов>] [--dry-run]
 //   check-diff [--repo <копия автотестов>] [--task <папка задачи>]
 //              — перед коммитом: в рабочей копии изменены ТОЛЬКО строки @TmsLink
+//   coverage   --task <папка задачи> [--repo <копия автотестов>] [--base <основная ветка>]
+//              — сверка таблицы «Автотесты» плана с КОДОМ рабочей копии
+//                (/conveyor:implement-auto-test): у каждой строки «Статус» [x]
+//                и ID теста найден в исходниках; с --base — ещё и что сделала
+//                ветка: тесты сверх плана (новые @TmsLink) и тесты, которые
+//                план велел создать или изменить, а ветка не тронула.
+//                Ничего не пишет
 //
 // Output (stdout, JSON): { ok, ... } либо { ok:false, error }. Код выхода
 // повторяет ok. Каждая запись проходит checkWrite — ту же проверку рабочей
@@ -577,7 +584,9 @@ function cmdApply(a) {
   const changed = [];
   const leftovers = {};
 
-  // Артефакты задачи: план и отчёт. Отчёта может ещё не быть — не ошибка.
+  // Артефакты задачи: план и отчёт. Отчёта обычно ещё нет — его пишет
+  // /conveyor:run-auto-test, этап после этого; он есть, только если выгрузку
+  // в TMS повторяют после прогона.
   let planAfter = '';
   for (const name of ['autotest-plan.md', 'report-auto-test.md']) {
     const file = path.join(taskDir, name);
@@ -679,7 +688,228 @@ function cmdCheckDiff(a) {
   }
   done({ ok: violations.length === 0, repo, files: [...files], violations });
 }
+// ---- coverage -----------------------------------------------------------------
 
+// Сверка плана с КОДОМ, а не с отчётом: отчёт о прогоне пишет
+// /conveyor:run-auto-test, а потерянный автотест нужно поймать раньше — до
+// коммита и до сборки (джоба собирает теги из тестов ветки, и ненаписанный
+// тест — это ещё и недостающий тег). Проверяется то, что лежит в рабочей
+// копии, а не то, что агент об этом рассказал.
+//
+// Расхождение бывает законным (тест не написан по названной причине, тест
+// сверх плана) — тогда оно записано в
+// meta.json → stages['implement-auto-test'].deviations как «ID → причина».
+// ok:false — только пока расхождение НЕ объяснено (`unexplained`).
+
+/// Что ветка сделала с тестами: дифф рабочего дерева против merge-base с
+// основной веткой плюс новые (ещё не добавленные в git) файлы.
+//   added   — Map<ID, Set<файл>>: `@TmsLink` в строках `+`;
+//   removed — Set<ID>: `@TmsLink` в строках `-`. Перенос теста в другой класс
+//             и переформатирование аннотации дают и `-`, и `+` — такой тест
+//             существовал до ветки, «сверх плана» он не считается;
+//   changed — Set<файл>: исходники, которых ветка коснулась.
+// Нет общей точки с основной веткой — { error }.
+function branchChanges(repo, base) {
+  let mergeBase = null;
+  for (const ref of [base, `origin/${base}`]) {
+    try {
+      mergeBase = git(repo, ['merge-base', ref, 'HEAD']).trim();
+      if (mergeBase) break;
+    } catch {
+      // пробуем следующую ссылку
+    }
+  }
+  if (!mergeBase) return { error: `не найдена общая точка с веткой ${base} (ни локальной, ни origin/${base})` };
+  const added = new Map();
+  const removed = new Set();
+  const changed = new Set();
+  const add = (id, file) => {
+    if (!added.has(id)) added.set(id, new Set());
+    added.get(id).add(file);
+  };
+  const isSource = (file) => SOURCE_EXT.has(path.extname(file).toLowerCase());
+  const diff = git(repo, ['-c', 'core.quotepath=false', 'diff', mergeBase, '-U0', '--no-color', '--no-ext-diff']);
+  // Заголовок файла (`---`/`+++`) читаем только между `diff --git` и первым
+  // `@@`: удалённая строка, начинающаяся с `-- `, выглядит в диффе так же.
+  let inHeader = false;
+  let current = '';
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      inHeader = true;
+      current = '';
+      continue;
+    }
+    if (line.startsWith('@@')) {
+      inHeader = false;
+      continue;
+    }
+    if (inHeader) {
+      const m = line.match(/^(?:---|\+\+\+) (?:[ab]\/)?(.+)$/);
+      if (m && m[1].trim() !== '/dev/null') {
+        current = m[1].trim().replace(/^"|"$/g, '');
+        if (isSource(current)) changed.add(current);
+      }
+      continue;
+    }
+    if (!isSource(current)) continue;
+    if (line.startsWith('+')) for (const m of line.matchAll(TMS_LINK)) add(m[2].trim(), current);
+    else if (line.startsWith('-')) for (const m of line.matchAll(TMS_LINK)) removed.add(m[2].trim());
+  }
+  const status = git(repo, ['-c', 'core.quotepath=false', 'status', '--porcelain', '--untracked-files=all']);
+  for (const line of status.split('\n').filter((l) => l.startsWith('?? '))) {
+    const file = line.slice(3).trim().replace(/^"|"$/g, '');
+    const abs = path.join(repo, file);
+    if (!isSource(file) || !fs.existsSync(abs)) continue;
+    changed.add(file);
+    for (const m of fs.readFileSync(abs, 'utf8').matchAll(TMS_LINK)) add(m[2].trim(), file);
+  }
+  return { added, removed, changed };
+}
+
+// «Реализация» строки плана говорит, что код менять не нужно («переиспользуется
+// без правок: только прогон» — формулировка шаблона). Только у такой строки
+// нетронутый веткой тест — норма.
+const REUSE_ONLY = /без правок|только прогон/i;
+
+function cmdCoverage(a) {
+  const { taskDir, meta, map, taskId, cfg } = readTask(a.task);
+  const planPath = path.join(taskDir, 'autotest-plan.md');
+  if (!fs.existsSync(planPath)) fail(`нет autotest-plan.md в папке задачи: ${taskDir}`);
+  const plan = fs.readFileSync(planPath, 'utf8').replace(/\r\n/g, '\n');
+  const body = sectionBody(plan, '## Автотесты');
+  const head = tableHead(body);
+  if (!head.length) fail('в autotest-plan.md нет таблицы «Автотесты»');
+  const col = (name) => head.indexOf(name);
+  if (col('Статус') < 0) fail('в таблице «Автотесты» нет колонки «Статус» — отмечать реализацию негде');
+
+  const { repo, tried } = resolveRepo(a, cfg);
+  if (!repo) fail(`не найдена рабочая копия автотестов (${tried || 'settings.json → repos.autoTest.link'}) — передайте --repo`);
+
+  // Причины расхождений. ID в них мог остаться заглушкой, а в плане её уже
+  // заменил ключ (/conveyor:update-tms), и наоборот — ищем по обоим.
+  const stage = (meta.stages && meta.stages['implement-auto-test']) || {};
+  const deviations = stage.deviations === undefined ? {} : stage.deviations;
+  if (!deviations || typeof deviations !== 'object' || Array.isArray(deviations))
+    fail("meta.json → stages['implement-auto-test'].deviations должен быть объектом «ID теста → причина»");
+  const aliases = (id) => [id, map[id], ...Object.keys(map).filter((k) => map[k] === id)].filter(Boolean);
+  const reasonFor = (id) => {
+    for (const k of aliases(id)) if (typeof deviations[k] === 'string' && deviations[k].trim()) return deviations[k].trim();
+    return null;
+  };
+
+  const problems = [];
+  const warnings = [];
+
+  // Что сделала ветка. Без этого сверка видит только «ID где-то в коде есть»,
+  // а регрессный тест и тест, который план велел ИЗМЕНИТЬ, были в коде и до
+  // ветки: для них наличие ID ничего не доказывает. Поэтому --base, который
+  // передан, но не разрешился, — ошибка, а не предупреждение: иначе этап
+  // получил бы `ok: true` при непроверенной половине сверки.
+  let branch = null;
+  if (typeof a.base === 'string') {
+    branch = branchChanges(repo, a.base);
+    if (branch.error) {
+      problems.push(`ветка не сверена с основной: ${branch.error} — тесты сверх плана и нетронутые тесты не проверены`);
+      branch = null;
+    }
+  } else warnings.push('не передан --base <основная ветка>: тесты сверх плана и нетронутые веткой тесты не проверены');
+
+  const sources = walkSources(repo, []).map((file) => ({
+    rel: path.relative(repo, file).split(path.sep).join('/'),
+    text: fs.readFileSync(file, 'utf8'),
+  }));
+  const cell = (r, name) => (col(name) >= 0 ? cleanCell(r[col(name)]) : '');
+  const tests = [];
+  for (const r of tableRows(body)) {
+    const id = r[0] || '';
+    if (!TMS_CELL.test(id)) {
+      problems.push(`строка «${id}»: в первой ячейке не ID теста`);
+      continue;
+    }
+    // ID ищем в исходниках целиком, а не только в литерале @TmsLink: ID в
+    // константе (`@TmsLink(Ids.CREATE)`) — тоже написанный тест.
+    const re = idRe(id);
+    const files = sources.filter((s) => ((re.lastIndex = 0), re.test(s.text))).map((s) => s.rel);
+    // Что с этим тестом сделала ветка: `added` — @TmsLink с этим ID добавлен;
+    // `changed` — ID был и раньше, но файл с ним ветка правила; `untouched` —
+    // файл с тестом не тронут вовсе. null — не проверялось (нет --base).
+    let inBranch = null;
+    if (branch && files.length) {
+      if (aliases(id).some((k) => branch.added.has(k))) inBranch = 'added';
+      else if (files.some((f) => branch.changed.has(f))) inBranch = 'changed';
+      else inBranch = 'untouched';
+    }
+    tests.push({
+      id,
+      kind: cell(r, 'Вид тестирования'),
+      level: cell(r, 'Уровень'),
+      class: cell(r, 'Класс'),
+      reuseOnly: REUSE_ONLY.test(cell(r, 'Реализация')),
+      ticked: /\[[xX]\]/.test(r[col('Статус')] || ''),
+      files,
+      inBranch,
+      deviation: reasonFor(id),
+    });
+  }
+  if (!tests.length) problems.push('в таблице «Автотесты» нет ни одной строки — сверять код не с чем');
+
+  // Тест сверх плана — @TmsLink, которого до ветки не было: добавлен (`+`) и
+  // не убран в другом месте (`-`). `placeholder` — у него заглушка T999-N, а
+  // кейс в Zephyr /conveyor:update-tms заводит только по таблице плана: такому
+  // тесту кейс не достанется, пока его не внесут в план.
+  let extra = null;
+  if (branch) {
+    const planned = new Set(tests.flatMap((t) => aliases(t.id)));
+    extra = [...branch.added.entries()]
+      .filter(([id]) => !planned.has(id) && !branch.removed.has(id))
+      .map(([id, files]) => ({ id, files: [...files], placeholder: PLACEHOLDER.test(id), deviation: reasonFor(id) }));
+  }
+
+  const missing = tests.filter((t) => !t.files.length).map((t) => t.id);
+  const unticked = tests.filter((t) => !t.ticked).map((t) => t.id);
+  // План велел создать или изменить тест, а ветка не тронула ни одного файла
+  // с ним: работа по строке не сделана, какой бы ни была отметка.
+  const untouched = branch ? tests.filter((t) => t.inBranch === 'untouched' && !t.reuseOnly).map((t) => t.id) : null;
+  const flagged = new Set([...missing, ...unticked, ...(untouched || [])]);
+  const unexplained = [
+    ...new Set([
+      ...tests.filter((t) => flagged.has(t.id) && !t.deviation).map((t) => t.id),
+      ...(extra || []).filter((e) => !e.deviation).map((e) => e.id),
+    ]),
+  ];
+  // Причины, за которыми расхождения уже нет (тест дописали, строку отметили):
+  // из них /conveyor:run-auto-test собрал бы ложное «Расхождение с планом».
+  // Без --base неизвестно, какие тесты сверх плана, — тогда не судим.
+  let staleDeviations = null;
+  if (branch) {
+    const live = new Set([...[...flagged].flatMap((id) => aliases(id)), ...extra.flatMap((e) => aliases(e.id))]);
+    staleDeviations = Object.keys(deviations).filter((k) => !live.has(k));
+  }
+
+  done({
+    ok: problems.length === 0 && unexplained.length === 0,
+    taskId,
+    repo,
+    planned: tests.length,
+    implemented: tests.filter((t) => t.files.length && t.ticked && !(untouched || []).includes(t.id)).length,
+    // ID из плана, которого нет в коде: тест не написан.
+    missing,
+    // Строка плана без [x]: работа не отмечена (или не сделана).
+    unticked,
+    // Тест есть в коде, но ветка его не трогала, а план велел создать или
+    // изменить; null — не проверялось (нет --base).
+    untouched,
+    // @TmsLink, добавленные веткой, которых нет в плане; null — не проверялось.
+    extra,
+    // Расхождения без причины в deviations — то, что блокирует этап.
+    unexplained,
+    // Ключи deviations, за которыми расхождения больше нет; null — не проверялось.
+    staleDeviations,
+    tests,
+    problems,
+    warnings,
+  });
+}
 
 // ---- dispatch -----------------------------------------------------------------
 
@@ -701,6 +931,9 @@ try {
       break;
     case 'check-diff':
       cmdCheckDiff(args);
+      break;
+    case 'coverage':
+      cmdCoverage(args);
       break;
     default:
       fail(`неизвестная подкоманда: ${sub || '(нет)'}. См. шапку tms-cases.mjs.`);

@@ -1,6 +1,6 @@
 ---
 name: conveyor-implement-auto-test
-description: Реализует автотесты в репозитории автотестов по плану автотестов, прогоняет их локально, проводит цикл ревью, формирует отчёт, коммитит и по подтверждению пушит ветку. Джобу в Jenkins не запускает — это делает run-auto-test. Запускать сразу после create-autotest-plan (implement-plan ждать не нужно). Аргумент TASK-ID. Запускается ТОЛЬКО командой /conveyor:implement-auto-test — по одному описанию задачи сам не запускай.
+description: Реализует автотесты в репозитории автотестов по плану автотестов, собирает тестовый код без запуска тестов, проводит цикл ревью, сверяет план с кодом, коммитит и по подтверждению пушит ветку. Тесты не запускает и отчёт не пишет — это делает run-auto-test. Запускать сразу после create-autotest-plan (implement-plan ждать не нужно). Аргумент TASK-ID. Запускается ТОЛЬКО командой /conveyor:implement-auto-test — по одному описанию задачи сам не запускай.
 ---
 
 **Корень расширения** — `.gigacode/extensions/conveyor`: conveyor установлен
@@ -18,4 +18,6 @@ GIGACODE.md (правила защиты: git — через git-ops.mjs, push �
 затем выполни ТОЧНО `.gigacode/extensions/conveyor/core/stages/implement-auto-test.md`.
 
 Агент: qa-autotest-engineer. Затем цикл ревью (домен autotests) с агентом
-reviewer — core/stages/_review-loop.md.
+reviewer — core/stages/_review-loop.md, затем сверка плана с кодом
+(`tms-cases.mjs coverage`). Тесты на этом этапе не запускаются, отчёт не
+пишется.

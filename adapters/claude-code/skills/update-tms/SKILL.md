@@ -1,12 +1,13 @@
 ---
 name: update-tms
-description: Переносит таблицу «Тест-кейсы» из autotest-plan.md в Zephyr Scale через MCP Jira — создаёт кейсы новым тестам (заглушки PROJ-T999-N), сверяет и при необходимости правит существующие — и заменяет заглушки ключами кейсов в плане, отчёте и @TmsLink кода автотестов. Запускать после /conveyor:implement-auto-test, до /conveyor:run-auto-test; можно перезапускать (дублей не создаёт). Аргумент TASK-ID. Запускать только по явной команде пользователя.
+description: Переносит таблицу «Тест-кейсы» из autotest-plan.md в Zephyr Scale через MCP Jira — создаёт кейсы новым тестам (заглушки PROJ-T999-N), сверяет и при необходимости правит существующие — и заменяет заглушки ключами кейсов в плане и @TmsLink кода автотестов. Запускать после /conveyor:implement-auto-test, до /conveyor:run-auto-test; можно перезапускать (дублей не создаёт). Аргумент TASK-ID. Запускать только по явной команде пользователя.
 ---
 
 Этап конвейера conveyor: тест-кейсы в TMS (Zephyr Scale).
 **Агент:** не требуется — всё делает скилл. **Предусловие:** завершён
 implement-auto-test (`meta.json → stages`), есть specification.md,
-autotest-plan.md, report-auto-test.md и autotestBranch.
+autotest-plan.md и autotestBranch (отчёта report-auto-test.md ещё нет — он
+не нужен).
 
 **Корень плагина.** `${CLAUDE_PLUGIN_ROOT}` — Claude Code подставил сюда
 абсолютный путь при загрузке скилла. Ниже и во всех файлах этапа он обозначен
@@ -21,7 +22,7 @@ autotest-plan.md, report-auto-test.md и autotestBranch.
 
 Кратко:
 1. resolve-config; задача из meta.json; проверь предусловие (implement-auto-test
-   завершён, есть specification.md, autotest-plan.md, report-auto-test.md и
+   завершён, есть specification.md, autotest-plan.md и
    autotestBranch) и
    `repos.autoTest.tms` settings.json — `linkTMS` (тест-кейсы проекта) и
    `mcpTMS` (имя MCP-сервера Jira/Zephyr); в ответе resolve-config это
@@ -60,7 +61,9 @@ autotest-plan.md, report-auto-test.md и autotestBranch.
    --key <ключ>` (взят найденный — с `--adopted`).
    Затем одобренные правки.
 9. `tms-cases.mjs apply --task <папка> --repo <копия автотестов>`;
-   validate-artifact отчёта с `--plan` (planMismatch пуст);
+   validate-artifact плана (`--type autotest-plan`); отчёт
+   report-auto-test.md, даже если он есть, не валидируй — его целиком
+   перепишет /conveyor:run-auto-test;
    `leftovers.repo` — свои заглушки вне @TmsLink, показать (руками).
    `tms-cases.mjs check-diff` — `ok:false` → без коммита. Коммит ровно
    `repoFiles` (`ref: <TASK-ID> ключи кейсов TMS в @TmsLink`), вопрос про push.

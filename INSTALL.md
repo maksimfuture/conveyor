@@ -89,7 +89,7 @@ gigacode extensions uninstall conveyor
 ```
 gigacode extensions list
 ```
-Ожидаемый вывод: `conveyor (3.0.0)` и 10 команд:
+Ожидаемый вывод: `conveyor (3.0.1)` и 10 команд:
 `/conveyor:setup`, `/conveyor:intent`, `/conveyor:create-specification`,
 `/conveyor:create-plan`, `/conveyor:implement-plan`,
 `/conveyor:create-autotest-plan`, `/conveyor:implement-auto-test`,
@@ -192,14 +192,15 @@ node <plugin>/core/scripts/repos-status.mjs
 не в `.env` конвейера: в репозиторий команды попадает только ссылка на джобу.
 
 Ничего из этого не настроено — `/conveyor:implement-auto-test` работает как
-обычно (тесты пишутся, коммитятся), а `/conveyor:run-auto-test` пишет в разделе «Прогон в CI» отчёта, что джоба с
+обычно (тесты пишутся, собираются, коммитятся), а `/conveyor:run-auto-test`
+пишет отчёт без статусов тестов: в разделе «Прогон в CI» — что джоба с
 автотестами не запускалась.
 
 ### Шаг 10. (Опционально) Тест-кейсы в Zephyr
 Этап `/conveyor:update-tms` заводит кейсы новых тестов в Zephyr Scale по
 таблице «Тест-кейсы» плана автотестов, сверяет и при необходимости правит
 уже существующие кейсы и меняет заглушки `PROJ-T999-N` на ключи кейсов в
-плане, отчёте и `@TmsLink` кода. Для этого нужны:
+плане и `@TmsLink` кода. Для этого нужны:
 
 1. **MCP-сервер Jira с инструментами Zephyr Scale** (создание, чтение,
    правка кейсов; желательно — поиск и текущий пользователь), подключённый в

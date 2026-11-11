@@ -106,9 +106,9 @@ BE-задачи. НЕ разбирай `config.repos` сам: форму нас�
 | create-plan | кодовая база по типу задачи — ВСЕ юниты `codebase.<тип>` | — (только артефакты) |
 | implement-plan | кодовая база по типу задачи | код — ТОЛЬКО репозитории из plan.md |
 | create-autotest-plan | автотесты (autoTest), read-only + артефакты | — (только артефакты) |
-| implement-auto-test | автотесты (autoTest) | автотесты |
-| update-tms | агента нет; команда читает план, пишет в Zephyr через MCP | автотесты (guard открывает запись целиком; меняет код только скрипт — ID в `@TmsLink`, и `check-diff` перед коммитом это проверяет), плюс ID в `autotest-plan.md`/`report-auto-test.md` |
-| run-auto-test | агента нет; команда читает ветку автотестов (теги) | — (только `report-auto-test.md` и meta.json) |
+| implement-auto-test | автотесты (autoTest) | автотесты (тесты пишутся и собираются, но не запускаются) |
+| update-tms | агента нет; команда читает план, пишет в Zephyr через MCP | автотесты (guard открывает запись целиком; меняет код только скрипт — ID в `@TmsLink`, и `check-diff` перед коммитом это проверяет), плюс ID в `autotest-plan.md` (и в `report-auto-test.md`, если он уже есть) |
+| run-auto-test | агента нет; команда читает ветку автотестов (теги, классы тестов) | — (только `report-auto-test.md` и meta.json) |
 
 (Колонки — про АГЕНТА: сама команда может читать кодовую базу для подготовки
 диффов через git-ops — например, на фазе B create-specification. Фаза B
@@ -135,9 +135,9 @@ create-autotest-plan, implement-auto-test, update-tms и run-auto-test кодо�
   | create-plan | `plan.md` |
   | implement-plan | `plan.md` (отметки шагов, отклонения, ревью) |
   | create-autotest-plan | `autotest-plan.md` |
-  | implement-auto-test | `report-auto-test.md` |
-  | update-tms | `autotest-plan.md`, `report-auto-test.md` (только замена ID тестов) |
-  | run-auto-test | `report-auto-test.md` (только раздел «Прогон в CI») |
+  | implement-auto-test | `autotest-plan.md` (только отметки колонки «Статус») |
+  | update-tms | `autotest-plan.md`, `report-auto-test.md` (только замена ID тестов; отчёт — если он уже есть) |
+  | run-auto-test | `report-auto-test.md` (целиком, по результатам сборки) |
 
   ИСХОДНИКИ (tsx/js/adoc/…) пишутся ТОЛЬКО в рабочую копию соответствующего
   репозитория, НИКОГДА в папку задачи или намерения;
@@ -209,11 +209,13 @@ create-autotest-plan, implement-auto-test, update-tms и run-auto-test кодо�
 соглашения сам, как раньше.
 
 **Шаблон артефакта — текстом, не ссылкой.** Если этап производит артефакт
-(intent.md, specification.md, plan.md, autotest-plan.md,
-report-auto-test.md), вставь в промпт агента ПОЛНЫЙ текст соответствующего
+руками агента (intent.md, specification.md, plan.md, autotest-plan.md),
+вставь в промпт агента ПОЛНЫЙ текст соответствующего
 шаблона из `<CONVEYOR_ROOT>/core/templates/<имя>.md` — агент заполняет
 этот каркас, не меняя структуру разделов. Не полагайся на то, что агент
 сам прочитает файл шаблона (слабая модель может «заполнить по памяти»).
+`report-auto-test.md` агент не пишет: его по своему шаблону заполняет сама
+команда на `/conveyor:run-auto-test`.
 
 ## Быстрый режим (config.fast, env CONVEYOR_FAST; по умолчанию ВЫКЛЮЧЕН)
 Для медленных/слабых моделей. Если `resolve-config` вернул `fastMode: true`:

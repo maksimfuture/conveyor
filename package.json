@@ -1,6 +1,6 @@
 {
   "name": "conveyor",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Мультирепозиторный конвейер командной разработки для Claude Code: скиллы, ролевые агенты и guard-хуки.",
   "type": "module",
   "private": true,

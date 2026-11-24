@@ -1,6 +1,7 @@
 {
   "taskPrefix": "TASK",
   "repos": {
+    "businessAnalysis": { "link": "repos/business-analysis", "mainBranch": "main", "update": false },
     "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
     "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
     "backend": {

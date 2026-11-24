@@ -89,7 +89,7 @@ gigacode extensions uninstall conveyor
 ```
 gigacode extensions list
 ```
-Ожидаемый вывод: `conveyor (3.0.1)` и 10 команд:
+Ожидаемый вывод: `conveyor (3.1.0)` и 10 команд:
 `/conveyor:setup`, `/conveyor:intent`, `/conveyor:create-specification`,
 `/conveyor:create-plan`, `/conveyor:implement-plan`,
 `/conveyor:create-autotest-plan`, `/conveyor:implement-auto-test`,
@@ -137,7 +137,8 @@ gigacode
 рабочего репозитория:
 
 ```
-git clone <url-анализа>        repos/system-analysis
+git clone <url-бизнес-анализа> repos/business-analysis
+git clone <url-системного-анализа> repos/system-analysis
 git clone <url-фронтенда>      repos/frontend
 git clone <url-backend-core>   repos/backend/core
 git clone <url-backend-api>    repos/backend/api
@@ -151,8 +152,9 @@ git clone <url-автотестов>     repos/autotests
 `settings.json` (`repos.backend.<часть>.link`); бэкенд в одном репозитории
 тоже поддерживается — тогда там обычная запись с `link`.
 
-Клонируйте только то, с чем работаете: аналитику нужен
-`repos/system-analysis`, фронтендеру — `repos/frontend`, тестировщику —
+Клонируйте только то, с чем работаете: бизнес-аналитику нужен
+`repos/business-analysis`, системному аналитику — `repos/system-analysis`,
+фронтендеру — `repos/frontend`, тестировщику —
 `repos/autotests`, бэкендеру — все части бэкенда (таблица «Какая
 конфигурация нужна какой команде» — в [README.md](README.md)).
 

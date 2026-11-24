@@ -1,6 +1,6 @@
 ---
 name: conveyor-intent
-description: Формирует намерение (intent) по новой задаче: процесс AS IS и TO BE, границы, бизнес-критерии приёмки. Репозиторий системного анализа только читается. Первый шаг работы над задачей. Запускается ТОЛЬКО командой /conveyor:intent — по одному описанию задачи сам не запускай.
+description: Формирует намерение (intent) и при repos.businessAnalysis.update=true обновляет репозиторий бизнес-анализа через ветку и MR. Первый шаг работы над задачей. Запускается ТОЛЬКО командой /conveyor:intent — по одному описанию задачи сам не запускай.
 ---
 
 **Корень расширения** — `.gigacode/extensions/conveyor`: conveyor установлен
@@ -17,5 +17,5 @@ description: Формирует намерение (intent) по новой за
 (resolve-config → правила защиты → субагенты), затем выполни ТОЧНО
 `.gigacode/extensions/conveyor/core/stages/intent.md`.
 
-Агент: business-analyst (core/prompts/business-analyst.md). Цикл ревью на
-этом этапе НЕ запускается.
+Агент: business-analyst (core/prompts/business-analyst.md). Цикл ревью
+запускается только при `repos.businessAnalysis.update:true`.

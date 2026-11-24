@@ -201,6 +201,7 @@ console.log('hooks.json — включение защиты:');
 // 1c) Константы ядра: каталоги репозиториев и имена этапов
 {
   const wantDirs = {
+    businessAnalysis: 'repos/business-analysis',
     systemsAnalysis: 'repos/system-analysis',
     frontend: 'repos/frontend',
     backend: 'repos/backend',
@@ -256,7 +257,7 @@ console.log('hooks.json — включение защиты:');
   // теряют этап без единого сбоя.
   const wantRepos = {
     setup: '',
-    intent: 'systemsAnalysis',
+    intent: 'businessAnalysis',
     'create-specification': 'systemsAnalysis',
     'create-plan': 'backend',
     'implement-plan': 'backend',
@@ -282,7 +283,7 @@ console.log('hooks.json — включение защиты:');
   // исчерпывающая и по этапам, и по типам задачи (тип решает на implement-plan).
   const wantWrite = {
     setup: { FE: '', BE: '' },
-    intent: { FE: '', BE: '' },
+    intent: { FE: 'businessAnalysis', BE: 'businessAnalysis' },
     'create-specification': { FE: 'systemsAnalysis', BE: 'systemsAnalysis' },
     'create-plan': { FE: '', BE: '' },
     'implement-plan': { FE: 'frontend', BE: 'backend' },
@@ -309,6 +310,7 @@ console.log('hooks.json — включение защиты:');
   // юнит открывает запись туда, куда никто не собирался, потерянный отбирает
   // её у этапа.
   const groupRepos = {
+    businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
     systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
     frontend: { link: 'repos/frontend', mainBranch: 'main' },
     backend: {
@@ -318,6 +320,7 @@ console.log('hooks.json — включение защиты:');
     autoTest: { link: 'repos/autotests', mainBranch: 'main' },
   };
   const soloRepos = {
+    businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
     systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
     frontend: { link: 'repos/frontend', mainBranch: 'main' },
     backend: { link: 'repos/backend', mainBranch: 'main' },
@@ -328,9 +331,9 @@ console.log('hooks.json — включение защиты:');
   const gIds = gu.units.map((u) => u.id).join(',');
   const sIds = su.units.map((u) => u.id).join(',');
   if (
-    gIds === 'systemsAnalysis,frontend,backend.core,backend.api,autoTest' &&
+    gIds === 'businessAnalysis,systemsAnalysis,frontend,backend.core,backend.api,autoTest' &&
     !gu.errors.length &&
-    sIds === 'systemsAnalysis,frontend,backend,autoTest' &&
+    sIds === 'businessAnalysis,systemsAnalysis,frontend,backend,autoTest' &&
     !su.errors.length
   )
     ok('config: readUnits — группа раскрывается в части, одиночный репозиторий остаётся собой');
@@ -382,7 +385,7 @@ console.log('hooks.json — включение защиты:');
     codebaseUnits(cfgGroup, 'FE').join(',') === 'frontend' &&
     codebaseUnits(cfgSolo, 'BE').join(',') === 'backend' &&
     expandKeys(cfgGroup, ['autoTest']).join(',') === 'autoTest' &&
-    unitIds(cfgGroup).length === 5
+    unitIds(cfgGroup).length === 6
   )
     ok('config: codebaseUnits/expandKeys — кодовая база BE раскрывается в части, FE остаётся одной копией');
   else
@@ -2948,8 +2951,10 @@ console.log('Поведение скриптов (временный workspace):
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'conveyor-check-'));
 try {
   // Рабочие копии лежат внутри workspace: repos/<dir>
+  const repoBA = path.join(tmp, 'repos', 'business-analysis');
   const repoSA = path.join(tmp, 'repos', 'system-analysis');
   const repoBE = path.join(tmp, 'repos', 'backend');
+  fs.mkdirSync(path.join(repoBA, '.git'), { recursive: true });
   fs.mkdirSync(path.join(repoSA, '.git'), { recursive: true });
   fs.mkdirSync(path.join(repoBE, '.git'), { recursive: true });
   fs.writeFileSync(
@@ -2958,6 +2963,7 @@ try {
       {
         taskPrefix: 'TASK',
         repos: {
+          businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
           systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
           frontend: { link: '', mainBranch: 'main' },
           backend: { link: 'repos/backend', mainBranch: 'master' },
@@ -3433,7 +3439,7 @@ try {
   else bad('repos-status: systemsAnalysis: ' + JSON.stringify(byKey.systemsAnalysis));
   if (byKey.frontend && byKey.frontend.state === 'link-empty') ok('repos-status: пустая ссылка → link-empty');
   else bad('repos-status: frontend: ' + JSON.stringify(byKey.frontend));
-  if (rs.summary && rs.summary.ok === 2 && rs.summary.problems === 2) ok('repos-status: сводка посчитана');
+  if (rs.summary && rs.summary.ok === 3 && rs.summary.problems === 2) ok('repos-status: сводка посчитана');
   else bad('repos-status: сводка: ' + JSON.stringify(rs.summary));
 
   // Остальные четыре состояния — на отдельном мини-workspace: у основной
@@ -3449,11 +3455,13 @@ try {
     const outsideRepo = path.join(path.parse(tmpStatus).root, 'conveyor-outside-frontend');
     const outsideValue = path.relative(tmpStatus, outsideRepo).split(path.sep).join('/');
     fs.mkdirSync(path.join(tmpStatus, 'repos', 'autotests'), { recursive: true });
+    fs.mkdirSync(path.join(tmpStatus, 'repos', 'business-analysis', '.git'), { recursive: true });
     fs.writeFileSync(
       path.join(tmpStatus, 'settings.json'),
       JSON.stringify({
         taskPrefix: 'TASK',
         repos: {
+          businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
           systemsAnalysis: { link: 'git@git.example.com:group/system-analysis.git', mainBranch: 'main' },
           frontend: { link: outsideValue, mainBranch: 'main' },
           backend: { link: 'repos/backend', mainBranch: 'main' },
@@ -3486,7 +3494,7 @@ try {
     if (/очист/i.test(naHint) && /переимен/i.test(naHint))
       ok('repos-status: подсказка not-a-repo говорит очистить или переименовать каталог');
     else bad('repos-status: подсказка not-a-repo не решает непустой каталог: ' + JSON.stringify(naHint));
-    if (rs2.summary && rs2.summary.ok === 0 && rs2.summary.problems === 4)
+    if (rs2.summary && rs2.summary.ok === 1 && rs2.summary.problems === 4)
       ok('repos-status: сводка при четырёх непригодных ссылках');
     else bad('repos-status: сводка мини-workspace: ' + JSON.stringify(rs2.summary));
   } finally {
@@ -4133,14 +4141,36 @@ try {
   else bad('scope: --type у intent принят: ' + JSON.stringify(intentWithType));
 
   const intentSet = runScope(['set', '--stage', 'intent', '--task', 'INTENT-7']);
+  const intentWriteWhileDisabled = runScope([
+    'set', '--stage', 'intent', '--task', 'INTENT-7', '--write', 'businessAnalysis',
+  ]);
   if (
     intentSet.code === 0 &&
     intentSet.out.scope.taskType === null &&
     intentSet.out.scope.taskId === 'INTENT-7' &&
-    intentSet.out.scope.writeRepos.length === 0
+    intentSet.out.scope.writeRepos.length === 0 &&
+    intentWriteWhileDisabled.code !== 0
   )
-    ok('scope: set --stage intent без --type принят, запись в репозитории запрещена');
+    ok('scope: intent при businessAnalysis.update=false не получает запись в репозиторий');
   else bad('scope: intent без --type не принят: ' + JSON.stringify(intentSet));
+
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+  const intentSettingsPath = path.join(tmp, 'settings.json');
+  const intentSettings = JSON.parse(fs.readFileSync(intentSettingsPath, 'utf8'));
+  intentSettings.repos.businessAnalysis.update = true;
+  fs.writeFileSync(intentSettingsPath, JSON.stringify(intentSettings, null, 2));
+  const intentWriteEnabled = runScope([
+    'set', '--stage', 'intent', '--task', 'INTENT-8', '--write', 'businessAnalysis',
+  ]);
+  if (
+    intentWriteEnabled.code === 0 &&
+    intentWriteEnabled.out.scope.writeRepos.join(',') === 'businessAnalysis'
+  )
+    ok('scope: intent при businessAnalysis.update=true получает запись только в businessAnalysis');
+  else bad('scope: update=true не открыл businessAnalysis: ' + JSON.stringify(intentWriteEnabled));
+  runScript('core/scripts/scope.mjs', ['clear'], '', tmp);
+  intentSettings.repos.businessAnalysis.update = false;
+  fs.writeFileSync(intentSettingsPath, JSON.stringify(intentSettings, null, 2));
 
   // Каталог интента появляется при записи артефакта: сам каталог — не *.md и
   // не meta.json, поэтому mkdir по нему guard запрещает (обе формы, с -p и
@@ -5489,6 +5519,7 @@ try {
         JSON.stringify({
           taskPrefix: 'TASK',
           repos: {
+            businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
             systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
             frontend: { link: 'repos/frontend', mainBranch: 'main' },
             backend: Object.fromEntries(
@@ -5498,13 +5529,13 @@ try {
           },
         }),
       );
-      for (const rel of ['repos/system-analysis', 'repos/frontend', 'repos/autotests', ...parts.map((p) => `repos/backend/${p}`)])
+      for (const rel of ['repos/business-analysis', 'repos/system-analysis', 'repos/frontend', 'repos/autotests', ...parts.map((p) => `repos/backend/${p}`)])
         fs.mkdirSync(path.join(mrWs, rel, '.git'), { recursive: true });
 
       const rcMr = JSON.parse(runScript('core/scripts/resolve-config.mjs', [mrWs]));
       const ids = (rcMr.units || []).map((u) => u.id).join(',');
       if (
-        ids === 'systemsAnalysis,frontend,backend.core,backend.api,backend.common,backend.config,autoTest' &&
+        ids === 'businessAnalysis,systemsAnalysis,frontend,backend.core,backend.api,backend.common,backend.config,autoTest' &&
         (rcMr.codebase || {}).BE.join(',') === 'backend.core,backend.api,backend.common,backend.config' &&
         (rcMr.codebase || {}).FE.join(',') === 'frontend' &&
         (rcMr.units || []).every((u) => u.state === 'ok' && u.path)
@@ -5525,7 +5556,7 @@ try {
       const rsIds = (rsMr.repos || []).map((r) => r.id);
       const first = rsIds.indexOf('backend.core');
       const consecutive = rsIds.slice(first, first + 4).join(',') === 'backend.core,backend.api,backend.common,backend.config';
-      if (rsIds.length === 7 && consecutive && rsMr.summary.ok === 7)
+      if (rsIds.length === 8 && consecutive && rsMr.summary.ok === 8)
         ok('repos-status: строка на рабочую копию, части группы подряд');
       else bad('repos-status: состав строк при группе: ' + JSON.stringify({ rsIds, summary: rsMr.summary }));
 
@@ -5679,6 +5710,7 @@ try {
           JSON.stringify({
             taskPrefix: 'TASK',
             repos: {
+              businessAnalysis: { link: 'repos/business-analysis', mainBranch: 'main' },
               systemsAnalysis: { link: 'repos/system-analysis', mainBranch: 'main' },
               frontend: { link: 'repos/frontend', mainBranch: 'main' },
               backend: { link: 'repos/backend', mainBranch: 'main' },
@@ -5693,7 +5725,7 @@ try {
         runScriptFull('core/scripts/scope.mjs', ['clear'], '', soloWs);
         if (
           rcSolo.codebase.BE.join(',') === 'backend' &&
-          rcSolo.units.length === 4 &&
+          rcSolo.units.length === 5 &&
           scopeSolo.ok === true &&
           scopeSolo.scope.writeRepos.join(',') === 'backend'
         )

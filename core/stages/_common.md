@@ -100,7 +100,7 @@ BE-задачи. НЕ разбирай `config.repos` сам: форму нас�
 
 | Этап | АГЕНТ читает | АГЕНТ пишет |
 |---|---|---|
-| intent | анализ (systemsAnalysis), read-only | — (только `intents/<INTENT-ID>/`) |
+| intent | бизнес-анализ (businessAnalysis) | businessAnalysis при `update:true`, иначе только `intents/<INTENT-ID>/` |
 | create-specification (фаза A) | анализ | анализ |
 | create-specification (фаза B) | анализ | — (только артефакты задачи) |
 | create-plan | кодовая база по типу задачи — ВСЕ юниты `codebase.<тип>` | — (только артефакты) |
@@ -170,6 +170,12 @@ create-autotest-plan, implement-auto-test, update-tms и run-auto-test кодо�
   `... git-ops.mjs update --path <repoPath> --main <mainBranch> --mode read|write`
   Рабочая копия принадлежит разработчику: его ветку этап не переключает —
   update подтягивает только основную ветку.
+- Коммит в явно названную рабочую ветку:
+  `... git-ops.mjs commit --path <repoPath> --branch <branch> --main <mainBranch> --message <message>`.
+- Нефорсированный push рабочей ветки; для GitLab можно одновременно создать MR:
+  `... git-ops.mjs push --path <repoPath> --branch <branch> --main <mainBranch> --create-mr --title <title>`.
+  Обе команды проверяют, что текущая ветка совпадает с `--branch` и не равна
+  основной. Прямые `git commit`/`git push` вместо helper не используй.
   Для этапов записи (`--mode write`) грязная локальная копия → остановка.
 - Диффы «ветка задачи vs основная» — merge-base-семантика:
   `... git-ops.mjs diff --path <repoPath> --base <mainBranch> --head <branch>`

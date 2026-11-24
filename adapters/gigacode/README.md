@@ -43,7 +43,7 @@ mkdir -p .gigacode/extensions
 cp -r <путь/к/conveyor>/dist/gigacode .gigacode/extensions/conveyor
 git add .gigacode/extensions/conveyor && git commit -m "feature: conveyor <версия>"
 gigacode extensions link "$PWD/.gigacode/extensions/conveyor"   # каждый разработчик, один раз
-gigacode extensions list      # должно показать conveyor (3.0.1) и 10 команд
+gigacode extensions list      # должно показать conveyor (3.1.0) и 10 команд
 ```
 GigaCode не подхватывает каталог в проекте сам — он читает только
 `~/.gigacode/extensions`, поэтому каталог регистрируется ссылкой (`link`);
@@ -70,7 +70,8 @@ GigaCode не подхватывает каталог в проекте сам �
 ## Защита без хуков
 В GigaCode нет перехватчиков инструментов (PreToolUse/SessionStart), как в
 Claude Code. Поэтому защита исполняется самими командами (см. GIGACODE.md):
-git — только через `core/scripts/git-ops.mjs` (в нём нет push/force), перед
-записью и git-командами вызываются `core/scripts/guard-writes.mjs` /
-`guard-bash.mjs`, push/MR — только по подтверждению. Это осознанная
+git — только через `core/scripts/git-ops.mjs` (commit и нефорсированный push
+поддержаны, force отсутствует), перед записью и git-командами вызываются
+`core/scripts/guard-writes.mjs` / `guard-bash.mjs`; разрешение push/MR задаёт
+конкретный этап (`businessAnalysis.update:true` для intent). Это осознанная
 деградация относительно Claude Code (там защита независима от команды).

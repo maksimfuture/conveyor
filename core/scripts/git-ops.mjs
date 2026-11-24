@@ -10,6 +10,8 @@
 //   update       --path <p> --main <branch> [--mode read|write]
 //   log          --path <p> [--main <branch>] [-n <count>]
 //   branch       --path <p> --branch <name> --from <mainBranch>
+//   commit       --path <p> --branch <name> --main <mainBranch> --message <text>
+//   push         --path <p> --branch <name> --main <mainBranch> [--create-mr] [--title <text>]
 //   diff         --path <p> --base <ref> --head <ref>
 //   pushed       --path <p> --branch <name>
 
@@ -212,6 +214,50 @@ function cmdBranch(a) {
   return done({ ok: true, branch, created: true, head: revParse(repoPath, 'HEAD') });
 }
 
+function requireTaskBranch(a, command) {
+  const repoPath = a.path;
+  const branch = a.branch;
+  const main = a.main;
+  if (!repoPath || !branch || !main) return fail(`${command}: --path --branch --main required`);
+  if (branch === main) return fail(`${command}: публикация в основную ветку запрещена`);
+  const current = currentBranch(repoPath);
+  if (current !== branch) return fail(`${command}: текущая ветка «${current}», ожидалась «${branch}»`);
+  return { repoPath, branch, main };
+}
+
+function cmdCommit(a) {
+  const checked = requireTaskBranch(a, 'commit');
+  if (!checked) return;
+  if (!a.message || a.message === true) return fail('commit: --message required');
+  if (isClean(checked.repoPath)) return fail('commit: нет изменений для коммита');
+  const add = tryGit(checked.repoPath, ['add', '-A']);
+  if (!add.ok) return fail(`git add не удался: ${add.out}`);
+  const commit = tryGit(checked.repoPath, ['commit', '-m', String(a.message)]);
+  if (!commit.ok) return fail(`git commit не удался: ${commit.out}`);
+  return done({ ok: true, branch: checked.branch, head: revParse(checked.repoPath, 'HEAD') });
+}
+
+function cmdPush(a) {
+  const checked = requireTaskBranch(a, 'push');
+  if (!checked) return;
+  if (!isClean(checked.repoPath)) return fail('push: рабочая копия не чистая — сначала commit');
+  const pushArgs = ['push'];
+  if (a['create-mr']) {
+    pushArgs.push('-o', 'merge_request.create', '-o', `merge_request.target=${checked.main}`);
+    if (a.title && a.title !== true) pushArgs.push('-o', `merge_request.title=${String(a.title)}`);
+  }
+  pushArgs.push('--set-upstream', 'origin', checked.branch);
+  const push = tryGit(checked.repoPath, pushArgs);
+  if (!push.ok) return fail(`git push не удался: ${push.out}`);
+  return done({
+    ok: true,
+    branch: checked.branch,
+    head: revParse(checked.repoPath, 'HEAD'),
+    mergeRequestRequested: !!a['create-mr'],
+    output: push.out,
+  });
+}
+
 function cmdDiff(a) {
   const repoPath = a.path;
   const base = a.base;
@@ -291,6 +337,12 @@ try {
       break;
     case 'branch':
       cmdBranch(args);
+      break;
+    case 'commit':
+      cmdCommit(args);
+      break;
+    case 'push':
+      cmdPush(args);
       break;
     case 'diff':
       cmdDiff(args);

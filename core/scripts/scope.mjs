@@ -183,7 +183,8 @@ if (sub === 'set') {
     // ниже по течению этого бы не заметила: id существует, guard такую область
     // исполнит буквально. Разрешённое множество считает ядро — по этапу и типу
     // задачи.
-    const allowed = expandKeys(cfg, stageWriteRepoKeys(args.stage, taskType));
+    let allowed = expandKeys(cfg, stageWriteRepoKeys(args.stage, taskType));
+    if (args.stage === 'intent' && !(cfg.links.businessAnalysis && cfg.links.businessAnalysis.update === true)) allowed = [];
     const outside = writeRepos.filter((k) => !allowed.includes(k));
     if (outside.length) {
       done({
@@ -199,6 +200,7 @@ if (sub === 'set') {
     // expandKeys (BE → все части бэкенда). На /implement-plan этот дефолт
     // перекрывается явным --write из plan.md.
     writeRepos = expandKeys(cfg, stageWriteRepoKeys(args.stage, taskType));
+    if (args.stage === 'intent' && !(cfg.links.businessAnalysis && cfg.links.businessAnalysis.update === true)) writeRepos = [];
   }
   const scope = {
     stage: args.stage,

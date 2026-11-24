@@ -34,11 +34,12 @@ export function readJsonFile(file) {
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 // Ключи ВЕРХНЕГО уровня settings.json → repos, в порядке появления.
-export const REPO_KEYS = ['systemsAnalysis', 'frontend', 'backend', 'autoTest'];
+export const REPO_KEYS = ['businessAnalysis', 'systemsAnalysis', 'frontend', 'backend', 'autoTest'];
 
 // Какой ключ вправе быть ГРУППОЙ репозиториев. Бэкенд у команды разложен на
 // четыре рабочие копии (core / api / common / config), и это единственный
-// такой ключ: группа под frontend, systemsAnalysis или autoTest — не «тихо
+// такой ключ: группа под businessAnalysis, frontend, systemsAnalysis или
+// autoTest — не «тихо
 // заработало», а ошибка конфигурации (см. readUnits).
 export const GROUP_KEYS = ['backend'];
 
@@ -68,6 +69,7 @@ export const GROUP_META_KEYS = ['description'];
 // Ключи — id ЮНИТОВ: у группы дефолт есть и у неё самой (одиночный бэкенд —
 // законная конфигурация), и у каждой известной части.
 export const REPO_DIRS = {
+  businessAnalysis: 'repos/business-analysis',
   systemsAnalysis: 'repos/system-analysis',
   frontend: 'repos/frontend',
   backend: 'repos/backend',
@@ -105,6 +107,9 @@ export function reposEntryKind(entry) {
 // проверки: опечатка в любом ключе (`linkPipelineAutotest`) иначе молчит, и
 // человек смотрит на заполненный файл, а этап — на пустое значение.
 export const UNIT_KEYS = ['link', 'mainBranch', 'description'];
+// Только у businessAnalysis: разрешает /conveyor:intent править репозиторий
+// бизнес-анализа. false сохраняет read-only поведение.
+export const BUSINESS_ANALYSIS_KEYS = ['update'];
 // Только у autoTest: джоба автотестов в CI и настройки TMS.
 export const AUTOTEST_KEYS = ['linkPipelineAutoTest', 'tms'];
 // repos.autoTest.tms — настройки /conveyor:update-tms:
@@ -148,6 +153,7 @@ export function readUnits(repos) {
       link: ((e.link || '') + '').trim(),
       mainBranch: ((e.mainBranch || '') + '').trim() || 'main',
       description: ((e.description || '') + '').trim(),
+      update: key === 'businessAnalysis' && e.update === true,
       // Ссылка на джобу автотестов в CI (repos.autoTest.linkPipelineAutoTest).
       // Это URL, а не путь к рабочей копии: проверка isUsableLink к нему НЕ
       // применяется и применяться не должна — ради этого он и заведён
@@ -157,7 +163,15 @@ export function readUnits(repos) {
       // остальных юнитов поле есть ради одинаковой формы, но пустое.
       tms: key === 'autoTest' ? readTmsEntry(id, e.tms, errors) : { linkTMS: '', mcpTMS: '' },
     });
-    const allowed = key === 'autoTest' ? [...UNIT_KEYS, ...AUTOTEST_KEYS] : UNIT_KEYS;
+    const allowed =
+      key === 'autoTest'
+        ? [...UNIT_KEYS, ...AUTOTEST_KEYS]
+        : key === 'businessAnalysis'
+          ? [...UNIT_KEYS, ...BUSINESS_ANALYSIS_KEYS]
+          : UNIT_KEYS;
+    if (key === 'businessAnalysis' && e.update !== undefined && typeof e.update !== 'boolean') {
+      errors.push(`repos.businessAnalysis.update должен быть boolean (true или false), получено: ${JSON.stringify(e.update)}`);
+    }
     for (const k of Object.keys(e)) {
       if (allowed.includes(k)) continue;
       // Бывший repos.autoTest.linkTMS: не читать молча — иначе
@@ -548,6 +562,7 @@ export function readConfig(startDir = process.cwd()) {
       entry.link = value;
       entry.mainBranch = unit.mainBranch;
       entry.linkPipelineAutoTest = unit.pipelineUrl;
+      if (unit.key === 'businessAnalysis') entry.update = unit.update;
       if (unit.key === 'autoTest') entry.tms = { ...unit.tms };
     }
 
@@ -562,6 +577,7 @@ export function readConfig(startDir = process.cwd()) {
       path: abs,
       inside: isUsableLink(value, workspaceRoot),
       mainBranch: unit.mainBranch,
+      update: unit.update,
       pipelineUrl: unit.pipelineUrl,
       tms: unit.tms,
     };
@@ -605,6 +621,7 @@ export function requiredRepoKeys(stage, taskType) {
     case 'task-status':
       return [];
     case 'intent':
+      return ['businessAnalysis'];
     case 'create-specification':
       return ['systemsAnalysis'];
     case 'create-plan':
@@ -656,6 +673,8 @@ export const SCOPE_TTL_MS = 8 * 60 * 60 * 1000; // 8 часов
 export function stageWriteRepoKeys(stage, taskType) {
   const code = taskType === 'BE' ? 'backend' : 'frontend';
   switch (stage) {
+    case 'intent':
+      return ['businessAnalysis'];
     case 'create-specification':
       return ['systemsAnalysis'];
     case 'implement-plan':

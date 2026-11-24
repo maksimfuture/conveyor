@@ -25,9 +25,11 @@
 1. Первым делом получает конфигурацию:
    `node ".gigacode/extensions/conveyor/core/scripts/resolve-config.mjs"`. В ответе поля
    `found`, `workspaceRoot`, `config`, `units`, `codebase`, `links`,
-   `missingLinks`, `urlLinks`, `configErrors`, `fastMode`;
-   `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch,
-   pipelineUrl, tms }` (`pipelineUrl` — ссылка на джобу автотестов в CI из
+   `missingLinks`, `urlLinks`, `configErrors`, `fastMode`; для
+   `links.businessAnalysis` также используй нормализованный boolean `update`;
+   `links.<id>` = `{ value, isGitUrl, path, inside, mainBranch, update,
+   pipelineUrl, tms }` (`update` используется только businessAnalysis;
+   `pipelineUrl` — ссылка на джобу автотестов в CI из
    `repos.<ключ>.linkPipelineAutoTest`; заполнен только у `autoTest`, пустая
    строка = джоба не настроена; `tms` = `{ linkTMS, mcpTMS }` из
    `repos.autoTest.tms` — ссылка на тест-кейсы проекта в Zephyr и имя
@@ -83,7 +85,7 @@
 
 | Этап | Агент читает | Агент пишет |
 |---|---|---|
-| intent | анализ (systemsAnalysis), read-only | — (только `intents/<INTENT-ID>/`) |
+| intent | бизнес-анализ (businessAnalysis) | businessAnalysis при `update:true`, иначе только `intents/<INTENT-ID>/` |
 | create-specification (фаза A) | анализ | анализ |
 | create-specification (фаза B) | анализ | — (только артефакты задачи) |
 | create-plan | кодовая база по типу задачи — ВСЕ копии `codebase.<тип>` + specification.md | — (только артефакты) |
@@ -102,8 +104,9 @@ Guard-скрипты (см. ниже) при активной рабочей о�
 ## Защита (важно: в GigaCode нет хуков-перехватчиков)
 В Claude Code запись и git-операции перехватывают хуки. В GigaCode
 перехватчиков нет, поэтому защита исполняется САМОЙ командой:
-- **git — только через** `.gigacode/extensions/conveyor/core/scripts/git-ops.mjs` (в нём
-  нет `push`/`--force` — они структурно невозможны);
+- **git — только через** `.gigacode/extensions/conveyor/core/scripts/git-ops.mjs`;
+  `commit` и нефорсированный `push` доступны его отдельными подкомандами,
+  `--force` структурно невозможен;
 - **перед записью файла** вызывай
   `node ".gigacode/extensions/conveyor/core/scripts/guard-writes.mjs"` с JSON
   `{"cwd":"<рабочий репозиторий>","tool_input":{"file_path":"<путь>"}}` на
@@ -133,7 +136,8 @@ Guard-скрипты (см. ниже) при активной рабочей о�
   используй — inline-код запрещён политикой GigaCode;
 - каталог расширения `.gigacode/extensions/conveyor/` не правь никогда
   (guard-writes его блокирует): расширение обновляется сборкой плагина;
-- `push`/MR — только по явному подтверждению пользователя.
+- `push`/MR выполняй только предписанной этапом подкомандой git-ops; для
+  `/conveyor:intent` разрешение задаёт `repos.businessAnalysis.update:true`.
 
 Деградация честная: в Claude Code защита ловит любое действие модели
 (независимый перехватчик), в GigaCode — только в точках, где команда сама

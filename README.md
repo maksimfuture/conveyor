@@ -126,6 +126,7 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 {
   "taskPrefix": "TASK",
   "repos": {
+    "businessAnalysis": { "link": "repos/business-analysis", "mainBranch": "main", "update": false },
     "systemsAnalysis": { "link": "repos/system-analysis", "mainBranch": "main" },
     "frontend":        { "link": "repos/frontend",        "mainBranch": "main" },
     "backend": {
@@ -158,8 +159,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   репозитория по НАЛИЧИЮ `link`: есть `link` — репозиторий, нет, а есть
   вложенные записи — группа. Бэкенд в одном репозитории тоже законен:
   `"backend": { "link": "repos/backend", "mainBranch": "main" }`. Группой
-  может быть ТОЛЬКО `backend` — вложенные записи под `frontend`,
-  `systemsAnalysis` или `autoTest` плагин считает ошибкой конфигурации и
+  может быть ТОЛЬКО `backend` — вложенные записи под `businessAnalysis`,
+  `frontend`, `systemsAnalysis` или `autoTest` плагин считает ошибкой конфигурации и
   говорит об этом в `/conveyor:setup` и при старте сессии. Состав частей
   задаёте вы: пятый репозиторий бэкенда добавляется правкой settings.json.
 - **description** — назначение репозитория («основной код», «API»,
@@ -169,7 +170,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   подмодули, LFS). Плагин НЕ клонирует:
 
   ```
-  git clone <url-анализа>        repos/system-analysis
+  git clone <url-бизнес-анализа> repos/business-analysis
+  git clone <url-системного-анализа> repos/system-analysis
   git clone <url-фронтенда>      repos/frontend
   git clone <url-backend-core>   repos/backend/core
   git clone <url-backend-api>    repos/backend/api
@@ -178,12 +180,17 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
   git clone <url-автотестов>     repos/autotests
   ```
 
-  Клонировать нужно только то, с чем работаете вы: аналитику хватит
-  `repos/system-analysis`, фронтендеру — `repos/frontend`; бэкендеру нужны
-  все части бэкенда — это отдельные репозитории.
+  Клонировать нужно только то, с чем работаете вы: бизнес-аналитику нужен
+  `repos/business-analysis`, системному аналитику — `repos/system-analysis`,
+  фронтендеру — `repos/frontend`; бэкендеру нужны все части бэкенда — это
+  отдельные репозитории.
 - **mainBranch** — основная ветка репозитория (обычно `main`). Свою ветку в
   рабочей копии конвейер не переключает: перед работой он подтягивает только
   основную.
+- **businessAnalysis.update** — режим `/conveyor:intent`: `false` оставляет
+  репозиторий бизнес-анализа только для чтения; `true` разрешает агенту
+  обновить документы в ветке `<INTENT-ID>-business-analysis`, выполнить
+  ревью, commit, push и создать MR в `mainBranch`.
 - **linkPipelineAutoTest** — ссылка на джобу автотестов в Jenkins; заполняется
   только у `autoTest` и **не обязательна**. Это единственное поле-URL в
   `repos.*`: правило «link — путь внутри проекта» к нему не относится, поэтому
@@ -242,7 +249,8 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 | Команда | Обязательные рабочие копии |
 |---|---|
 | setup, task-status | — |
-| intent, create-specification | `repos/system-analysis` |
+| intent | `repos/business-analysis` |
+| create-specification | `repos/system-analysis` |
 | create-plan, implement-plan | `repos/frontend` (FE) либо ВСЕ репозитории бэкенда (BE): `repos/backend/{core,api,common,config}` |
 | create-autotest-plan, implement-auto-test, update-tms, run-auto-test | `repos/autotests` |
 
@@ -321,9 +329,9 @@ node scripts/check.mjs      # самопроверка (JSON, соответст
 
 | Этап | Агент читает | Агент пишет |
 |---|---|---|
-| intent | анализ (только чтение) | — (только `intents/<INTENT-ID>/`) |
-| create-specification, фаза A | анализ | анализ |
-| create-specification, фаза B | анализ | — (только артефакты задачи) |
+| intent | бизнес-анализ | бизнес-анализ при `update:true`, иначе только `intents/<INTENT-ID>/` |
+| create-specification, фаза A | системный анализ | системный анализ |
+| create-specification, фаза B | системный анализ | — (только артефакты задачи) |
 | create-plan | код FE/BE (по типу) | — (только артефакты) |
 | implement-plan | код FE/BE | код FE/BE |
 | create-autotest-plan | автотесты (только чтение) + артефакты | — (только артефакты) |
